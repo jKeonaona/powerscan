@@ -7,7 +7,7 @@
 
     <div class="card shadow-sm mb-4">
         <div class="card-body">
-            <form method="POST">
+            <form method="POST" id="searchForm">
                 {% if current_user.is_superadmin and companies %}
                 <div class="mb-3">
                     <label for="company_id" class="form-label">Company</label>
@@ -19,23 +19,33 @@
                 </div>
                 {% endif %}
                 <div class="mb-3">
-                    <label for="query" class="form-label">Search Query</label>
-                    <textarea class="form-control" id="query" name="query" rows="3"
-                              placeholder="e.g., Find all drawings with valve specifications, What are the pipe dimensions in the boiler room layout?"
-                              required>{{ query }}</textarea>
-                    <div class="form-text">Ask questions about your engineering drawings using natural language. Powered by Claude AI.</div>
+                    <label for="query" class="form-label">Ask a question about your drawings</label>
+                    <div class="input-group input-group-lg">
+                        <input type="text" class="form-control" id="query" name="query"
+                               placeholder="e.g., What are the pipe dimensions in the boiler room layout?"
+                               value="{{ query }}" required autocomplete="off">
+                        <button type="submit" class="btn btn-primary" id="btnSearch">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                    </div>
+                    <div class="form-text">
+                        Ask natural language questions about your engineering drawings. Claude AI searches through all extracted OCR text to find answers.
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-search"></i> Search
-                </button>
             </form>
         </div>
     </div>
 
+    <!-- Loading -->
+    <div id="searchLoading" class="text-center py-5" style="display:none;">
+        <div class="spinner-border text-primary" role="status" style="width:3rem;height:3rem;"></div>
+        <p class="text-muted mt-3">Searching through your drawings...</p>
+    </div>
+
     {% if results %}
-    <div class="card shadow-sm">
+    <div class="card shadow-sm" id="searchResults">
         <div class="card-header">
-            <h5 class="mb-0">Search Results</h5>
+            <h5 class="mb-0"><i class="bi bi-chat-left-text"></i> Answer</h5>
         </div>
         <div class="card-body">
             <div class="search-answer mb-4">
@@ -44,13 +54,17 @@
 
             {% if results.sources %}
             <hr>
-            <h6>Referenced Drawings</h6>
+            <h6 class="text-muted mb-3"><i class="bi bi-link-45deg"></i> Referenced Drawings</h6>
             <div class="list-group">
                 {% for source in results.sources %}
                 <a href="{{ url_for('drawing_detail', drawing_id=source.drawing_id) }}"
-                   class="list-group-item list-group-item-action">
-                    <i class="bi bi-file-earmark-pdf text-danger"></i>
-                    {{ source.project }} / {{ source.filename }} &mdash; Page {{ source.page }}
+                   class="list-group-item list-group-item-action d-flex align-items-center">
+                    <i class="bi bi-file-earmark-pdf text-danger me-3 fs-5"></i>
+                    <div>
+                        <div class="fw-medium">{{ source.filename }}</div>
+                        <small class="text-muted">{{ source.project }} &middot; Page {{ source.page }}</small>
+                    </div>
+                    <i class="bi bi-chevron-right ms-auto text-muted"></i>
                 </a>
                 {% endfor %}
             </div>
@@ -58,5 +72,37 @@
         </div>
     </div>
     {% endif %}
+
+    {% if not results and not query %}
+    <div class="text-center py-5">
+        <i class="bi bi-lightbulb fs-1 text-muted"></i>
+        <p class="text-muted mt-2">Try asking something like:</p>
+        <div class="d-flex flex-wrap justify-content-center gap-2">
+            <button class="btn btn-sm btn-outline-secondary example-query">Find all valve specifications</button>
+            <button class="btn btn-sm btn-outline-secondary example-query">What materials are specified for the piping?</button>
+            <button class="btn btn-sm btn-outline-secondary example-query">List all drawing revision numbers</button>
+        </div>
+    </div>
+    {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Example query buttons
+document.querySelectorAll('.example-query').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.getElementById('query').value = btn.textContent;
+        document.getElementById('searchForm').submit();
+    });
+});
+
+// Show loading spinner on submit
+document.getElementById('searchForm').addEventListener('submit', () => {
+    const results = document.getElementById('searchResults');
+    if (results) results.style.display = 'none';
+    document.getElementById('searchLoading').style.display = 'block';
+    document.getElementById('btnSearch').disabled = true;
+});
+</script>
 {% endblock %}

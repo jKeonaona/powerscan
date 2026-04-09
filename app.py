@@ -364,7 +364,10 @@ def create_app():
             else:
                 company_id = current_user.company_id
                 if current_user.is_superadmin:
-                    company_id = request.form.get("company_id", type=int) or Company.query.first().id if Company.query.first() else None
+                    company_id = request.form.get("company_id", type=int)
+                    if not company_id:
+                        first_company = Company.query.first()
+                        company_id = first_company.id if first_company else None
                 if not company_id:
                     flash("No company selected.", "danger")
                 else:

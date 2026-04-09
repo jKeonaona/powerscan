@@ -93,9 +93,13 @@
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-6">
-                            <h6>Scanned Image</h6>
+                            <h6>Scanned Image <small class="text-muted">(click to zoom)</small></h6>
                             <img src="{{ url_for('serve_processed', filename=page.image_path) }}"
-                                 class="img-fluid border rounded" alt="Page {{ page.page_number }}">
+                                 class="img-fluid border rounded page-thumb"
+                                 alt="Page {{ page.page_number }}"
+                                 data-full-src="{{ url_for('serve_processed', filename=page.image_path) }}"
+                                 data-page-num="{{ page.page_number }}"
+                                 role="button">
                         </div>
                         <div class="col-md-6">
                             <h6>Extracted Text (OCR)</h6>
@@ -121,6 +125,52 @@
     </div>
     {% endif %}
 </div>
+
+<!-- Lightbox Modal -->
+<div class="modal fade" id="lightboxModal" tabindex="-1">
+    <div class="modal-dialog modal-fullscreen">
+        <div class="modal-content bg-dark bg-opacity-95">
+            <div class="modal-header border-0 position-absolute top-0 end-0" style="z-index:10;">
+                <span id="lightboxTitle" class="text-white me-auto ms-3 mt-2 fs-6"></span>
+                <button type="button" class="btn btn-outline-light btn-sm me-2 mt-2" id="btnZoomIn" title="Zoom in">
+                    <i class="bi bi-zoom-in"></i>
+                </button>
+                <button type="button" class="btn btn-outline-light btn-sm me-2 mt-2" id="btnZoomOut" title="Zoom out">
+                    <i class="bi bi-zoom-out"></i>
+                </button>
+                <button type="button" class="btn btn-outline-light btn-sm me-2 mt-2" id="btnZoomReset" title="Reset zoom">
+                    <i class="bi bi-arrows-fullscreen"></i>
+                </button>
+                <button type="button" class="btn-close btn-close-white me-2 mt-2" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body d-flex align-items-center justify-content-center p-0 lightbox-body">
+                <img id="lightboxImg" src="" alt="" class="lightbox-img">
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.page-thumb {
+    cursor: pointer;
+    transition: opacity .15s, box-shadow .15s;
+}
+.page-thumb:hover {
+    opacity: .85;
+    box-shadow: 0 0 0 3px rgba(13,110,253,.35);
+}
+.lightbox-body {
+    overflow: auto;
+    cursor: grab;
+}
+.lightbox-body:active { cursor: grabbing; }
+.lightbox-img {
+    max-width: none;
+    max-height: none;
+    transform-origin: center center;
+    transition: transform .2s ease;
+}
+</style>
 {% endblock %}
 
 {% block scripts %}
@@ -138,4 +188,69 @@
     }, 3000);
 </script>
 {% endif %}
+
+<script>
+// Lightbox
+const modal = new bootstrap.Modal(document.getElementById('lightboxModal'));
+const lightboxImg = document.getElementById('lightboxImg');
+const lightboxTitle = document.getElementById('lightboxTitle');
+let currentScale = 1;
+
+document.querySelectorAll('.page-thumb').forEach(img => {
+    img.addEventListener('click', () => {
+        lightboxImg.src = img.dataset.fullSrc;
+        lightboxTitle.textContent = `Page ${img.dataset.pageNum}`;
+        currentScale = 1;
+        lightboxImg.style.transform = `scale(${currentScale})`;
+        modal.show();
+    });
+});
+
+// Fit image to viewport on load
+lightboxImg.addEventListener('load', () => {
+    currentScale = 1;
+    lightboxImg.style.transform = `scale(${currentScale})`;
+    // Set initial size to fit
+    const body = document.querySelector('.lightbox-body');
+    const maxW = body.clientWidth - 40;
+    const maxH = body.clientHeight - 40;
+    lightboxImg.style.maxWidth = maxW + 'px';
+    lightboxImg.style.maxHeight = maxH + 'px';
+});
+
+document.getElementById('btnZoomIn').addEventListener('click', () => {
+    currentScale = Math.min(currentScale + 0.25, 5);
+    lightboxImg.style.transform = `scale(${currentScale})`;
+    lightboxImg.style.maxWidth = 'none';
+    lightboxImg.style.maxHeight = 'none';
+});
+
+document.getElementById('btnZoomOut').addEventListener('click', () => {
+    currentScale = Math.max(currentScale - 0.25, 0.25);
+    lightboxImg.style.transform = `scale(${currentScale})`;
+});
+
+document.getElementById('btnZoomReset').addEventListener('click', () => {
+    currentScale = 1;
+    lightboxImg.style.transform = `scale(${currentScale})`;
+    const body = document.querySelector('.lightbox-body');
+    lightboxImg.style.maxWidth = (body.clientWidth - 40) + 'px';
+    lightboxImg.style.maxHeight = (body.clientHeight - 40) + 'px';
+});
+
+// Mouse wheel zoom
+document.querySelector('.lightbox-body').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (e.deltaY < 0) {
+        currentScale = Math.min(currentScale + 0.1, 5);
+    } else {
+        currentScale = Math.max(currentScale - 0.1, 0.25);
+    }
+    lightboxImg.style.transform = `scale(${currentScale})`;
+    if (currentScale > 1) {
+        lightboxImg.style.maxWidth = 'none';
+        lightboxImg.style.maxHeight = 'none';
+    }
+}, { passive: false });
+</script>
 {% endblock %}
