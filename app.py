@@ -250,6 +250,27 @@ def create_app():
         if not file or not file.filename.lower().endswith(".pdf"):
             return jsonify({"error": "Invalid file. Only PDFs are accepted."}), 400
 
+        replace = request.form.get("replace") == "1"
+
+        # Check for duplicate filename in this project
+        existing = Drawing.query.filter_by(
+            project_id=project.id,
+            original_filename=file.filename,
+        ).first()
+
+        if existing and not replace:
+            return jsonify({
+                "duplicate": True,
+                "filename": file.filename,
+                "existing_id": existing.id,
+                "existing_status": existing.status,
+            }), 409
+
+        # If replacing, delete the old drawing
+        if existing and replace:
+            db.session.delete(existing)
+            db.session.commit()
+
         ext = os.path.splitext(file.filename)[1]
         unique_name = f"{uuid.uuid4().hex}{ext}"
         file.save(os.path.join(app.config["UPLOAD_FOLDER"], unique_name))

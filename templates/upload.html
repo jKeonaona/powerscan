@@ -180,6 +180,10 @@
 .file-status.uploading { background: #e8f0fe; color: #0d6efd; }
 .file-status.success { background: #d1f5e0; color: #0f5132; }
 .file-status.error { background: #fde2e4; color: #842029; }
+.file-status.duplicate { background: #fff3cd; color: #664d03; }
+.file-status.skipped { background: #f0f1f3; color: #6c757d; }
+.file-item.duplicate { border-color: #ffc107; }
+.file-item.skipped { opacity: .55; }
 </style>
 {% endblock %}
 
@@ -261,6 +265,18 @@ function renderList() {
                 <div class="file-size">${formatSize(entry.file.size)}</div>
                 <div class="file-progress"><div class="file-progress-bar" style="width:${entry.progress}%"></div></div>
                 ${entry.errorMsg ? `<div class="text-danger" style="font-size:.8rem">${entry.errorMsg}</div>` : ''}
+                ${entry.status === 'duplicate' ? `
+                <div class="dup-warning mt-1">
+                    <small class="text-warning"><i class="bi bi-exclamation-triangle-fill"></i> A file with this name already exists in this project.</small>
+                    <div class="mt-1 d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-warning" onclick="replaceFile(${i})">
+                            <i class="bi bi-arrow-repeat"></i> Replace
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="skipFile(${i})">
+                            Skip
+                        </button>
+                    </div>
+                </div>` : ''}
             </div>
             <div class="file-actions">
                 <span class="file-status ${entry.status}">
@@ -268,6 +284,8 @@ function renderList() {
                     ${entry.status === 'uploading' ? 'Uploading...' : ''}
                     ${entry.status === 'success' ? '<i class="bi bi-check-lg"></i> Done' : ''}
                     ${entry.status === 'error' ? '<i class="bi bi-exclamation-triangle"></i> Failed' : ''}
+                    ${entry.status === 'duplicate' ? '<i class="bi bi-files"></i> Duplicate' : ''}
+                    ${entry.status === 'skipped' ? 'Skipped' : ''}
                 </span>
                 ${entry.status === 'waiting' ? `<button class="btn-remove" onclick="removeFile(${i})" title="Remove"><i class="bi bi-x-lg"></i></button>` : ''}
             </div>
@@ -275,7 +293,8 @@ function renderList() {
     `).join('');
 
     // Show "View Drawings" when all done
-    const allDone = selectedFiles.every(f => f.status === 'success' || f.status === 'error');
+    const terminal = ['success', 'error', 'skipped'];
+    const allDone = selectedFiles.every(f => terminal.includes(f.status));
     doneBar.style.display = (allDone && done > 0) ? 'block' : 'none';
 }
 
@@ -297,24 +316,29 @@ async function startUpload() {
             entry.status = 'success';
             entry.progress = 100;
         } catch (err) {
-            entry.status = 'error';
-            entry.progress = 100;
-            entry.errorMsg = err.message || 'Upload failed';
+            if (err.duplicate) {
+                entry.status = 'duplicate';
+                entry.progress = 0;
+            } else {
+                entry.status = 'error';
+                entry.progress = 100;
+                entry.errorMsg = err.message || 'Upload failed';
+            }
         }
         renderList();
     }
 }
 
-function uploadFile(entry) {
+function uploadFile(entry, replace = false) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         const formData = new FormData();
         formData.append('pdf_file', entry.file);
+        if (replace) formData.append('replace', '1');
 
         xhr.upload.addEventListener('progress', ev => {
             if (ev.lengthComputable) {
                 entry.progress = Math.round((ev.loaded / ev.total) * 100);
-                // Update just the progress bar without full re-render
                 const el = document.querySelector(`.file-item[data-idx="${selectedFiles.indexOf(entry)}"] .file-progress-bar`);
                 if (el) el.style.width = entry.progress + '%';
             }
@@ -323,6 +347,10 @@ function uploadFile(entry) {
         xhr.addEventListener('load', () => {
             if (xhr.status >= 200 && xhr.status < 300) {
                 resolve(JSON.parse(xhr.responseText));
+            } else if (xhr.status === 409) {
+                const err = new Error('Duplicate');
+                err.duplicate = true;
+                reject(err);
             } else {
                 try {
                     const data = JSON.parse(xhr.responseText);
@@ -339,6 +367,28 @@ function uploadFile(entry) {
         xhr.open('POST', UPLOAD_URL);
         xhr.send(formData);
     });
+}
+
+async function replaceFile(index) {
+    const entry = selectedFiles[index];
+    entry.status = 'uploading';
+    entry.progress = 0;
+    renderList();
+    try {
+        await uploadFile(entry, true);
+        entry.status = 'success';
+        entry.progress = 100;
+    } catch (err) {
+        entry.status = 'error';
+        entry.progress = 100;
+        entry.errorMsg = err.message || 'Replace failed';
+    }
+    renderList();
+}
+
+function skipFile(index) {
+    selectedFiles[index].status = 'skipped';
+    renderList();
 }
 
 // --- Clear ---
