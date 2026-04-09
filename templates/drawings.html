@@ -20,33 +20,52 @@
 
     {% if project.drawings %}
     <div class="table-responsive">
-        <table class="table table-hover">
+        <table class="table table-hover align-middle">
             <thead>
                 <tr>
                     <th>Filename</th>
                     <th>Pages</th>
-                    <th>Status</th>
+                    <th style="min-width:220px">Status</th>
                     <th>Uploaded</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for drawing in project.drawings %}
-                <tr>
+                <tr id="row-{{ drawing.id }}">
                     <td>
                         <i class="bi bi-file-earmark-pdf text-danger"></i>
                         <a href="{{ url_for('drawing_detail', drawing_id=drawing.id) }}">{{ drawing.original_filename }}</a>
                     </td>
-                    <td>{{ drawing.pages | length }}</td>
-                    <td>
+                    <td class="pages-col">{{ drawing.pages | length }}</td>
+                    <td class="status-col">
                         {% if drawing.status == 'completed' %}
-                        <span class="badge bg-success">Completed</span>
-                        {% elif drawing.status == 'processing' %}
-                        <span class="badge bg-warning" data-drawing-id="{{ drawing.id }}">Processing...</span>
+                        <span class="badge bg-success"><i class="bi bi-check-lg"></i> Completed</span>
                         {% elif drawing.status == 'failed' %}
-                        <span class="badge bg-danger">Failed</span>
+                        <span class="badge bg-danger"><i class="bi bi-exclamation-triangle"></i> Failed</span>
+                        {% elif drawing.status == 'processing' %}
+                        <div class="ocr-progress" data-drawing-id="{{ drawing.id }}">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <small class="fw-medium text-primary">
+                                    <i class="bi bi-gear-fill spin"></i> Processing
+                                </small>
+                                <small class="progress-label text-muted">
+                                    {{ drawing.pages_processed }}/{{ drawing.total_pages }} pages
+                                </small>
+                            </div>
+                            <div class="progress" style="height:6px;">
+                                {% set pct = (drawing.pages_processed / drawing.total_pages * 100) if drawing.total_pages > 0 else 0 %}
+                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                                     style="width:{{ pct | round(0) }}%"></div>
+                            </div>
+                        </div>
                         {% else %}
-                        <span class="badge bg-secondary" data-drawing-id="{{ drawing.id }}">Pending</span>
+                        <div class="ocr-progress" data-drawing-id="{{ drawing.id }}">
+                            <small class="text-muted"><i class="bi bi-hourglass-split"></i> Queued</small>
+                            <div class="progress mt-1" style="height:6px;">
+                                <div class="progress-bar bg-secondary" style="width:0%"></div>
+                            </div>
+                        </div>
                         {% endif %}
                     </td>
                     <td>{{ drawing.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
@@ -75,23 +94,55 @@
     </div>
     {% endif %}
 </div>
+
+<style>
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin 1.5s linear infinite; }
+.ocr-progress { min-width: 180px; }
+.progress { border-radius: 3px; background: #e9ecef; }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    // Poll status for processing drawings
-    document.querySelectorAll('[data-drawing-id]').forEach(badge => {
-        const drawingId = badge.dataset.drawingId;
-        const interval = setInterval(() => {
-            fetch(`/drawings/${drawingId}/status`)
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'completed' || data.status === 'failed') {
-                        clearInterval(interval);
-                        location.reload();
-                    }
-                });
-        }, 3000);
-    });
+document.querySelectorAll('.ocr-progress[data-drawing-id]').forEach(el => {
+    const drawingId = el.dataset.drawingId;
+
+    const poll = setInterval(() => {
+        fetch(`/drawings/${drawingId}/status`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'completed') {
+                    clearInterval(poll);
+                    el.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-lg"></i> Completed</span>';
+                    // Update page count
+                    const row = document.getElementById(`row-${drawingId}`);
+                    if (row) row.querySelector('.pages-col').textContent = data.total_pages;
+                    return;
+                }
+                if (data.status === 'failed') {
+                    clearInterval(poll);
+                    el.innerHTML = '<span class="badge bg-danger"><i class="bi bi-exclamation-triangle"></i> Failed</span>';
+                    return;
+                }
+                if (data.status === 'processing' && data.total_pages > 0) {
+                    const pct = Math.round((data.pages_processed / data.total_pages) * 100);
+                    el.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <small class="fw-medium text-primary">
+                                <i class="bi bi-gear-fill spin"></i> Processing
+                            </small>
+                            <small class="progress-label text-muted">
+                                ${data.pages_processed}/${data.total_pages} pages
+                            </small>
+                        </div>
+                        <div class="progress" style="height:6px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                                 style="width:${pct}%"></div>
+                        </div>`;
+                }
+            });
+    }, 3000);
+});
 </script>
 {% endblock %}

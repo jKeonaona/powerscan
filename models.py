@@ -61,6 +61,8 @@ class Drawing(db.Model):
     original_filename = db.Column(db.String(300), nullable=False)
     project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
     uploaded_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    total_pages = db.Column(db.Integer, default=0)
+    pages_processed = db.Column(db.Integer, default=0)
     status = db.Column(db.String(20), default="pending")  # pending, processing, completed, failed
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 

@@ -60,6 +60,10 @@ def _process_one(app, drawing_id):
         try:
             images = convert_from_path(pdf_path, dpi=300)
 
+            drawing.total_pages = len(images)
+            drawing.pages_processed = 0
+            db.session.commit()
+
             for page_num, image in enumerate(images, start=1):
                 image_filename = f"page_{page_num}.jpg"
                 image_path = os.path.join(drawing_dir, image_filename)
@@ -78,6 +82,9 @@ def _process_one(app, drawing_id):
                     processed_at=datetime.now(timezone.utc),
                 )
                 db.session.add(page)
+
+                drawing.pages_processed = page_num
+                db.session.commit()
 
             drawing.status = "completed"
             db.session.commit()

@@ -262,7 +262,11 @@ def create_app():
     @login_required
     def drawing_status(drawing_id):
         drawing = db.session.get(Drawing, drawing_id) or abort(404)
-        return jsonify({"status": drawing.status})
+        return jsonify({
+            "status": drawing.status,
+            "total_pages": drawing.total_pages,
+            "pages_processed": drawing.pages_processed,
+        })
 
     @app.route("/drawings/<int:drawing_id>/delete", methods=["POST"])
     @login_required
