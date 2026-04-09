@@ -18,6 +18,24 @@ from ocr import configure_tesseract, start_worker
 from search import search_drawings
 
 
+def _run_migrations(database):
+    """Add any missing columns to existing tables via ALTER TABLE."""
+    conn = database.engine.raw_connection()
+    cursor = conn.cursor()
+    # Each entry: (table, column, column_def)
+    migrations = [
+        ("drawing", "total_pages", "INTEGER DEFAULT 0"),
+        ("drawing", "pages_processed", "INTEGER DEFAULT 0"),
+    ]
+    for table, column, col_def in migrations:
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+        except Exception:
+            pass  # Column already exists
+    conn.commit()
+    conn.close()
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -39,6 +57,8 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        # Migrate: add columns that may be missing from older databases
+        _run_migrations(db)
         # Create default superadmin if none exists
         if not User.query.filter_by(role=ROLE_SUPERADMIN).first():
             admin = User(
