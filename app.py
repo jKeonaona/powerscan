@@ -213,39 +213,45 @@ def create_app():
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-
-        if request.method == "POST":
-            file = request.files.get("pdf_file")
-            if not file or not file.filename.lower().endswith(".pdf"):
-                flash("Please upload a valid PDF file.", "danger")
-                return redirect(request.url)
-
-            # Save with unique filename
-            ext = os.path.splitext(file.filename)[1]
-            unique_name = f"{uuid.uuid4().hex}{ext}"
-            file.save(os.path.join(app.config["UPLOAD_FOLDER"], unique_name))
-
-            drawing = Drawing(
-                filename=unique_name,
-                original_filename=file.filename,
-                project_id=project.id,
-                uploaded_by=current_user.id,
-                status="pending",
-            )
-            db.session.add(drawing)
-            db.session.commit()
-
-            # Process OCR in background thread
-            thread = threading.Thread(
-                target=process_drawing, args=(app, drawing.id)
-            )
-            thread.daemon = True
-            thread.start()
-
-            flash(f"Drawing '{file.filename}' uploaded. OCR processing started.", "success")
-            return redirect(url_for("drawings", project_id=project.id))
-
         return render_template("upload.html", project=project)
+
+    @app.route("/projects/<int:project_id>/upload-file", methods=["POST"])
+    @login_required
+    def upload_single_file(project_id):
+        """AJAX endpoint: accepts one PDF at a time, returns JSON."""
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        file = request.files.get("pdf_file")
+        if not file or not file.filename.lower().endswith(".pdf"):
+            return jsonify({"error": "Invalid file. Only PDFs are accepted."}), 400
+
+        ext = os.path.splitext(file.filename)[1]
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        file.save(os.path.join(app.config["UPLOAD_FOLDER"], unique_name))
+
+        drawing = Drawing(
+            filename=unique_name,
+            original_filename=file.filename,
+            project_id=project.id,
+            uploaded_by=current_user.id,
+            status="pending",
+        )
+        db.session.add(drawing)
+        db.session.commit()
+
+        thread = threading.Thread(
+            target=process_drawing, args=(app, drawing.id)
+        )
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({
+            "id": drawing.id,
+            "filename": file.filename,
+            "status": "pending",
+        })
 
     @app.route("/drawings/<int:drawing_id>")
     @login_required

@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Upload Drawing - PowerScan{% endblock %}
+{% block title %}Upload Drawings - PowerScan{% endblock %}
 
 {% block content %}
 <div class="container">
     <div class="row justify-content-center">
-        <div class="col-md-6">
+        <div class="col-md-8">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
                     <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
@@ -13,26 +13,338 @@
                     <li class="breadcrumb-item active">Upload</li>
                 </ol>
             </nav>
-            <h2 class="mb-4">Upload Drawing</h2>
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <form method="POST" enctype="multipart/form-data">
-                        <div class="mb-3">
-                            <label for="pdf_file" class="form-label">Engineering Drawing (PDF)</label>
-                            <input type="file" class="form-control" id="pdf_file" name="pdf_file"
-                                   accept=".pdf" required>
-                            <div class="form-text">Upload a PDF file. Pages will be converted to JPEG and processed with OCR.</div>
-                        </div>
-                        <div class="d-flex gap-2">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-upload"></i> Upload & Process
-                            </button>
-                            <a href="{{ url_for('drawings', project_id=project.id) }}" class="btn btn-secondary">Cancel</a>
-                        </div>
-                    </form>
+            <h2 class="mb-4">Upload Drawings</h2>
+
+            <!-- Drop Zone -->
+            <div id="dropZone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <i class="bi bi-cloud-arrow-up"></i>
+                    <p class="drop-zone-title">Drag & drop PDF files here</p>
+                    <p class="drop-zone-subtitle">or</p>
+                    <label class="btn btn-outline-primary btn-lg">
+                        <i class="bi bi-folder2-open"></i> Browse Files
+                        <input type="file" id="fileInput" multiple accept=".pdf" hidden>
+                    </label>
+                    <p class="drop-zone-hint">Accepts multiple PDF files up to 100 MB each</p>
                 </div>
+            </div>
+
+            <!-- File List -->
+            <div id="fileList" class="file-list" style="display:none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0" id="fileListTitle">0 files selected</h5>
+                    <div class="d-flex gap-2">
+                        <button id="btnClear" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-x-lg"></i> Clear All
+                        </button>
+                        <button id="btnUpload" class="btn btn-sm btn-primary">
+                            <i class="bi bi-upload"></i> Upload All
+                        </button>
+                    </div>
+                </div>
+                <div id="fileItems"></div>
+            </div>
+
+            <!-- Done Actions -->
+            <div id="doneBar" class="text-center mt-4" style="display:none;">
+                <a href="{{ url_for('drawings', project_id=project.id) }}" class="btn btn-success btn-lg">
+                    <i class="bi bi-arrow-right"></i> View Drawings
+                </a>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+.drop-zone {
+    border: 2px dashed #c5ccd6;
+    border-radius: 1rem;
+    padding: 3.5rem 2rem;
+    text-align: center;
+    background: #f8fafc;
+    transition: all .2s ease;
+    cursor: pointer;
+}
+.drop-zone.drag-over {
+    border-color: #0d6efd;
+    background: #e8f0fe;
+    transform: scale(1.01);
+}
+.drop-zone-content i {
+    font-size: 3.5rem;
+    color: #8da0b8;
+    display: block;
+    margin-bottom: .75rem;
+}
+.drop-zone.drag-over .drop-zone-content i { color: #0d6efd; }
+.drop-zone-title {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #3a4a5c;
+    margin-bottom: .25rem;
+}
+.drop-zone-subtitle {
+    color: #8da0b8;
+    font-size: .9rem;
+    margin-bottom: .75rem;
+}
+.drop-zone-hint {
+    color: #a0aec0;
+    font-size: .8rem;
+    margin-top: 1rem;
+    margin-bottom: 0;
+}
+
+/* File list */
+.file-list {
+    margin-top: 1.5rem;
+}
+.file-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: .85rem 1rem;
+    background: #fff;
+    border: 1px solid #e8ecf1;
+    border-radius: .6rem;
+    margin-bottom: .5rem;
+    transition: border-color .2s;
+}
+.file-item:hover { border-color: #c5ccd6; }
+.file-item .file-icon {
+    font-size: 1.6rem;
+    color: #dc3545;
+    flex-shrink: 0;
+}
+.file-item .file-info {
+    flex: 1;
+    min-width: 0;
+}
+.file-item .file-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.file-item .file-size {
+    font-size: .8rem;
+    color: #8da0b8;
+}
+.file-item .file-actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+.file-item .btn-remove {
+    background: none;
+    border: none;
+    color: #a0aec0;
+    font-size: 1.1rem;
+    padding: 0 .25rem;
+    cursor: pointer;
+    transition: color .15s;
+}
+.file-item .btn-remove:hover { color: #dc3545; }
+
+/* Progress */
+.file-progress {
+    width: 100%;
+    height: 4px;
+    background: #e8ecf1;
+    border-radius: 2px;
+    margin-top: .4rem;
+    overflow: hidden;
+    display: none;
+}
+.file-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #0d6efd;
+    border-radius: 2px;
+    transition: width .25s ease;
+}
+.file-item.uploading .file-progress { display: block; }
+.file-item.success .file-progress-bar { background: #198754; width: 100%; }
+.file-item.error .file-progress-bar { background: #dc3545; width: 100%; }
+
+/* Status badges */
+.file-status {
+    font-size: .75rem;
+    font-weight: 500;
+    padding: .2rem .55rem;
+    border-radius: .3rem;
+    white-space: nowrap;
+}
+.file-status.waiting { background: #f0f1f3; color: #6c757d; }
+.file-status.uploading { background: #e8f0fe; color: #0d6efd; }
+.file-status.success { background: #d1f5e0; color: #0f5132; }
+.file-status.error { background: #fde2e4; color: #842029; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const UPLOAD_URL = "{{ url_for('upload_single_file', project_id=project.id) }}";
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const fileItems = document.getElementById('fileItems');
+const fileListTitle = document.getElementById('fileListTitle');
+const btnUpload = document.getElementById('btnUpload');
+const btnClear = document.getElementById('btnClear');
+const doneBar = document.getElementById('doneBar');
+
+let selectedFiles = [];
+
+// --- Drag & drop ---
+['dragenter','dragover'].forEach(e => {
+    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.add('drag-over'); });
+});
+['dragleave','drop'].forEach(e => {
+    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.remove('drag-over'); });
+});
+dropZone.addEventListener('drop', ev => {
+    const files = [...ev.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+    addFiles(files);
+});
+dropZone.addEventListener('click', ev => {
+    if (ev.target.closest('label') || ev.target.closest('input')) return;
+    fileInput.click();
+});
+fileInput.addEventListener('change', () => {
+    addFiles([...fileInput.files]);
+    fileInput.value = '';
+});
+
+function addFiles(files) {
+    files.forEach(f => {
+        if (!selectedFiles.some(s => s.file.name === f.name && s.file.size === f.size)) {
+            selectedFiles.push({ file: f, status: 'waiting', progress: 0 });
+        }
+    });
+    renderList();
+}
+
+function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    renderList();
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function renderList() {
+    if (selectedFiles.length === 0) {
+        fileList.style.display = 'none';
+        doneBar.style.display = 'none';
+        return;
+    }
+    fileList.style.display = 'block';
+    const pending = selectedFiles.filter(f => f.status === 'waiting').length;
+    const done = selectedFiles.filter(f => f.status === 'success').length;
+    fileListTitle.textContent = `${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''} selected`;
+    if (done > 0) fileListTitle.textContent += ` (${done} uploaded)`;
+
+    const uploading = selectedFiles.some(f => f.status === 'uploading');
+    btnUpload.disabled = uploading || pending === 0;
+    btnClear.disabled = uploading;
+
+    fileItems.innerHTML = selectedFiles.map((entry, i) => `
+        <div class="file-item ${entry.status}" data-idx="${i}">
+            <div class="file-icon"><i class="bi bi-file-earmark-pdf-fill"></i></div>
+            <div class="file-info">
+                <div class="file-name" title="${entry.file.name}">${entry.file.name}</div>
+                <div class="file-size">${formatSize(entry.file.size)}</div>
+                <div class="file-progress"><div class="file-progress-bar" style="width:${entry.progress}%"></div></div>
+                ${entry.errorMsg ? `<div class="text-danger" style="font-size:.8rem">${entry.errorMsg}</div>` : ''}
+            </div>
+            <div class="file-actions">
+                <span class="file-status ${entry.status}">
+                    ${entry.status === 'waiting' ? 'Ready' : ''}
+                    ${entry.status === 'uploading' ? 'Uploading...' : ''}
+                    ${entry.status === 'success' ? '<i class="bi bi-check-lg"></i> Done' : ''}
+                    ${entry.status === 'error' ? '<i class="bi bi-exclamation-triangle"></i> Failed' : ''}
+                </span>
+                ${entry.status === 'waiting' ? `<button class="btn-remove" onclick="removeFile(${i})" title="Remove"><i class="bi bi-x-lg"></i></button>` : ''}
+            </div>
+        </div>
+    `).join('');
+
+    // Show "View Drawings" when all done
+    const allDone = selectedFiles.every(f => f.status === 'success' || f.status === 'error');
+    doneBar.style.display = (allDone && done > 0) ? 'block' : 'none';
+}
+
+// --- Upload ---
+btnUpload.addEventListener('click', startUpload);
+
+async function startUpload() {
+    const pending = selectedFiles.filter(f => f.status === 'waiting');
+    if (pending.length === 0) return;
+
+    // Upload sequentially to avoid overwhelming the server
+    for (const entry of pending) {
+        entry.status = 'uploading';
+        entry.progress = 0;
+        renderList();
+
+        try {
+            await uploadFile(entry);
+            entry.status = 'success';
+            entry.progress = 100;
+        } catch (err) {
+            entry.status = 'error';
+            entry.progress = 100;
+            entry.errorMsg = err.message || 'Upload failed';
+        }
+        renderList();
+    }
+}
+
+function uploadFile(entry) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append('pdf_file', entry.file);
+
+        xhr.upload.addEventListener('progress', ev => {
+            if (ev.lengthComputable) {
+                entry.progress = Math.round((ev.loaded / ev.total) * 100);
+                // Update just the progress bar without full re-render
+                const el = document.querySelector(`.file-item[data-idx="${selectedFiles.indexOf(entry)}"] .file-progress-bar`);
+                if (el) el.style.width = entry.progress + '%';
+            }
+        });
+
+        xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(JSON.parse(xhr.responseText));
+            } else {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    reject(new Error(data.error || `HTTP ${xhr.status}`));
+                } catch {
+                    reject(new Error(`HTTP ${xhr.status}`));
+                }
+            }
+        });
+
+        xhr.addEventListener('error', () => reject(new Error('Network error')));
+        xhr.addEventListener('abort', () => reject(new Error('Aborted')));
+
+        xhr.open('POST', UPLOAD_URL);
+        xhr.send(formData);
+    });
+}
+
+// --- Clear ---
+btnClear.addEventListener('click', () => {
+    selectedFiles = [];
+    renderList();
+});
+</script>
 {% endblock %}
