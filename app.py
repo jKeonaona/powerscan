@@ -26,6 +26,7 @@ def _run_migrations(database):
     migrations = [
         ("drawing", "total_pages", "INTEGER DEFAULT 0"),
         ("drawing", "pages_processed", "INTEGER DEFAULT 0"),
+        ("drawing", "ocr_dpi", "INTEGER DEFAULT 0"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -287,6 +288,28 @@ def create_app():
             "total_pages": drawing.total_pages,
             "pages_processed": drawing.pages_processed,
         })
+
+    @app.route("/drawings/<int:drawing_id>/reprocess", methods=["POST"])
+    @login_required
+    def reprocess_drawing(drawing_id):
+        drawing = db.session.get(Drawing, drawing_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != drawing.project.company_id:
+            abort(403)
+        if drawing.status == "processing":
+            flash("Drawing is already being processed.", "warning")
+            return redirect(url_for("drawing_detail", drawing_id=drawing.id))
+
+        dpi = request.form.get("dpi", type=int)
+        if dpi not in (100, 150, 200, 300):
+            flash("Invalid DPI setting.", "danger")
+            return redirect(url_for("drawing_detail", drawing_id=drawing.id))
+
+        drawing.ocr_dpi = dpi
+        drawing.status = "pending"
+        drawing.pages_processed = 0
+        db.session.commit()
+        flash(f"Reprocessing at {dpi} DPI. OCR will restart shortly.", "success")
+        return redirect(url_for("drawing_detail", drawing_id=drawing.id))
 
     @app.route("/drawings/<int:drawing_id>/delete", methods=["POST"])
     @login_required

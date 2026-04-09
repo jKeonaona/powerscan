@@ -11,6 +11,11 @@ from pdf2image import convert_from_path, pdfinfo_from_path
 from models import db, Drawing, DrawingPage
 
 POLL_INTERVAL = 2  # seconds between queue checks
+COOLDOWN_BETWEEN_DRAWINGS = 30  # seconds between finishing one drawing and starting the next
+
+# Rate limiting tiers by file size
+SMALL_MAX = 2 * 1024 * 1024    # 2 MB
+MEDIUM_MAX = 5 * 1024 * 1024   # 5 MB
 
 
 def configure_tesseract(tesseract_cmd):
@@ -57,7 +62,33 @@ def _process_one(app, drawing_id):
         drawing_dir = os.path.join(app.config["PROCESSED_FOLDER"], str(drawing.id))
         os.makedirs(drawing_dir, exist_ok=True)
 
+        # Clear existing pages (for reprocessing)
+        DrawingPage.query.filter_by(drawing_id=drawing.id).delete()
+        db.session.commit()
+
         try:
+            # If a specific DPI was requested (reprocess), use it with no rate limiting
+            file_size = os.path.getsize(pdf_path)
+            if drawing.ocr_dpi and drawing.ocr_dpi > 0:
+                dpi = drawing.ocr_dpi
+                page_delay = 0
+                tier = "reprocess"
+            elif file_size > MEDIUM_MAX:
+                dpi = 100
+                page_delay = 10
+                tier = "large"
+            elif file_size > SMALL_MAX:
+                dpi = 150
+                page_delay = 5
+                tier = "medium"
+            else:
+                dpi = 200
+                page_delay = 0
+                tier = "small"
+
+            drawing.ocr_dpi = dpi
+            print(f"Drawing {drawing_id}: {file_size / 1024 / 1024:.1f} MB — {tier} tier, {dpi} DPI, {page_delay}s page delay")
+
             # Get page count without rendering any images
             info = pdfinfo_from_path(pdf_path)
             total = info.get("Pages", 0)
@@ -69,7 +100,7 @@ def _process_one(app, drawing_id):
             for page_num in range(1, total + 1):
                 # Convert one page at a time to limit memory usage
                 images = convert_from_path(
-                    pdf_path, dpi=200,
+                    pdf_path, dpi=dpi,
                     first_page=page_num, last_page=page_num,
                 )
                 image = images[0]
@@ -98,6 +129,10 @@ def _process_one(app, drawing_id):
 
                 drawing.pages_processed = page_num
                 db.session.commit()
+
+                # Rate limit between pages for larger files
+                if page_delay and page_num < total:
+                    time.sleep(page_delay)
 
             drawing.status = "completed"
             db.session.commit()
@@ -131,6 +166,7 @@ def _worker_loop(app):
                 )
                 if drawing:
                     _process_one(app, drawing.id)
+                    time.sleep(COOLDOWN_BETWEEN_DRAWINGS)
                 else:
                     time.sleep(POLL_INTERVAL)
         except Exception as e:
