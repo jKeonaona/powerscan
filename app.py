@@ -1,6 +1,5 @@
 import os
 import uuid
-import threading
 
 from flask import (
     Flask, render_template, request, redirect, url_for, flash,
@@ -15,7 +14,7 @@ from models import (
     db, User, Company, Project, Drawing, DrawingPage,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
 )
-from ocr import process_drawing, configure_tesseract
+from ocr import configure_tesseract, start_worker
 from search import search_drawings
 
 
@@ -50,6 +49,9 @@ def create_app():
             admin.set_password("admin123")
             db.session.add(admin)
             db.session.commit()
+
+    # Start background OCR worker thread
+    start_worker(app)
 
     # ── Decorators ──────────────────────────────────────────────
 
@@ -240,12 +242,6 @@ def create_app():
         )
         db.session.add(drawing)
         db.session.commit()
-
-        thread = threading.Thread(
-            target=process_drawing, args=(app, drawing.id)
-        )
-        thread.daemon = True
-        thread.start()
 
         return jsonify({
             "id": drawing.id,

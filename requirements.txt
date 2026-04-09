@@ -7,3 +7,4 @@ Pillow==11.1.0
 pytesseract==0.3.13
 opencv-python==4.11.0.86
 anthropic==0.52.0
+python-dotenv==1.1.0
