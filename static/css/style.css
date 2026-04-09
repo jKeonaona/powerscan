@@ -1,0 +1,126 @@
+/* PowerScan Custom Styles */
+
+body {
+    background-color: #f4f6f9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Navbar */
+.navbar-brand {
+    font-weight: 700;
+    font-size: 1.3rem;
+}
+
+/* Cards */
+.card {
+    border: none;
+    border-radius: 0.5rem;
+    transition: transform 0.15s ease;
+}
+
+.card:hover {
+    transform: translateY(-1px);
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid #eee;
+    font-weight: 600;
+}
+
+/* Stats cards */
+.card.text-white {
+    border-radius: 0.75rem;
+}
+
+.card.text-white .card-body {
+    padding: 1.5rem;
+}
+
+/* Tables */
+.table th {
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #6c757d;
+    border-bottom-width: 1px;
+}
+
+.table td {
+    vertical-align: middle;
+}
+
+/* OCR text display */
+.ocr-text-box {
+    max-height: 500px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+.ocr-text-box pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 0.85rem;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+}
+
+/* Search results */
+.search-answer {
+    font-size: 1rem;
+    line-height: 1.7;
+}
+
+/* Login page */
+.card.shadow .card-body h3 {
+    color: #333;
+    font-weight: 600;
+}
+
+/* Breadcrumbs */
+.breadcrumb {
+    background: none;
+    padding: 0;
+    font-size: 0.9rem;
+}
+
+/* Badges */
+.badge {
+    font-weight: 500;
+    font-size: 0.75rem;
+}
+
+/* Image display */
+.img-fluid.border {
+    max-height: 600px;
+    object-fit: contain;
+}
+
+/* Buttons */
+.btn-sm {
+    font-size: 0.8rem;
+}
+
+/* Alerts */
+.alert {
+    border: none;
+    border-radius: 0.5rem;
+}
+
+/* Spinner */
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .container-fluid {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .table-responsive {
+        font-size: 0.85rem;
+    }
+}

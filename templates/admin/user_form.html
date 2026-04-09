@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if user else 'New' }} User - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <h2 class="mb-4">{{ 'Edit' if user else 'New' }} User</h2>
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label for="username" class="form-label">Username</label>
+                            {% if user %}
+                            <input type="text" class="form-control" value="{{ user.username }}" disabled>
+                            {% else %}
+                            <input type="text" class="form-control" id="username" name="username" required>
+                            {% endif %}
+                        </div>
+                        <div class="mb-3">
+                            <label for="email" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="email" name="email"
+                                   value="{{ user.email if user else '' }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Password{% if user %} (leave blank to keep current){% endif %}</label>
+                            <input type="password" class="form-control" id="password" name="password"
+                                   {{ '' if user else 'required' }}>
+                        </div>
+                        {% if current_user.is_superadmin %}
+                        <div class="mb-3">
+                            <label for="role" class="form-label">Role</label>
+                            <select class="form-select" id="role" name="role">
+                                {% for role in roles %}
+                                <option value="{{ role }}" {{ 'selected' if user and user.role == role else '' }}>
+                                    {{ role | capitalize }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="company_id" class="form-label">Company</label>
+                            <select class="form-select" id="company_id" name="company_id">
+                                <option value="">— None —</option>
+                                {% for company in companies %}
+                                <option value="{{ company.id }}"
+                                        {{ 'selected' if user and user.company_id == company.id else '' }}>
+                                    {{ company.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        {% endif %}
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                {{ 'Update' if user else 'Create' }} User
+                            </button>
+                            <a href="{{ url_for('admin_users') }}" class="btn btn-secondary">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

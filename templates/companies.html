@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Companies - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Companies</h2>
+        {% if current_user.is_admin %}
+        <a href="{{ url_for('new_company') }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> New Company
+        </a>
+        {% endif %}
+    </div>
+
+    {% if companies %}
+    <div class="row">
+        {% for company in companies %}
+        <div class="col-md-4 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-building"></i> {{ company.name }}</h5>
+                    <p class="text-muted">
+                        {{ company.projects | length }} project(s)
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent d-flex justify-content-between">
+                    <a href="{{ url_for('projects', company_id=company.id) }}" class="btn btn-sm btn-outline-primary">
+                        View Projects
+                    </a>
+                    {% if current_user.is_superadmin %}
+                    <form method="POST" action="{{ url_for('delete_company', company_id=company.id) }}"
+                          onsubmit="return confirm('Delete this company and all its data?')">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-building fs-1 text-muted"></i>
+        <p class="text-muted mt-2">No companies found.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

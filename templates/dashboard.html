@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2 class="mb-4">Dashboard</h2>
+
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-white bg-primary shadow">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="card-title mb-0">Companies</h6>
+                            <h2 class="mt-2 mb-0">{{ stats.companies }}</h2>
+                        </div>
+                        <i class="bi bi-building fs-1 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-white bg-success shadow">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="card-title mb-0">Projects</h6>
+                            <h2 class="mt-2 mb-0">{{ stats.projects }}</h2>
+                        </div>
+                        <i class="bi bi-folder fs-1 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-white bg-info shadow">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="card-title mb-0">Drawings</h6>
+                            <h2 class="mt-2 mb-0">{{ stats.drawings }}</h2>
+                        </div>
+                        <i class="bi bi-file-earmark-pdf fs-1 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Recent Companies</h5>
+            {% if current_user.is_admin %}
+            <a href="{{ url_for('new_company') }}" class="btn btn-sm btn-primary">
+                <i class="bi bi-plus-lg"></i> New Company
+            </a>
+            {% endif %}
+        </div>
+        <div class="card-body">
+            {% if companies %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Company</th>
+                            <th>Projects</th>
+                            <th>Drawings</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for company in companies[:10] %}
+                        <tr>
+                            <td><i class="bi bi-building"></i> {{ company.name }}</td>
+                            <td>{{ company.projects | length }}</td>
+                            <td>
+                                {% set ns = namespace(count=0) %}
+                                {% for p in company.projects %}{% set ns.count = ns.count + p.drawings|length %}{% endfor %}
+                                {{ ns.count }}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('projects', company_id=company.id) }}" class="btn btn-sm btn-outline-primary">
+                                    View Projects
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">No companies yet. {% if current_user.is_admin %}Create one to get started.{% endif %}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

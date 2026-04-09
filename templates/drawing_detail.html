@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ drawing.original_filename }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=drawing.project.company_id) }}">{{ drawing.project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('drawings', project_id=drawing.project_id) }}">{{ drawing.project.name }}</a></li>
+            <li class="breadcrumb-item active">{{ drawing.original_filename }}</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2>{{ drawing.original_filename }}</h2>
+            <p class="text-muted mb-0">
+                Status:
+                {% if drawing.status == 'completed' %}
+                <span class="badge bg-success">Completed</span>
+                {% elif drawing.status == 'processing' %}
+                <span class="badge bg-warning">Processing...</span>
+                {% elif drawing.status == 'failed' %}
+                <span class="badge bg-danger">Failed</span>
+                {% else %}
+                <span class="badge bg-secondary">Pending</span>
+                {% endif %}
+                &middot; {{ pages | length }} page(s)
+                &middot; Uploaded {{ drawing.created_at.strftime('%Y-%m-%d %H:%M') }}
+            </p>
+        </div>
+    </div>
+
+    {% if pages %}
+    <div class="row">
+        {% for page in pages %}
+        <div class="col-12 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h5 class="mb-0">Page {{ page.page_number }}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Scanned Image</h6>
+                            <img src="{{ url_for('serve_processed', filename=page.image_path) }}"
+                                 class="img-fluid border rounded" alt="Page {{ page.page_number }}">
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Extracted Text (OCR)</h6>
+                            <div class="ocr-text-box bg-light p-3 rounded border">
+                                <pre class="mb-0">{{ page.extracted_text or 'No text extracted.' }}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% elif drawing.status == 'processing' %}
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="text-muted mt-3">Processing drawing... This page will refresh automatically.</p>
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-hourglass fs-1 text-muted"></i>
+        <p class="text-muted mt-2">Waiting for processing to begin.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if drawing.status in ['pending', 'processing'] %}
+<script>
+    const interval = setInterval(() => {
+        fetch(`/drawings/{{ drawing.id }}/status`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'completed' || data.status === 'failed') {
+                    clearInterval(interval);
+                    location.reload();
+                }
+            });
+    }, 3000);
+</script>
+{% endif %}
+{% endblock %}

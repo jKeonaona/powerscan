@@ -1,0 +1,94 @@
+import os
+import uuid
+from datetime import datetime, timezone
+
+import cv2
+import numpy as np
+import pytesseract
+from pdf2image import convert_from_path
+
+from models import db, Drawing, DrawingPage
+
+
+def configure_tesseract(tesseract_cmd):
+    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+
+def preprocess_image(image_path):
+    """Apply OpenCV preprocessing to improve OCR accuracy on engineering drawings."""
+    img = cv2.imread(image_path)
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Apply adaptive thresholding for engineering drawings with varying contrast
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10
+    )
+    # Denoise
+    denoised = cv2.fastNlMeansDenoising(thresh, h=10)
+    # Deskew
+    coords = np.column_stack(np.where(denoised > 0))
+    if len(coords) > 5:
+        angle = cv2.minAreaRect(coords)[-1]
+        if angle < -45:
+            angle = -(90 + angle)
+        else:
+            angle = -angle
+        if abs(angle) > 0.5:
+            h, w = denoised.shape
+            center = (w // 2, h // 2)
+            matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+            denoised = cv2.warpAffine(
+                denoised, matrix, (w, h),
+                flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
+            )
+    return denoised
+
+
+def process_drawing(app, drawing_id):
+    """Convert PDF pages to JPEGs, run OCR, and store extracted text."""
+    with app.app_context():
+        drawing = db.session.get(Drawing, drawing_id)
+        if not drawing:
+            return
+
+        drawing.status = "processing"
+        db.session.commit()
+
+        pdf_path = os.path.join(app.config["UPLOAD_FOLDER"], drawing.filename)
+        drawing_dir = os.path.join(app.config["PROCESSED_FOLDER"], str(drawing.id))
+        os.makedirs(drawing_dir, exist_ok=True)
+
+        try:
+            # Convert PDF pages to images
+            images = convert_from_path(pdf_path, dpi=300)
+
+            for page_num, image in enumerate(images, start=1):
+                # Save as JPEG
+                image_filename = f"page_{page_num}.jpg"
+                image_path = os.path.join(drawing_dir, image_filename)
+                image.save(image_path, "JPEG", quality=95)
+
+                # Preprocess with OpenCV
+                processed = preprocess_image(image_path)
+
+                # Run Tesseract OCR
+                custom_config = r"--oem 3 --psm 6"
+                text = pytesseract.image_to_string(processed, config=custom_config)
+
+                # Store page record
+                page = DrawingPage(
+                    drawing_id=drawing.id,
+                    page_number=page_num,
+                    image_path=f"{drawing.id}/{image_filename}",
+                    extracted_text=text.strip(),
+                    processed_at=datetime.now(timezone.utc),
+                )
+                db.session.add(page)
+
+            drawing.status = "completed"
+            db.session.commit()
+
+        except Exception as e:
+            drawing.status = "failed"
+            db.session.commit()
+            print(f"OCR processing failed for drawing {drawing_id}: {e}")
