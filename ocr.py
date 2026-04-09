@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import cv2
 import numpy as np
 import pytesseract
-from pdf2image import convert_from_path
+from pdf2image import convert_from_path, pdfinfo_from_path
 
 from models import db, Drawing, DrawingPage
 
@@ -58,21 +58,34 @@ def _process_one(app, drawing_id):
         os.makedirs(drawing_dir, exist_ok=True)
 
         try:
-            images = convert_from_path(pdf_path, dpi=300)
+            # Get page count without rendering any images
+            info = pdfinfo_from_path(pdf_path)
+            total = info.get("Pages", 0)
 
-            drawing.total_pages = len(images)
+            drawing.total_pages = total
             drawing.pages_processed = 0
             db.session.commit()
 
-            for page_num, image in enumerate(images, start=1):
+            for page_num in range(1, total + 1):
+                # Convert one page at a time to limit memory usage
+                images = convert_from_path(
+                    pdf_path, dpi=200,
+                    first_page=page_num, last_page=page_num,
+                )
+                image = images[0]
+
                 image_filename = f"page_{page_num}.jpg"
                 image_path = os.path.join(drawing_dir, image_filename)
                 image.save(image_path, "JPEG", quality=95)
+
+                # Free the PDF image from memory immediately
+                del images, image
 
                 processed = preprocess_image(image_path)
 
                 custom_config = r"--oem 3 --psm 6"
                 text = pytesseract.image_to_string(processed, config=custom_config)
+                del processed
 
                 page = DrawingPage(
                     drawing_id=drawing.id,
