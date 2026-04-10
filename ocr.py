@@ -1,8 +1,10 @@
+import base64
 import os
 import threading
 import time
 from datetime import datetime, timezone
 
+import anthropic
 import cv2
 import numpy as np
 import pytesseract
@@ -23,21 +25,37 @@ def configure_tesseract(tesseract_cmd):
 
 
 def preprocess_image(image_path):
-    """Apply OpenCV preprocessing to improve OCR accuracy on engineering drawings."""
+    """Apply OpenCV preprocessing optimized for old engineering drawings."""
     img = cv2.imread(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    thresh = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10
-    )
-    denoised = cv2.fastNlMeansDenoising(thresh, h=10)
+
+    # 1) CLAHE — boost contrast on faded/uneven scans
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # 2) Bilateral filter — remove noise while preserving text edges
+    filtered = cv2.bilateralFilter(enhanced, 9, 75, 75)
+
+    # 3) Otsu binarization — automatically picks the best threshold
+    _, binary = cv2.threshold(filtered, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # 4) Morphological cleanup — close small gaps in text, remove speckle
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel)
+
+    # 5) Aggressive denoise on the binary image
+    denoised = cv2.fastNlMeansDenoising(cleaned, h=15)
+
+    # 6) Deskew
     coords = np.column_stack(np.where(denoised > 0))
-    if len(coords) > 5:
+    if len(coords) > 100:
         angle = cv2.minAreaRect(coords)[-1]
         if angle < -45:
             angle = -(90 + angle)
         else:
             angle = -angle
-        if abs(angle) > 0.5:
+        if abs(angle) > 0.3:
             h, w = denoised.shape
             center = (w // 2, h // 2)
             matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -45,7 +63,64 @@ def preprocess_image(image_path):
                 denoised, matrix, (w, h),
                 flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
             )
+
     return denoised
+
+
+def _score_text(text):
+    """Score OCR text quality — higher is better."""
+    if not text:
+        return 0
+    words = text.split()
+    if not words:
+        return 0
+    # Favor longer text with more real words (3+ chars, mostly alpha)
+    real_words = sum(1 for w in words if len(w) >= 3 and sum(c.isalpha() for c in w) / len(w) > 0.5)
+    # Penalize high ratio of garbage characters
+    alpha_ratio = sum(c.isalnum() or c.isspace() for c in text) / len(text)
+    return real_words * alpha_ratio
+
+
+def _extract_with_claude_vision(image_path, api_key):
+    """Send page image to Claude Vision API to extract text."""
+    if not api_key:
+        return ""
+
+    try:
+        with open(image_path, "rb") as f:
+            image_data = base64.standard_b64encode(f.read()).decode("utf-8")
+
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": image_data,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "Extract ALL text visible in this engineering drawing. "
+                                    "Include title blocks, notes, dimensions, labels, part numbers, "
+                                    "revision info, and any other text. Preserve the layout as much "
+                                    "as possible. Output only the extracted text, nothing else.",
+                        },
+                    ],
+                }
+            ],
+        )
+        return message.content[0].text.strip()
+    except Exception as e:
+        print(f"Claude Vision extraction failed: {e}")
+        return ""
 
 
 def _process_one(app, drawing_id):
@@ -65,6 +140,8 @@ def _process_one(app, drawing_id):
         # Clear existing pages (for reprocessing)
         DrawingPage.query.filter_by(drawing_id=drawing.id).delete()
         db.session.commit()
+
+        api_key = app.config.get("ANTHROPIC_API_KEY", "")
 
         try:
             # If a specific DPI was requested (reprocess), use it with no rate limiting
@@ -112,17 +189,32 @@ def _process_one(app, drawing_id):
                 # Free the PDF image from memory immediately
                 del images, image
 
+                # --- Tesseract OCR ---
                 processed = preprocess_image(image_path)
-
                 custom_config = r"--oem 3 --psm 6"
-                text = pytesseract.image_to_string(processed, config=custom_config)
+                tesseract_text = pytesseract.image_to_string(processed, config=custom_config).strip()
                 del processed
+
+                # --- Claude Vision OCR ---
+                claude_text = _extract_with_claude_vision(image_path, api_key)
+
+                # Pick the better result
+                tesseract_score = _score_text(tesseract_text)
+                claude_score = _score_text(claude_text)
+                if claude_text and claude_score > tesseract_score:
+                    best_text = claude_text
+                    source = "claude"
+                else:
+                    best_text = tesseract_text
+                    source = "tesseract"
+
+                print(f"  Page {page_num}: tesseract={tesseract_score:.0f}, claude={claude_score:.0f} → {source}")
 
                 page = DrawingPage(
                     drawing_id=drawing.id,
                     page_number=page_num,
                     image_path=f"{drawing.id}/{image_filename}",
-                    extracted_text=text.strip(),
+                    extracted_text=best_text,
                     processed_at=datetime.now(timezone.utc),
                 )
                 db.session.add(page)
