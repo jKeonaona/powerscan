@@ -321,16 +321,11 @@ def create_app():
             flash("Drawing is already being processed.", "warning")
             return redirect(url_for("drawing_detail", drawing_id=drawing.id))
 
-        dpi = request.form.get("dpi", type=int)
-        if dpi not in (100, 150, 200, 300):
-            flash("Invalid DPI setting.", "danger")
-            return redirect(url_for("drawing_detail", drawing_id=drawing.id))
-
-        drawing.ocr_dpi = dpi
+        drawing.ocr_dpi = 0  # Reset so worker runs full auto-escalating pipeline
         drawing.status = "pending"
         drawing.pages_processed = 0
         db.session.commit()
-        flash(f"Reprocessing at {dpi} DPI. OCR will restart shortly.", "success")
+        flash("Reprocessing with full pipeline (100 → 150 → 300 DPI + Claude Vision).", "success")
         return redirect(url_for("drawing_detail", drawing_id=drawing.id))
 
     @app.route("/drawings/<int:drawing_id>/delete", methods=["POST"])
