@@ -308,6 +308,7 @@ def create_app():
             "status": drawing.status,
             "total_pages": drawing.total_pages,
             "pages_processed": drawing.pages_processed,
+            "ocr_dpi": drawing.ocr_dpi,
         })
 
     @app.route("/drawings/<int:drawing_id>/reprocess", methods=["POST"])
