@@ -1,9 +1,11 @@
+import io
 import os
 import uuid
+from datetime import datetime, timezone
 
 from flask import (
     Flask, render_template, request, redirect, url_for, flash,
-    send_from_directory, jsonify, abort,
+    send_from_directory, send_file, jsonify, abort,
 )
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user,
@@ -11,7 +13,7 @@ from flask_login import (
 
 from config import Config
 from models import (
-    db, User, Company, Project, Drawing, DrawingPage,
+    db, User, Company, Project, Drawing, DrawingPage, SearchHistory,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
 )
@@ -253,6 +255,15 @@ def create_app():
                     app.config["PROCESSED_FOLDER"],
                     doc_type=search_doc_type or None,
                 )
+                history = SearchHistory(
+                    project_id=project.id,
+                    user_id=current_user.id,
+                    query=query,
+                    answer=results.get("answer", "") if results else "",
+                    doc_type_filter=search_doc_type or None,
+                )
+                db.session.add(history)
+                db.session.commit()
 
         drawings_q = Drawing.query.filter_by(project_id=project.id)
         if filter_doc_type:
@@ -386,6 +397,90 @@ def create_app():
     def serve_processed(filename):
         return send_from_directory(app.config["PROCESSED_FOLDER"], filename)
 
+    # ── Search History ──────────────────────────────────────────
+
+    def _project_history(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        entries = (
+            SearchHistory.query
+            .filter_by(project_id=project.id)
+            .order_by(SearchHistory.created_at.desc())
+            .all()
+        )
+        return project, entries
+
+    @app.route("/projects/<int:project_id>/history")
+    @login_required
+    def search_history(project_id):
+        project, entries = _project_history(project_id)
+        return render_template("search_history.html", project=project, entries=entries)
+
+    @app.route("/projects/<int:project_id>/history/export")
+    @login_required
+    def export_search_history(project_id):
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, PageBreak, HRFlowable,
+        )
+        from reportlab.lib import colors
+        from xml.sax.saxutils import escape as xml_escape
+
+        project, entries = _project_history(project_id)
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=letter,
+            leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+            topMargin=0.75 * inch, bottomMargin=0.75 * inch,
+            title=f"Search History — {project.name}",
+        )
+        styles = getSampleStyleSheet()
+        h_title = styles["Title"]
+        h_meta = ParagraphStyle("meta", parent=styles["Normal"], textColor=colors.grey, fontSize=9, spaceAfter=12)
+        h_q = ParagraphStyle("q", parent=styles["Heading3"], textColor=colors.HexColor("#0d6efd"), spaceAfter=4)
+        h_entry_meta = ParagraphStyle("em", parent=styles["Normal"], textColor=colors.grey, fontSize=8, spaceAfter=6)
+        h_a = ParagraphStyle("a", parent=styles["BodyText"], leading=14, spaceAfter=10)
+
+        def p(text, style):
+            return Paragraph(xml_escape(text or "").replace("\n", "<br/>"), style)
+
+        story = [
+            Paragraph(f"Search History — {xml_escape(project.name)}", h_title),
+            Paragraph(
+                f"{xml_escape(project.company.name)} &middot; {len(entries)} search(es) &middot; "
+                f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+                h_meta,
+            ),
+            HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey, spaceAfter=12),
+        ]
+
+        if not entries:
+            story.append(Paragraph("No searches recorded for this project.", styles["Italic"]))
+        else:
+            for i, e in enumerate(entries, start=1):
+                who = e.user.username if e.user else "unknown"
+                when = e.created_at.strftime("%Y-%m-%d %H:%M UTC")
+                filt = f" &middot; filter: {xml_escape(e.doc_type_filter)}" if e.doc_type_filter else ""
+                story.append(p(f"{i}. {e.query}", h_q))
+                story.append(Paragraph(f"{xml_escape(who)} &middot; {when}{filt}", h_entry_meta))
+                story.append(p(e.answer or "(no answer recorded)", h_a))
+                if i < len(entries):
+                    story.append(HRFlowable(width="100%", thickness=0.3, color=colors.whitesmoke, spaceAfter=10))
+
+        doc.build(story)
+        buf.seek(0)
+        fname = f"search-history-{project.id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
+        return send_file(
+            buf,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=fname,
+        )
+
     # ── Search ──────────────────────────────────────────────────
 
     @app.route("/search", methods=["GET", "POST"])
@@ -427,6 +522,15 @@ def create_app():
                         app.config["PROCESSED_FOLDER"],
                         doc_type=search_doc_type or None,
                     )
+                    history = SearchHistory(
+                        project_id=selected_project_id,
+                        user_id=current_user.id,
+                        query=query,
+                        answer=results.get("answer", "") if results else "",
+                        doc_type_filter=search_doc_type or None,
+                    )
+                    db.session.add(history)
+                    db.session.commit()
 
         return render_template(
             "search.html",

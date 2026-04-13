@@ -80,3 +80,16 @@ class DrawingPage(db.Model):
     page_number = db.Column(db.Integer, nullable=False)
     image_path = db.Column(db.String(500), nullable=False)
     processed_at = db.Column(db.DateTime, nullable=True)
+
+
+class SearchHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    query = db.Column(db.Text, nullable=False)
+    answer = db.Column(db.Text, nullable=False, default="")
+    doc_type_filter = db.Column(db.String(40), nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    project = db.relationship("Project", backref=db.backref("search_history", cascade="all, delete-orphan"))
+    user = db.relationship("User")

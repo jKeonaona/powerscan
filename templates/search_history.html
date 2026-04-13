@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Search History - {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('drawings', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item active">Search History</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-clock-history"></i> Search History</h2>
+            <p class="text-muted mb-0">{{ project.name }} &middot; {{ entries | length }} search(es)</p>
+        </div>
+        <div>
+            <a href="{{ url_for('drawings', project_id=project.id) }}" class="btn btn-outline-secondary me-2">
+                <i class="bi bi-arrow-left"></i> Back
+            </a>
+            {% if entries %}
+            <a href="{{ url_for('export_search_history', project_id=project.id) }}" class="btn btn-primary">
+                <i class="bi bi-file-earmark-pdf"></i> Export PDF
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if entries %}
+    <div class="list-group shadow-sm">
+        {% for entry in entries %}
+        <div class="list-group-item">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <h5 class="mb-0 text-primary"><i class="bi bi-chat-left-quote"></i> {{ entry.query }}</h5>
+                <small class="text-muted text-nowrap ms-3">
+                    {{ entry.created_at.strftime('%Y-%m-%d %H:%M UTC') }}
+                </small>
+            </div>
+            <div class="small text-muted mb-2">
+                <i class="bi bi-person"></i> {{ entry.user.username if entry.user else 'unknown' }}
+                {% if entry.doc_type_filter %}
+                &middot; <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">{{ entry.doc_type_filter }}</span>
+                {% endif %}
+            </div>
+            <div class="search-answer bg-light rounded p-3 border">
+                {{ entry.answer | replace('\n', '<br>') | safe if entry.answer else '<em class="text-muted">(no answer recorded)</em>' | safe }}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-clock-history fs-1 text-muted"></i>
+        <p class="text-muted mt-2">No searches have been run for this project yet.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
