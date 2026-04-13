@@ -26,10 +26,16 @@
                     <input type="text" class="form-control" name="query"
                            placeholder="Ask a question about these drawings..."
                            value="{{ query }}" required autocomplete="off">
+                    <select name="search_doc_type" class="form-select" style="max-width:180px;">
+                        <option value="">All types</option>
+                        {% for dt in doc_types %}
+                        <option value="{{ dt }}" {% if search_doc_type == dt %}selected{% endif %}>{{ dt }}</option>
+                        {% endfor %}
+                    </select>
                     <button type="submit" class="btn btn-primary" id="btnSearch">Search</button>
                 </div>
                 <div class="form-text">
-                    Claude Vision reads the ready drawings in this project and answers with page citations.
+                    Claude Vision reads the ready drawings in this project (filtered by type if chosen) and answers with page citations.
                 </div>
             </form>
         </div>
@@ -71,11 +77,27 @@
     {% endif %}
 
     {% if project.drawings %}
+    <form method="GET" class="d-flex align-items-center gap-2 mb-3">
+        <label for="filterDocType" class="form-label mb-0 text-muted small">Filter by type:</label>
+        <select id="filterDocType" name="filter_doc_type" class="form-select form-select-sm" style="max-width:200px;" onchange="this.form.submit()">
+            <option value="">All types</option>
+            {% for dt in doc_types %}
+            <option value="{{ dt }}" {% if filter_doc_type == dt %}selected{% endif %}>{{ dt }}</option>
+            {% endfor %}
+        </select>
+        {% if filter_doc_type %}
+        <a href="{{ url_for('drawings', project_id=project.id) }}" class="btn btn-sm btn-link text-muted">Clear</a>
+        {% endif %}
+        <span class="text-muted small ms-auto">{{ drawings_list | length }} of {{ project.drawings | length }}</span>
+    </form>
+
+    {% if drawings_list %}
     <div class="table-responsive">
         <table class="table table-hover align-middle">
             <thead>
                 <tr>
                     <th>Filename</th>
+                    <th>Type</th>
                     <th>Pages</th>
                     <th style="min-width:220px">Status</th>
                     <th>Uploaded</th>
@@ -83,12 +105,13 @@
                 </tr>
             </thead>
             <tbody>
-                {% for drawing in project.drawings %}
+                {% for drawing in drawings_list %}
                 <tr id="row-{{ drawing.id }}">
                     <td>
                         <i class="bi bi-file-earmark-pdf text-danger"></i>
                         <a href="{{ url_for('drawing_detail', drawing_id=drawing.id) }}">{{ drawing.original_filename }}</a>
                     </td>
+                    <td><span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">{{ drawing.doc_type }}</span></td>
                     <td class="pages-col">{{ drawing.pages | length }}</td>
                     <td class="status-col">
                         {% if drawing.status == 'ready' %}
@@ -139,6 +162,11 @@
             </tbody>
         </table>
     </div>
+    {% else %}
+    <div class="text-center py-4">
+        <p class="text-muted mb-0">No drawings match the selected type.</p>
+    </div>
+    {% endif %}
     {% else %}
     <div class="text-center py-5">
         <i class="bi bi-file-earmark-pdf fs-1 text-muted"></i>

@@ -21,6 +21,15 @@
                     </select>
                 </div>
                 <div class="mb-3">
+                    <label for="search_doc_type" class="form-label">Document type</label>
+                    <select class="form-select" id="search_doc_type" name="search_doc_type">
+                        <option value="">All types</option>
+                        {% for dt in doc_types %}
+                        <option value="{{ dt }}" {% if search_doc_type == dt %}selected{% endif %}>{{ dt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-3">
                     <label for="query" class="form-label">Ask a question about the drawings</label>
                     <div class="input-group input-group-lg">
                         <input type="text" class="form-control" id="query" name="query"

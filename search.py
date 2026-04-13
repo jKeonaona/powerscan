@@ -10,7 +10,7 @@ from models import db, Drawing, DrawingPage, Project
 MAX_IMAGES_PER_REQUEST = 80
 
 
-def search_drawings(query, project_id, api_key, processed_folder):
+def search_drawings(query, project_id, api_key, processed_folder, doc_type=None):
     """Send all page images from a project to Claude Vision with the query."""
     load_dotenv()
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -19,18 +19,20 @@ def search_drawings(query, project_id, api_key, processed_folder):
     if not project:
         return {"answer": "Project not found.", "sources": []}
 
-    pages = (
+    pages_q = (
         db.session.query(DrawingPage, Drawing)
         .join(Drawing, DrawingPage.drawing_id == Drawing.id)
         .filter(Drawing.project_id == project_id)
         .filter(Drawing.status == "ready")
-        .order_by(Drawing.original_filename, DrawingPage.page_number)
-        .all()
     )
+    if doc_type:
+        pages_q = pages_q.filter(Drawing.doc_type == doc_type)
+    pages = pages_q.order_by(Drawing.original_filename, DrawingPage.page_number).all()
 
     if not pages:
+        scope = f" of type '{doc_type}'" if doc_type else ""
         return {
-            "answer": "No drawings are ready in this project yet. Upload and wait for conversion.",
+            "answer": f"No ready drawings{scope} were found in this project.",
             "sources": [],
         }
 

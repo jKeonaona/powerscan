@@ -13,6 +13,7 @@ from config import Config
 from models import (
     db, User, Company, Project, Drawing, DrawingPage,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
+    DOC_TYPES, DEFAULT_DOC_TYPE,
 )
 from pipeline import start_worker
 from search import search_drawings
@@ -26,6 +27,7 @@ def _run_migrations(database):
     migrations = [
         ("drawing", "total_pages", "INTEGER DEFAULT 0"),
         ("drawing", "pages_processed", "INTEGER DEFAULT 0"),
+        ("drawing", "doc_type", "VARCHAR(40) DEFAULT 'Drawing'"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -227,10 +229,18 @@ def create_app():
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
 
+        filter_doc_type = request.values.get("filter_doc_type", "").strip()
+        if filter_doc_type and filter_doc_type not in DOC_TYPES:
+            filter_doc_type = ""
+
         results = None
         query = ""
+        search_doc_type = ""
         if request.method == "POST":
             query = request.form.get("query", "").strip()
+            search_doc_type = request.form.get("search_doc_type", "").strip()
+            if search_doc_type and search_doc_type not in DOC_TYPES:
+                search_doc_type = ""
             if not query:
                 flash("Please enter a question.", "danger")
             elif not app.config["ANTHROPIC_API_KEY"]:
@@ -241,9 +251,24 @@ def create_app():
                     project.id,
                     app.config["ANTHROPIC_API_KEY"],
                     app.config["PROCESSED_FOLDER"],
+                    doc_type=search_doc_type or None,
                 )
 
-        return render_template("drawings.html", project=project, results=results, query=query)
+        drawings_q = Drawing.query.filter_by(project_id=project.id)
+        if filter_doc_type:
+            drawings_q = drawings_q.filter_by(doc_type=filter_doc_type)
+        drawings_list = drawings_q.order_by(Drawing.created_at.desc()).all()
+
+        return render_template(
+            "drawings.html",
+            project=project,
+            drawings_list=drawings_list,
+            results=results,
+            query=query,
+            doc_types=DOC_TYPES,
+            filter_doc_type=filter_doc_type,
+            search_doc_type=search_doc_type,
+        )
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
     @login_required
@@ -251,7 +276,7 @@ def create_app():
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        return render_template("upload.html", project=project)
+        return render_template("upload.html", project=project, doc_types=DOC_TYPES)
 
     @app.route("/projects/<int:project_id>/upload-file", methods=["POST"])
     @login_required
@@ -266,6 +291,9 @@ def create_app():
             return jsonify({"error": "Invalid file. Only PDFs are accepted."}), 400
 
         replace = request.form.get("replace") == "1"
+        doc_type = request.form.get("doc_type", DEFAULT_DOC_TYPE)
+        if doc_type not in DOC_TYPES:
+            doc_type = DEFAULT_DOC_TYPE
 
         # Check for duplicate filename in this project
         existing = Drawing.query.filter_by(
@@ -295,6 +323,7 @@ def create_app():
             original_filename=file.filename,
             project_id=project.id,
             uploaded_by=current_user.id,
+            doc_type=doc_type,
             status="pending",
         )
         db.session.add(drawing)
@@ -371,9 +400,13 @@ def create_app():
         results = None
         query = ""
         selected_project_id = None
+        search_doc_type = ""
         if request.method == "POST":
             query = request.form.get("query", "").strip()
             selected_project_id = request.form.get("project_id", type=int)
+            search_doc_type = request.form.get("search_doc_type", "").strip()
+            if search_doc_type and search_doc_type not in DOC_TYPES:
+                search_doc_type = ""
             if not query:
                 flash("Please enter a search query.", "danger")
             elif not selected_project_id:
@@ -392,6 +425,7 @@ def create_app():
                         selected_project_id,
                         app.config["ANTHROPIC_API_KEY"],
                         app.config["PROCESSED_FOLDER"],
+                        doc_type=search_doc_type or None,
                     )
 
         return render_template(
@@ -400,6 +434,8 @@ def create_app():
             query=query,
             projects=projects_list,
             selected_project_id=selected_project_id,
+            doc_types=DOC_TYPES,
+            search_doc_type=search_doc_type,
         )
 
     # ── Admin: User Management ──────────────────────────────────

@@ -15,6 +15,16 @@
             </nav>
             <h2 class="mb-4">Upload Drawings</h2>
 
+            <div class="mb-3">
+                <label for="docType" class="form-label fw-medium">Document Type</label>
+                <select id="docType" class="form-select">
+                    {% for dt in doc_types %}
+                    <option value="{{ dt }}">{{ dt }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">Applies to every file uploaded in this batch.</div>
+            </div>
+
             <!-- Drop Zone -->
             <div id="dropZone" class="drop-zone">
                 <div class="drop-zone-content">
@@ -256,6 +266,7 @@ function renderList() {
     const uploading = selectedFiles.some(f => f.status === 'uploading');
     btnUpload.disabled = uploading || pending === 0;
     btnClear.disabled = uploading;
+    document.getElementById('docType').disabled = uploading;
 
     fileItems.innerHTML = selectedFiles.map((entry, i) => `
         <div class="file-item ${entry.status}" data-idx="${i}">
@@ -334,6 +345,7 @@ function uploadFile(entry, replace = false) {
         const xhr = new XMLHttpRequest();
         const formData = new FormData();
         formData.append('pdf_file', entry.file);
+        formData.append('doc_type', document.getElementById('docType').value);
         if (replace) formData.append('replace', '1');
 
         xhr.upload.addEventListener('progress', ev => {
