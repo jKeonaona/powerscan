@@ -404,7 +404,7 @@ def create_app():
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
         entries = (
-            SearchHistory.query
+            db.session.query(SearchHistory)
             .filter_by(project_id=project.id)
             .order_by(SearchHistory.created_at.desc())
             .all()
