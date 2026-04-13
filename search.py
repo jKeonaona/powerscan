@@ -3,6 +3,7 @@ import os
 import re
 
 import anthropic
+from dotenv import load_dotenv
 
 from models import db, Drawing, DrawingPage, Project
 
@@ -11,7 +12,9 @@ MAX_IMAGES_PER_REQUEST = 80
 
 def search_drawings(query, project_id, api_key, processed_folder):
     """Send all page images from a project to Claude Vision with the query."""
-    print(f"[powerscan] search_drawings api_key: {api_key[:10] if api_key else '(empty)'}", flush=True)
+    load_dotenv()
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    print(f"[powerscan] search_drawings api_key: {api_key[:20] if api_key else '(empty)'}", flush=True)
     project = db.session.get(Project, project_id)
     if not project:
         return {"answer": "Project not found.", "sources": []}
