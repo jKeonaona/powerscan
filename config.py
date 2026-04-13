@@ -1,16 +1,9 @@
 import os
-import platform
 
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
-
-_DEFAULT_TESSERACT = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-    if platform.system() == "Windows"
-    else "/usr/bin/tesseract"
-)
 
 
 class Config:
@@ -19,6 +12,5 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
     PROCESSED_FOLDER = os.path.join(BASE_DIR, "processed")
-    MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max upload
+    MAX_CONTENT_LENGTH = 100 * 1024 * 1024
     ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-    TESSERACT_CMD = os.environ.get("TESSERACT_CMD", _DEFAULT_TESSERACT)

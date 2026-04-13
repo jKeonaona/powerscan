@@ -63,8 +63,7 @@ class Drawing(db.Model):
     uploaded_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     total_pages = db.Column(db.Integer, default=0)
     pages_processed = db.Column(db.Integer, default=0)
-    ocr_dpi = db.Column(db.Integer, default=0)
-    status = db.Column(db.String(20), default="pending")  # pending, processing, completed, failed
+    status = db.Column(db.String(20), default="pending")  # pending, processing, ready, failed
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     uploader = db.relationship("User", backref="drawings")
@@ -76,5 +75,4 @@ class DrawingPage(db.Model):
     drawing_id = db.Column(db.Integer, db.ForeignKey("drawing.id"), nullable=False)
     page_number = db.Column(db.Integer, nullable=False)
     image_path = db.Column(db.String(500), nullable=False)
-    extracted_text = db.Column(db.Text, default="")
     processed_at = db.Column(db.DateTime, nullable=True)

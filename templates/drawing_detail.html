@@ -17,28 +17,25 @@
             <h2>{{ drawing.original_filename }}</h2>
             <p class="text-muted mb-0">
                 Status:
-                {% if drawing.status == 'completed' %}
-                <span class="badge bg-success">Completed</span>
+                {% if drawing.status == 'ready' %}
+                <span class="badge bg-success">Ready</span>
                 {% elif drawing.status == 'processing' %}
-                <span class="badge bg-warning">Processing...</span>
+                <span class="badge bg-warning">Converting...</span>
                 {% elif drawing.status == 'failed' %}
                 <span class="badge bg-danger">Failed</span>
                 {% else %}
                 <span class="badge bg-secondary">Pending</span>
                 {% endif %}
                 &middot; {{ pages | length }} page(s)
-                {% if drawing.ocr_dpi %}
-                &middot; <span class="badge bg-light text-dark border">{{ drawing.ocr_dpi }} DPI</span>
-                {% endif %}
                 &middot; Uploaded {{ drawing.created_at.strftime('%Y-%m-%d %H:%M') }}
             </p>
         </div>
         <div>
-            {% if drawing.status in ['completed', 'failed'] %}
+            {% if drawing.status in ['ready', 'failed'] %}
             <form method="POST" action="{{ url_for('reprocess_drawing', drawing_id=drawing.id) }}"
-                  class="d-inline" onsubmit="return confirm('Reprocess this drawing through all DPI passes (100 → 150 → 300 + Claude Vision)?')">
+                  class="d-inline" onsubmit="return confirm('Reconvert this PDF?')">
                 <button type="submit" class="btn btn-outline-secondary">
-                    <i class="bi bi-arrow-clockwise"></i> Reprocess
+                    <i class="bi bi-arrow-clockwise"></i> Reconvert
                 </button>
             </form>
             {% endif %}
@@ -46,31 +43,18 @@
     </div>
 
     {% if pages %}
-    <div class="row">
+    <div class="row g-3">
         {% for page in pages %}
-        <div class="col-12 mb-4">
-            <div class="card shadow-sm">
-                <div class="card-header">
-                    <h5 class="mb-0">Page {{ page.page_number }}</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <h6>Scanned Image <small class="text-muted">(click to zoom)</small></h6>
-                            <img src="{{ url_for('serve_processed', filename=page.image_path) }}"
-                                 class="img-fluid border rounded page-thumb"
-                                 alt="Page {{ page.page_number }}"
-                                 data-full-src="{{ url_for('serve_processed', filename=page.image_path) }}"
-                                 data-page-num="{{ page.page_number }}"
-                                 role="button">
-                        </div>
-                        <div class="col-md-6">
-                            <h6>Extracted Text (OCR)</h6>
-                            <div class="ocr-text-box bg-light p-3 rounded border">
-                                <pre class="mb-0">{{ page.extracted_text or 'No text extracted.' }}</pre>
-                            </div>
-                        </div>
-                    </div>
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card shadow-sm h-100">
+                <img src="{{ url_for('serve_processed', filename=page.image_path) }}"
+                     class="card-img-top page-thumb"
+                     alt="Page {{ page.page_number }}"
+                     data-full-src="{{ url_for('serve_processed', filename=page.image_path) }}"
+                     data-page-num="{{ page.page_number }}"
+                     role="button">
+                <div class="card-body py-2 text-center">
+                    <small class="text-muted">Page {{ page.page_number }}</small>
                 </div>
             </div>
         </div>
@@ -79,12 +63,12 @@
     {% elif drawing.status == 'processing' %}
     <div class="text-center py-5">
         <div class="spinner-border text-primary" role="status"></div>
-        <p class="text-muted mt-3">Processing drawing... This page will refresh automatically.</p>
+        <p class="text-muted mt-3">Converting PDF pages... This page will refresh automatically.</p>
     </div>
     {% else %}
     <div class="text-center py-5">
         <i class="bi bi-hourglass fs-1 text-muted"></i>
-        <p class="text-muted mt-2">Waiting for processing to begin.</p>
+        <p class="text-muted mt-2">Waiting for conversion to begin.</p>
     </div>
     {% endif %}
 </div>
@@ -117,6 +101,9 @@
 .page-thumb {
     cursor: pointer;
     transition: opacity .15s, box-shadow .15s;
+    object-fit: contain;
+    background: #f8f9fa;
+    max-height: 340px;
 }
 .page-thumb:hover {
     opacity: .85;
@@ -143,7 +130,7 @@
         fetch(`/drawings/{{ drawing.id }}/status`)
             .then(r => r.json())
             .then(data => {
-                if (data.status === 'completed' || data.status === 'failed') {
+                if (data.status === 'ready' || data.status === 'failed') {
                     clearInterval(interval);
                     location.reload();
                 }
@@ -153,7 +140,6 @@
 {% endif %}
 
 <script>
-// Lightbox
 const modal = new bootstrap.Modal(document.getElementById('lightboxModal'));
 const lightboxImg = document.getElementById('lightboxImg');
 const lightboxTitle = document.getElementById('lightboxTitle');
@@ -169,11 +155,9 @@ document.querySelectorAll('.page-thumb').forEach(img => {
     });
 });
 
-// Fit image to viewport on load
 lightboxImg.addEventListener('load', () => {
     currentScale = 1;
     lightboxImg.style.transform = `scale(${currentScale})`;
-    // Set initial size to fit
     const body = document.querySelector('.lightbox-body');
     const maxW = body.clientWidth - 40;
     const maxH = body.clientHeight - 40;
@@ -201,7 +185,6 @@ document.getElementById('btnZoomReset').addEventListener('click', () => {
     lightboxImg.style.maxHeight = (body.clientHeight - 40) + 'px';
 });
 
-// Mouse wheel zoom
 document.querySelector('.lightbox-body').addEventListener('wheel', (e) => {
     e.preventDefault();
     if (e.deltaY < 0) {

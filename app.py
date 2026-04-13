@@ -14,7 +14,7 @@ from models import (
     db, User, Company, Project, Drawing, DrawingPage,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
 )
-from ocr import configure_tesseract, start_worker
+from pipeline import start_worker
 from search import search_drawings
 
 
@@ -26,7 +26,6 @@ def _run_migrations(database):
     migrations = [
         ("drawing", "total_pages", "INTEGER DEFAULT 0"),
         ("drawing", "pages_processed", "INTEGER DEFAULT 0"),
-        ("drawing", "ocr_dpi", "INTEGER DEFAULT 0"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -46,7 +45,6 @@ def create_app():
     os.makedirs(os.path.join(app.instance_path), exist_ok=True)
 
     db.init_app(app)
-    configure_tesseract(app.config["TESSERACT_CMD"])
 
     login_manager = LoginManager()
     login_manager.login_view = "login"
@@ -71,7 +69,7 @@ def create_app():
             db.session.add(admin)
             db.session.commit()
 
-    # Start background OCR worker thread
+    # Start background conversion worker thread
     start_worker(app)
 
     # ── Decorators ──────────────────────────────────────────────
@@ -308,7 +306,6 @@ def create_app():
             "status": drawing.status,
             "total_pages": drawing.total_pages,
             "pages_processed": drawing.pages_processed,
-            "ocr_dpi": drawing.ocr_dpi,
         })
 
     @app.route("/drawings/<int:drawing_id>/reprocess", methods=["POST"])
@@ -321,11 +318,10 @@ def create_app():
             flash("Drawing is already being processed.", "warning")
             return redirect(url_for("drawing_detail", drawing_id=drawing.id))
 
-        drawing.ocr_dpi = 0  # Reset so worker runs full auto-escalating pipeline
         drawing.status = "pending"
         drawing.pages_processed = 0
         db.session.commit()
-        flash("Reprocessing with full pipeline (100 → 150 → 300 DPI + Claude Vision).", "success")
+        flash("Reconverting PDF pages to images.", "success")
         return redirect(url_for("drawing_detail", drawing_id=drawing.id))
 
     @app.route("/drawings/<int:drawing_id>/delete", methods=["POST"])
@@ -349,28 +345,51 @@ def create_app():
     @app.route("/search", methods=["GET", "POST"])
     @login_required
     def search():
+        if current_user.is_superadmin:
+            projects_list = (
+                Project.query.join(Company).order_by(Company.name, Project.name).all()
+            )
+        elif current_user.company_id:
+            projects_list = (
+                Project.query.filter_by(company_id=current_user.company_id)
+                .order_by(Project.name).all()
+            )
+        else:
+            projects_list = []
+
         results = None
         query = ""
+        selected_project_id = None
         if request.method == "POST":
             query = request.form.get("query", "").strip()
+            selected_project_id = request.form.get("project_id", type=int)
             if not query:
                 flash("Please enter a search query.", "danger")
+            elif not selected_project_id:
+                flash("Please select a project.", "danger")
             elif not app.config["ANTHROPIC_API_KEY"]:
                 flash("Claude API key not configured. Set ANTHROPIC_API_KEY environment variable.", "danger")
             else:
-                company_id = current_user.company_id
-                if current_user.is_superadmin:
-                    company_id = request.form.get("company_id", type=int)
-                    if not company_id:
-                        first_company = Company.query.first()
-                        company_id = first_company.id if first_company else None
-                if not company_id:
-                    flash("No company selected.", "danger")
+                project = db.session.get(Project, selected_project_id)
+                if not project:
+                    flash("Project not found.", "danger")
+                elif not current_user.is_superadmin and current_user.company_id != project.company_id:
+                    abort(403)
                 else:
-                    results = search_drawings(query, company_id, app.config["ANTHROPIC_API_KEY"])
+                    results = search_drawings(
+                        query,
+                        selected_project_id,
+                        app.config["ANTHROPIC_API_KEY"],
+                        app.config["PROCESSED_FOLDER"],
+                    )
 
-        companies = Company.query.all() if current_user.is_superadmin else []
-        return render_template("search.html", results=results, query=query, companies=companies)
+        return render_template(
+            "search.html",
+            results=results,
+            query=query,
+            projects=projects_list,
+            selected_project_id=selected_project_id,
+        )
 
     # ── Admin: User Management ──────────────────────────────────
 

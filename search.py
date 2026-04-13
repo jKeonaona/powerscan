@@ -1,72 +1,102 @@
+import base64
+import os
+import re
+
 import anthropic
 
-from models import db, Drawing, DrawingPage, Project, Company
+from models import db, Drawing, DrawingPage, Project
+
+MAX_IMAGES_PER_REQUEST = 80
 
 
-def search_drawings(query, company_id, api_key):
-    """Use Claude API to search through extracted drawing text."""
-    # Gather all completed drawing text for the company
+def search_drawings(query, project_id, api_key, processed_folder):
+    """Send all page images from a project to Claude Vision with the query."""
+    project = db.session.get(Project, project_id)
+    if not project:
+        return {"answer": "Project not found.", "sources": []}
+
     pages = (
-        db.session.query(DrawingPage, Drawing, Project)
+        db.session.query(DrawingPage, Drawing)
         .join(Drawing, DrawingPage.drawing_id == Drawing.id)
-        .join(Project, Drawing.project_id == Project.id)
-        .filter(Project.company_id == company_id)
-        .filter(Drawing.status == "completed")
-        .filter(DrawingPage.extracted_text != "")
+        .filter(Drawing.project_id == project_id)
+        .filter(Drawing.status == "ready")
+        .order_by(Drawing.original_filename, DrawingPage.page_number)
         .all()
     )
 
     if not pages:
         return {
-            "answer": "No processed drawings found for your company. Please upload and process some drawings first.",
+            "answer": "No drawings are ready in this project yet. Upload and wait for conversion.",
             "sources": [],
         }
 
-    # Build context from drawing pages
-    context_parts = []
-    source_map = {}
-    for page, drawing, project in pages:
-        key = f"[{project.name} / {drawing.original_filename} / Page {page.page_number}]"
-        context_parts.append(f"{key}\n{page.extracted_text}\n")
-        source_map[key] = {
+    if len(pages) > MAX_IMAGES_PER_REQUEST:
+        return {
+            "answer": (
+                f"This project has {len(pages)} pages, exceeding the per-request limit "
+                f"of {MAX_IMAGES_PER_REQUEST}. Narrow the scope or split the project."
+            ),
+            "sources": [],
+        }
+
+    content = []
+    index_map = {}
+    for i, (page, drawing) in enumerate(pages, start=1):
+        abs_path = os.path.join(processed_folder, page.image_path)
+        try:
+            with open(abs_path, "rb") as f:
+                data = base64.standard_b64encode(f.read()).decode("utf-8")
+        except FileNotFoundError:
+            continue
+
+        label = f"INDEX {i}: {drawing.original_filename} — page {page.page_number}"
+        index_map[i] = {
             "drawing_id": drawing.id,
-            "project": project.name,
             "filename": drawing.original_filename,
             "page": page.page_number,
         }
+        content.append({"type": "text", "text": label})
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": data,
+            },
+        })
 
-    context = "\n---\n".join(context_parts)
+    if not content:
+        return {"answer": "No page images could be loaded from disk.", "sources": []}
 
-    # Truncate context if too large (keep under ~150k chars for safety)
-    if len(context) > 150000:
-        context = context[:150000] + "\n...[truncated]"
+    content.append({
+        "type": "text",
+        "text": (
+            f"QUESTION: {query}\n\n"
+            "You are an engineering drawing assistant. The images above are pages from "
+            f"the project '{project.name}'. Each image is preceded by an 'INDEX N' label "
+            "identifying its filename and page number. Study the actual drawing images "
+            "(title blocks, notes, dimensions, schematics, labels) and answer the question.\n\n"
+            "Your response MUST:\n"
+            "1. Start with a direct answer.\n"
+            "2. Cite the INDEX number(s) where you found the information, like [INDEX 3].\n"
+            "3. If the information is not visible in any page, say so clearly."
+        ),
+    })
 
     client = anthropic.Anthropic(api_key=api_key)
-
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2048,
-        messages=[
-            {
-                "role": "user",
-                "content": f"""You are an engineering drawing search assistant. Below is extracted OCR text from engineering drawings. Answer the user's question based on this content. Reference specific drawings and page numbers in your answer.
-
-DRAWING CONTENT:
-{context}
-
-USER QUESTION: {query}
-
-Provide a clear, specific answer referencing the relevant drawings. If the information is not found in the drawings, say so clearly.""",
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
     )
-
     answer = message.content[0].text
 
-    # Extract referenced sources from the answer
     sources = []
-    for key, info in source_map.items():
-        if key in answer or info["filename"] in answer or info["project"] in answer:
-            sources.append(info)
+    seen = set()
+    for match in re.findall(r"INDEX\s+(\d+)", answer):
+        idx = int(match)
+        if idx in index_map and idx not in seen:
+            seen.add(idx)
+            sources.append(index_map[idx])
 
-    return {"answer": answer, "sources": sources[:10]}
+    return {"answer": answer, "sources": sources}

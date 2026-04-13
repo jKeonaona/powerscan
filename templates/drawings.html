@@ -39,17 +39,15 @@
                     </td>
                     <td class="pages-col">{{ drawing.pages | length }}</td>
                     <td class="status-col">
-                        {% if drawing.status == 'completed' %}
-                        <span class="badge bg-success"><i class="bi bi-check-lg"></i> Completed</span>
-                        {% if drawing.ocr_dpi %}<small class="text-muted ms-1">{{ drawing.ocr_dpi }} DPI</small>{% endif %}
+                        {% if drawing.status == 'ready' %}
+                        <span class="badge bg-success"><i class="bi bi-check-lg"></i> Ready</span>
                         {% elif drawing.status == 'failed' %}
                         <span class="badge bg-danger"><i class="bi bi-exclamation-triangle"></i> Failed</span>
                         {% elif drawing.status == 'processing' %}
                         <div class="ocr-progress" data-drawing-id="{{ drawing.id }}">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <small class="fw-medium text-primary">
-                                    <i class="bi bi-gear-fill spin"></i> Processing
-                                    {% if drawing.ocr_dpi %}<span class="badge bg-primary bg-opacity-25 text-primary ms-1">{{ drawing.ocr_dpi }} DPI</span>{% endif %}
+                                    <i class="bi bi-gear-fill spin"></i> Converting
                                 </small>
                                 <small class="progress-label text-muted">
                                     {{ drawing.pages_processed }}/{{ drawing.total_pages }} pages
@@ -114,10 +112,9 @@ document.querySelectorAll('.ocr-progress[data-drawing-id]').forEach(el => {
         fetch(`/drawings/${drawingId}/status`)
             .then(r => r.json())
             .then(data => {
-                if (data.status === 'completed') {
+                if (data.status === 'ready') {
                     clearInterval(poll);
-                    const dpiLabel = data.ocr_dpi ? `<small class="text-muted ms-1">${data.ocr_dpi} DPI</small>` : '';
-                    el.innerHTML = `<span class="badge bg-success"><i class="bi bi-check-lg"></i> Completed</span>${dpiLabel}`;
+                    el.innerHTML = `<span class="badge bg-success"><i class="bi bi-check-lg"></i> Ready</span>`;
                     const row = document.getElementById(`row-${drawingId}`);
                     if (row) row.querySelector('.pages-col').textContent = data.total_pages;
                     return;
@@ -129,11 +126,10 @@ document.querySelectorAll('.ocr-progress[data-drawing-id]').forEach(el => {
                 }
                 if (data.status === 'processing' && data.total_pages > 0) {
                     const pct = Math.round((data.pages_processed / data.total_pages) * 100);
-                    const dpiBadge = data.ocr_dpi ? `<span class="badge bg-primary bg-opacity-25 text-primary ms-1">${data.ocr_dpi} DPI</span>` : '';
                     el.innerHTML = `
                         <div class="d-flex justify-content-between align-items-center mb-1">
                             <small class="fw-medium text-primary">
-                                <i class="bi bi-gear-fill spin"></i> Processing ${dpiBadge}
+                                <i class="bi bi-gear-fill spin"></i> Converting
                             </small>
                             <small class="progress-label text-muted">
                                 ${data.pages_processed}/${data.total_pages} pages
