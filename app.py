@@ -220,13 +220,30 @@ def create_app():
 
     # ── Drawing Routes ──────────────────────────────────────────
 
-    @app.route("/projects/<int:project_id>/drawings")
+    @app.route("/projects/<int:project_id>/drawings", methods=["GET", "POST"])
     @login_required
     def drawings(project_id):
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        return render_template("drawings.html", project=project)
+
+        results = None
+        query = ""
+        if request.method == "POST":
+            query = request.form.get("query", "").strip()
+            if not query:
+                flash("Please enter a question.", "danger")
+            elif not app.config["ANTHROPIC_API_KEY"]:
+                flash("Claude API key not configured. Set ANTHROPIC_API_KEY environment variable.", "danger")
+            else:
+                results = search_drawings(
+                    query,
+                    project.id,
+                    app.config["ANTHROPIC_API_KEY"],
+                    app.config["PROCESSED_FOLDER"],
+                )
+
+        return render_template("drawings.html", project=project, results=results, query=query)
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
     @login_required
@@ -345,17 +362,11 @@ def create_app():
     @app.route("/search", methods=["GET", "POST"])
     @login_required
     def search():
-        if current_user.is_superadmin:
-            projects_list = (
-                Project.query.join(Company).order_by(Company.name, Project.name).all()
-            )
-        elif current_user.company_id:
-            projects_list = (
-                Project.query.filter_by(company_id=current_user.company_id)
-                .order_by(Project.name).all()
-            )
-        else:
-            projects_list = []
+        if not current_user.is_superadmin:
+            abort(403)
+        projects_list = (
+            Project.query.join(Company).order_by(Company.name, Project.name).all()
+        )
 
         results = None
         query = ""

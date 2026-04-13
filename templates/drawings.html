@@ -18,6 +18,58 @@
         </a>
     </div>
 
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="POST" id="searchForm">
+                <div class="input-group input-group-lg">
+                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" name="query"
+                           placeholder="Ask a question about these drawings..."
+                           value="{{ query }}" required autocomplete="off">
+                    <button type="submit" class="btn btn-primary" id="btnSearch">Search</button>
+                </div>
+                <div class="form-text">
+                    Claude Vision reads the ready drawings in this project and answers with page citations.
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="searchLoading" class="text-center py-4" style="display:none;">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="text-muted mt-2 mb-0">Claude is reading the drawings...</p>
+    </div>
+
+    {% if results %}
+    <div class="card shadow-sm mb-4" id="searchResults">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-chat-left-text"></i> Answer</h5>
+        </div>
+        <div class="card-body">
+            <div class="search-answer mb-3">
+                {{ results.answer | replace('\n', '<br>') | safe }}
+            </div>
+            {% if results.sources %}
+            <hr>
+            <h6 class="text-muted mb-3"><i class="bi bi-link-45deg"></i> Found on</h6>
+            <div class="list-group">
+                {% for source in results.sources %}
+                <a href="{{ url_for('drawing_detail', drawing_id=source.drawing_id) }}"
+                   class="list-group-item list-group-item-action d-flex align-items-center">
+                    <i class="bi bi-file-earmark-pdf text-danger me-3 fs-5"></i>
+                    <div>
+                        <div class="fw-medium">{{ source.filename }}</div>
+                        <small class="text-muted">Page {{ source.page }}</small>
+                    </div>
+                    <i class="bi bi-chevron-right ms-auto text-muted"></i>
+                </a>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
     {% if project.drawings %}
     <div class="table-responsive">
         <table class="table table-hover align-middle">
@@ -105,6 +157,13 @@
 
 {% block scripts %}
 <script>
+document.getElementById('searchForm').addEventListener('submit', () => {
+    const results = document.getElementById('searchResults');
+    if (results) results.style.display = 'none';
+    document.getElementById('searchLoading').style.display = 'block';
+    document.getElementById('btnSearch').disabled = true;
+});
+
 document.querySelectorAll('.ocr-progress[data-drawing-id]').forEach(el => {
     const drawingId = el.dataset.drawingId;
 
