@@ -1,14 +1,30 @@
 import base64
+import io
 import os
 import re
 
 import anthropic
 from dotenv import load_dotenv
+from PIL import Image
 
 from models import db, Drawing, DrawingPage, Project
 
-MAX_IMAGES_PER_REQUEST = 80
+MAX_IMAGES_PER_REQUEST = 20
+MAX_IMAGE_WIDTH = 800
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
+
+
+def _load_and_shrink(image_path):
+    """Return base64-encoded JPEG bytes, resized to MAX_IMAGE_WIDTH if wider."""
+    with Image.open(image_path) as img:
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        if img.width > MAX_IMAGE_WIDTH:
+            new_height = round(img.height * MAX_IMAGE_WIDTH / img.width)
+            img = img.resize((MAX_IMAGE_WIDTH, new_height), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+    return base64.standard_b64encode(buf.getvalue()).decode("utf-8")
 
 
 def _build_batch_content(batch_pages, processed_folder, start_index):
@@ -19,9 +35,11 @@ def _build_batch_content(batch_pages, processed_folder, start_index):
     for page, drawing in batch_pages:
         abs_path = os.path.join(processed_folder, page.image_path)
         try:
-            with open(abs_path, "rb") as f:
-                data = base64.standard_b64encode(f.read()).decode("utf-8")
+            data = _load_and_shrink(abs_path)
         except FileNotFoundError:
+            continue
+        except Exception as e:
+            print(f"[powerscan] skipping {abs_path}: {e}", flush=True)
             continue
 
         label = f"INDEX {idx}: {drawing.original_filename} — page {page.page_number}"
