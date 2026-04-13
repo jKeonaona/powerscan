@@ -2,8 +2,12 @@ import os
 
 from dotenv import load_dotenv
 
+load_dotenv()
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+_key = os.environ.get("ANTHROPIC_API_KEY", "")
+print(f"[powerscan] ANTHROPIC_API_KEY loaded: {_key[:10] if _key else '(empty)'}", flush=True)
 
 
 class Config:
@@ -13,4 +17,4 @@ class Config:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
     PROCESSED_FOLDER = os.path.join(BASE_DIR, "processed")
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024
-    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+    ANTHROPIC_API_KEY = _key
