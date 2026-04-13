@@ -11,6 +11,7 @@ MAX_IMAGES_PER_REQUEST = 80
 
 def search_drawings(query, project_id, api_key, processed_folder):
     """Send all page images from a project to Claude Vision with the query."""
+    print(f"[powerscan] search_drawings api_key: {api_key[:10] if api_key else '(empty)'}", flush=True)
     project = db.session.get(Project, project_id)
     if not project:
         return {"answer": "Project not found.", "sources": []}
