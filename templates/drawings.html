@@ -38,11 +38,66 @@
                         {% endfor %}
                     </select>
                     <button type="submit" class="btn btn-primary" id="btnSearch">Search</button>
+                    <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#reportModal">
+                        <i class="bi bi-file-earmark-word"></i> Generate Report
+                    </button>
                 </div>
                 <div class="form-text">
                     Claude Vision reads the ready drawings in this project (filtered by type if chosen) and answers with page citations.
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Report Generator Modal -->
+    <div class="modal fade" id="reportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <form method="POST" action="{{ url_for('generate_project_report', project_id=project.id) }}" id="reportForm">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-file-earmark-word"></i> Generate Report</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted small mb-3">
+                            Claude will read every ready drawing in this project and produce a branded Word document. Large projects are processed in batches and may take a minute.
+                        </p>
+                        <div class="row g-3">
+                            {% for tpl_id, tpl in report_templates.items() %}
+                            <div class="col-md-6">
+                                <label class="template-card d-block h-100">
+                                    <input type="radio" name="template_id" value="{{ tpl_id }}" required>
+                                    <div class="template-card-body">
+                                        <div class="fw-bold">{{ tpl.name }}</div>
+                                        <div class="small text-muted">{{ tpl.description }}</div>
+                                    </div>
+                                </label>
+                            </div>
+                            {% endfor %}
+                            <div class="col-md-6">
+                                <label class="template-card d-block h-100">
+                                    <input type="radio" name="template_id" value="custom" id="tplCustom">
+                                    <div class="template-card-body">
+                                        <div class="fw-bold">Custom</div>
+                                        <div class="small text-muted">Write your own prompt.</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="mt-3" id="customPromptWrap" style="display:none;">
+                            <label for="customPrompt" class="form-label fw-medium">Custom prompt</label>
+                            <textarea class="form-control" id="customPrompt" name="custom_prompt" rows="4"
+                                      placeholder="e.g., Extract all fire protection requirements with specification references..."></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="btnGenerateReport">
+                            <i class="bi bi-file-earmark-arrow-down"></i> Generate &amp; Download
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -185,6 +240,21 @@
 .spin { display: inline-block; animation: spin 1.5s linear infinite; }
 .ocr-progress { min-width: 180px; }
 .progress { border-radius: 3px; background: #e9ecef; }
+
+.template-card { cursor: pointer; margin-bottom: 0; }
+.template-card input[type="radio"] { display: none; }
+.template-card .template-card-body {
+    border: 2px solid #e8ecf1;
+    border-radius: .6rem;
+    padding: .85rem 1rem;
+    transition: border-color .15s, background .15s;
+    height: 100%;
+}
+.template-card:hover .template-card-body { border-color: #0d6efd; }
+.template-card input[type="radio"]:checked + .template-card-body {
+    border-color: #0d6efd;
+    background: #e8f0fe;
+}
 </style>
 {% endblock %}
 
@@ -195,6 +265,19 @@ document.getElementById('searchForm').addEventListener('submit', () => {
     if (results) results.style.display = 'none';
     document.getElementById('searchLoading').style.display = 'block';
     document.getElementById('btnSearch').disabled = true;
+});
+
+// Report modal — show custom-prompt textarea only when Custom is selected
+const customWrap = document.getElementById('customPromptWrap');
+document.querySelectorAll('input[name="template_id"]').forEach(r => {
+    r.addEventListener('change', () => {
+        customWrap.style.display = r.value === 'custom' && r.checked ? 'block' : (document.getElementById('tplCustom').checked ? 'block' : 'none');
+    });
+});
+document.getElementById('reportForm').addEventListener('submit', (e) => {
+    const btn = document.getElementById('btnGenerateReport');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating (this may take a minute)...';
 });
 
 document.querySelectorAll('.ocr-progress[data-drawing-id]').forEach(el => {
