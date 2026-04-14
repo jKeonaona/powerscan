@@ -281,6 +281,21 @@ def create_app():
             .all()
         )
 
+        history_entries = (
+            db.session.query(SearchHistory)
+            .filter_by(project_id=project.id)
+            .order_by(SearchHistory.created_at.desc())
+            .limit(50)
+            .all()
+        )
+
+        active_tab = request.args.get("tab", "").strip().lower()
+        if active_tab not in ("documents", "search", "reports", "history"):
+            if request.method == "POST" or query:
+                active_tab = "search"
+            else:
+                active_tab = "documents"
+
         return render_template(
             "drawings.html",
             project=project,
@@ -292,6 +307,8 @@ def create_app():
             search_doc_type=search_doc_type,
             report_templates=REPORT_TEMPLATES,
             reports_list=reports_list,
+            history_entries=history_entries,
+            active_tab=active_tab,
         )
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
@@ -453,8 +470,8 @@ def create_app():
             flash(str(e), "danger")
             return redirect(url_for("drawings", project_id=project.id))
 
-        flash("Report is being generated in the background. It will appear in the Reports section below when ready.", "info")
-        return redirect(url_for("drawings", project_id=project.id))
+        flash("Report is being generated in the background. It will appear in the Reports tab when ready.", "info")
+        return redirect(url_for("drawings", project_id=project.id, tab="reports"))
 
     @app.route("/reports/<int:report_id>/download")
     @login_required
@@ -465,7 +482,7 @@ def create_app():
             abort(403)
         if report.status != "ready" or not report.file_path:
             flash("Report is not ready yet.", "warning")
-            return redirect(url_for("drawings", project_id=project.id))
+            return redirect(url_for("drawings", project_id=project.id, tab="reports"))
         return send_from_directory(
             app.config["REPORTS_FOLDER"],
             report.file_path,
@@ -502,7 +519,7 @@ def create_app():
         db.session.delete(report)
         db.session.commit()
         flash("Report deleted.", "success")
-        return redirect(url_for("drawings", project_id=project.id))
+        return redirect(url_for("drawings", project_id=project.id, tab="reports"))
 
     @app.route("/projects/<int:project_id>/history/export")
     @login_required
