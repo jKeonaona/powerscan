@@ -22,6 +22,50 @@ from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
 
 
+CCC_ADMIN_SEEDS = [
+    ("orgon@muehlhan.com", "orgon"),
+    ("j.brockman@muehlhan.com", "j.brockman"),
+    ("lasater@muehlhan.com", "lasater"),
+    ("moore@muehlhan.com", "moore"),
+]
+CCC_ADMIN_TEMP_PASSWORD = "Temp?Access123"
+CCC_COMPANY_ID = 1
+
+
+def _seed_ccc_admins():
+    """Idempotently ensure the four CCC admin accounts exist with a forced password reset.
+
+    Skipped silently if the target company does not yet exist, and per-user if an
+    account with that email already exists (we do NOT reset an existing user's
+    password here — that would be a footgun for subsequent deploys).
+    """
+    company = db.session.get(Company, CCC_COMPANY_ID)
+    if not company:
+        print(f"[powerscan] CCC seed: company id={CCC_COMPANY_ID} not found, skipping admin seed", flush=True)
+        return
+
+    created = 0
+    for email, username in CCC_ADMIN_SEEDS:
+        if User.query.filter_by(email=email).first():
+            continue
+        if User.query.filter_by(username=username).first():
+            print(f"[powerscan] CCC seed: username '{username}' taken, skipping {email}", flush=True)
+            continue
+        user = User(
+            username=username,
+            email=email,
+            role=ROLE_ADMIN,
+            company_id=CCC_COMPANY_ID,
+            must_change_password=True,
+        )
+        user.set_password(CCC_ADMIN_TEMP_PASSWORD)
+        db.session.add(user)
+        created += 1
+    if created:
+        db.session.commit()
+        print(f"[powerscan] CCC seed: created {created} admin account(s)", flush=True)
+
+
 def _run_migrations(database):
     """Add any missing columns to existing tables via ALTER TABLE."""
     conn = database.engine.raw_connection()
@@ -32,6 +76,7 @@ def _run_migrations(database):
         ("drawing", "pages_processed", "INTEGER DEFAULT 0"),
         ("drawing", "doc_type", "VARCHAR(40) DEFAULT 'Drawing'"),
         ("report", "file_path", "VARCHAR(300)"),
+        ("user", "must_change_password", "BOOLEAN DEFAULT 0 NOT NULL"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -76,6 +121,9 @@ def create_app():
             db.session.add(admin)
             db.session.commit()
 
+        # Seed CCC admin accounts (idempotent — skipped if email already exists)
+        _seed_ccc_admins()
+
     # Start background conversion worker thread
     start_worker(app)
     start_report_worker(app)
@@ -107,17 +155,58 @@ def create_app():
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if current_user.is_authenticated:
+            if current_user.must_change_password:
+                return redirect(url_for("change_password"))
             return redirect(url_for("dashboard"))
         if request.method == "POST":
-            username = request.form.get("username", "").strip()
+            identifier = request.form.get("username", "").strip()
             password = request.form.get("password", "")
-            user = User.query.filter_by(username=username).first()
+            user = (
+                User.query.filter_by(username=identifier).first()
+                or User.query.filter_by(email=identifier).first()
+            )
             if user and user.check_password(password):
                 login_user(user)
+                if user.must_change_password:
+                    flash("Please choose a new password to finish logging in.", "info")
+                    return redirect(url_for("change_password"))
                 next_page = request.args.get("next")
                 return redirect(next_page or url_for("dashboard"))
             flash("Invalid username or password.", "danger")
         return render_template("login.html")
+
+    @app.route("/change-password", methods=["GET", "POST"])
+    @login_required
+    def change_password():
+        if request.method == "POST":
+            new_password = request.form.get("new_password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            if len(new_password) < 8:
+                flash("Password must be at least 8 characters.", "danger")
+            elif new_password != confirm_password:
+                flash("Passwords do not match.", "danger")
+            elif current_user.check_password(new_password):
+                flash("New password must be different from your current password.", "danger")
+            else:
+                current_user.set_password(new_password)
+                current_user.must_change_password = False
+                db.session.commit()
+                flash("Password updated. Welcome!", "success")
+                return redirect(url_for("dashboard"))
+        return render_template("change_password.html", forced=current_user.must_change_password)
+
+    # Guard: users with a forced reset flag are locked to the change-password page
+    # until they pick a new password (or log out).
+    @app.before_request
+    def _enforce_password_reset():
+        if not current_user.is_authenticated:
+            return None
+        if not current_user.must_change_password:
+            return None
+        allowed_endpoints = {"change_password", "logout", "login", "static"}
+        if request.endpoint in allowed_endpoints:
+            return None
+        return redirect(url_for("change_password"))
 
     @app.route("/logout")
     @login_required

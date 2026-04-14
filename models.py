@@ -21,6 +21,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(20), nullable=False, default=ROLE_USER)
     company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=True)
+    must_change_password = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     company = db.relationship("Company", backref="users")
