@@ -557,7 +557,7 @@ def _process_report(app, report_id):
             with open(out_path, "wb") as f:
                 f.write(docx_bytes)
 
-            report.filename = filename
+            report.file_path = filename
             report.status = "ready"
             report.completed_at = datetime.now(timezone.utc)
             db.session.commit()

@@ -103,7 +103,7 @@ class Report(db.Model):
     template_name = db.Column(db.String(100), nullable=False)
     custom_prompt = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="generating")  # generating, ready, failed
-    filename = db.Column(db.String(300), nullable=True)
+    file_path = db.Column(db.String(300), nullable=True)
     error_message = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = db.Column(db.DateTime, nullable=True)

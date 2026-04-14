@@ -31,6 +31,7 @@ def _run_migrations(database):
         ("drawing", "total_pages", "INTEGER DEFAULT 0"),
         ("drawing", "pages_processed", "INTEGER DEFAULT 0"),
         ("drawing", "doc_type", "VARCHAR(40) DEFAULT 'Drawing'"),
+        ("report", "file_path", "VARCHAR(300)"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -462,12 +463,12 @@ def create_app():
         project = db.session.get(Project, report.project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        if report.status != "ready" or not report.filename:
+        if report.status != "ready" or not report.file_path:
             flash("Report is not ready yet.", "warning")
             return redirect(url_for("drawings", project_id=project.id))
         return send_from_directory(
             app.config["REPORTS_FOLDER"],
-            report.filename,
+            report.file_path,
             as_attachment=True,
         )
 
@@ -481,7 +482,7 @@ def create_app():
         return jsonify({
             "id": report.id,
             "status": report.status,
-            "filename": report.filename,
+            "file_path": report.file_path,
             "error_message": report.error_message,
         })
 
@@ -492,8 +493,8 @@ def create_app():
         project = db.session.get(Project, report.project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        if report.filename:
-            path = os.path.join(app.config["REPORTS_FOLDER"], report.filename)
+        if report.file_path:
+            path = os.path.join(app.config["REPORTS_FOLDER"], report.file_path)
             try:
                 os.remove(path)
             except OSError:
