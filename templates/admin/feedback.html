@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Feedback - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-chat-square-text"></i> Feedback</h2>
+            <p class="text-muted mb-0">Ideas, bug reports, questions, and feature requests from PowerScan users.</p>
+        </div>
+        <a href="{{ url_for('export_feedback') }}" class="btn btn-primary">
+            <i class="bi bi-file-earmark-pdf"></i> Export Brainstorm PDF
+        </a>
+    </div>
+
+    <!-- Filter pills -->
+    <ul class="nav nav-pills mb-4 flex-wrap gap-1">
+        <li class="nav-item">
+            <a class="nav-link {% if not filter_type %}active{% endif %}"
+               href="{{ url_for('admin_feedback') }}">
+                All <span class="badge bg-secondary-subtle text-secondary-emphasis ms-1">{{ counts.All }}</span>
+            </a>
+        </li>
+        {% for ft in feedback_types %}
+        <li class="nav-item">
+            <a class="nav-link {% if filter_type == ft %}active{% endif %}"
+               href="{{ url_for('admin_feedback', type=ft) }}">
+                {% if ft == 'Idea' %}<i class="bi bi-lightbulb"></i>
+                {% elif ft == 'Bug Report' %}<i class="bi bi-bug"></i>
+                {% elif ft == 'Question' %}<i class="bi bi-question-circle"></i>
+                {% elif ft == 'Feature Request' %}<i class="bi bi-stars"></i>
+                {% endif %}
+                {{ ft }}s
+                <span class="badge bg-secondary-subtle text-secondary-emphasis ms-1">{{ counts[ft] }}</span>
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+
+    {% if entries %}
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th style="width:130px;">Date</th>
+                    <th style="width:130px;">User</th>
+                    <th style="width:140px;">Type</th>
+                    <th>Page</th>
+                    <th>Description</th>
+                    <th style="width:120px;">Status</th>
+                    <th style="width:100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for fb in entries %}
+                <tr>
+                    <td class="text-nowrap small text-muted">{{ fb.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="small">{{ fb.user.username if fb.user else '—' }}</td>
+                    <td>
+                        {% if fb.type == 'Idea' %}
+                        <span class="badge bg-warning text-dark"><i class="bi bi-lightbulb"></i> Idea</span>
+                        {% elif fb.type == 'Bug Report' %}
+                        <span class="badge bg-danger"><i class="bi bi-bug"></i> Bug</span>
+                        {% elif fb.type == 'Question' %}
+                        <span class="badge bg-info text-dark"><i class="bi bi-question-circle"></i> Question</span>
+                        {% elif fb.type == 'Feature Request' %}
+                        <span class="badge bg-primary"><i class="bi bi-stars"></i> Feature</span>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted text-truncate" style="max-width:180px;" title="{{ fb.page or '' }}">
+                        {{ fb.page or '—' }}
+                    </td>
+                    <td>
+                        <div class="description-preview" style="max-width:420px;">{{ fb.description }}</div>
+                        {% if fb.admin_notes %}
+                        <div class="small text-muted mt-1 fst-italic">
+                            <i class="bi bi-chat-left-dots"></i> {{ fb.admin_notes }}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if fb.status == 'Pending' %}
+                        <span class="badge bg-secondary">Pending</span>
+                        {% elif fb.status == 'Reviewed' %}
+                        <span class="badge bg-info text-dark">Reviewed</span>
+                        {% elif fb.status == 'Adopted' %}
+                        <span class="badge bg-success">Adopted</span>
+                        {% elif fb.status == 'Declined' %}
+                        <span class="badge bg-dark">Declined</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <button type="button" class="btn btn-sm btn-outline-primary edit-feedback"
+                                data-id="{{ fb.id }}"
+                                data-status="{{ fb.status }}"
+                                data-notes="{{ fb.admin_notes or '' }}">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-inbox fs-1 text-muted"></i>
+        <p class="text-muted mt-2">
+            {% if filter_type %}
+            No {{ filter_type }} submissions yet.
+            {% else %}
+            No feedback has been submitted yet.
+            {% endif %}
+        </p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Edit feedback modal -->
+<div class="modal fade" id="editFeedbackModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form id="editFeedbackForm" method="POST">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-pencil"></i> Update Feedback</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="editStatus" class="form-label fw-medium">Status</label>
+                        <select class="form-select" id="editStatus" name="status" required>
+                            {% for s in feedback_statuses %}
+                            <option value="{{ s }}">{{ s }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editNotes" class="form-label fw-medium">Admin notes</label>
+                        <textarea class="form-control" id="editNotes" name="admin_notes" rows="4"
+                                  placeholder="Internal notes, triage decisions, follow-up actions..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.description-preview {
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 8rem;
+    overflow-y: auto;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const modalEl = document.getElementById('editFeedbackModal');
+    const modal = new bootstrap.Modal(modalEl);
+    const form = document.getElementById('editFeedbackForm');
+    const statusSel = document.getElementById('editStatus');
+    const notesTa = document.getElementById('editNotes');
+
+    document.querySelectorAll('.edit-feedback').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.dataset.id;
+            form.action = `/admin/feedback/${id}/update` + window.location.search;
+            statusSel.value = btn.dataset.status || 'Pending';
+            notesTa.value = btn.dataset.notes || '';
+            modal.show();
+        });
+    });
+})();
+</script>
+{% endblock %}

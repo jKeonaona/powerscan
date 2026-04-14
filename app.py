@@ -13,9 +13,10 @@ from flask_login import (
 
 from config import Config
 from models import (
-    db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report,
+    db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
+    FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
 )
 from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
@@ -815,6 +816,169 @@ def create_app():
         db.session.commit()
         flash(f"User '{user.username}' deleted.", "success")
         return redirect(url_for("admin_users"))
+
+    # ── Feedback ────────────────────────────────────────────────
+
+    @app.route("/feedback/new", methods=["POST"])
+    @login_required
+    def submit_feedback():
+        fb_type = (request.form.get("type") or "").strip()
+        page = (request.form.get("page") or "").strip()[:500] or None
+        description = (request.form.get("description") or "").strip()
+
+        if fb_type not in FEEDBACK_TYPES:
+            return jsonify({"ok": False, "error": "Please choose a feedback type."}), 400
+        if not description:
+            return jsonify({"ok": False, "error": "Description is required."}), 400
+        if len(description) > 10000:
+            return jsonify({"ok": False, "error": "Description is too long (max 10,000 characters)."}), 400
+
+        entry = Feedback(
+            user_id=current_user.id,
+            type=fb_type,
+            page=page,
+            description=description,
+            status=DEFAULT_FEEDBACK_STATUS,
+        )
+        db.session.add(entry)
+        db.session.commit()
+        return jsonify({"ok": True, "id": entry.id})
+
+    @app.route("/admin/feedback")
+    @login_required
+    @admin_required
+    def admin_feedback():
+        filter_type = (request.args.get("type") or "").strip()
+        q = db.session.query(Feedback)
+        if filter_type in FEEDBACK_TYPES:
+            q = q.filter(Feedback.type == filter_type)
+        entries = q.order_by(Feedback.created_at.desc()).all()
+
+        counts = {
+            "All": db.session.query(Feedback).count(),
+        }
+        for t in FEEDBACK_TYPES:
+            counts[t] = db.session.query(Feedback).filter_by(type=t).count()
+
+        return render_template(
+            "admin/feedback.html",
+            entries=entries,
+            filter_type=filter_type,
+            feedback_types=FEEDBACK_TYPES,
+            feedback_statuses=FEEDBACK_STATUSES,
+            counts=counts,
+        )
+
+    @app.route("/admin/feedback/<int:feedback_id>/update", methods=["POST"])
+    @login_required
+    @admin_required
+    def update_feedback(feedback_id):
+        entry = db.session.get(Feedback, feedback_id) or abort(404)
+        new_status = (request.form.get("status") or "").strip()
+        if new_status not in FEEDBACK_STATUSES:
+            flash("Invalid status.", "danger")
+            return redirect(url_for("admin_feedback"))
+        entry.status = new_status
+        entry.admin_notes = (request.form.get("admin_notes") or "").strip() or None
+        db.session.commit()
+        flash("Feedback updated.", "success")
+        return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
+
+    @app.route("/admin/feedback/export")
+    @login_required
+    @admin_required
+    def export_feedback():
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, HRFlowable,
+        )
+        from reportlab.lib import colors
+        from xml.sax.saxutils import escape as xml_escape
+
+        entries = (
+            db.session.query(Feedback)
+            .order_by(Feedback.type, Feedback.created_at.desc())
+            .all()
+        )
+
+        grouped = {t: [] for t in FEEDBACK_TYPES}
+        for e in entries:
+            grouped.setdefault(e.type, []).append(e)
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=letter,
+            leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+            topMargin=0.75 * inch, bottomMargin=0.75 * inch,
+            title="PowerScan — User Feedback & Feature Ideas",
+        )
+        styles = getSampleStyleSheet()
+        h_title = styles["Title"]
+        h_meta = ParagraphStyle("meta", parent=styles["Normal"], textColor=colors.grey, fontSize=9, spaceAfter=12)
+        h_group = ParagraphStyle(
+            "group", parent=styles["Heading1"],
+            textColor=colors.HexColor("#0d6efd"), fontSize=16, spaceBefore=14, spaceAfter=6,
+        )
+        h_entry_q = ParagraphStyle(
+            "eq", parent=styles["Heading3"],
+            textColor=colors.HexColor("#212529"), fontSize=11, spaceAfter=3,
+        )
+        h_entry_meta = ParagraphStyle(
+            "em", parent=styles["Normal"], textColor=colors.grey, fontSize=8, spaceAfter=4,
+        )
+        h_body = ParagraphStyle("b", parent=styles["BodyText"], leading=13, spaceAfter=4)
+        h_notes = ParagraphStyle(
+            "n", parent=styles["BodyText"], leading=13, spaceAfter=8,
+            textColor=colors.HexColor("#555555"), leftIndent=12,
+        )
+
+        def p(text, style):
+            return Paragraph(xml_escape(text or "").replace("\n", "<br/>"), style)
+
+        story = [
+            Paragraph("PowerScan — User Feedback &amp; Feature Ideas", h_title),
+            Paragraph(
+                f"Exported {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} &middot; "
+                f"{len(entries)} total submission(s)",
+                h_meta,
+            ),
+            HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey, spaceAfter=10),
+        ]
+
+        if not entries:
+            story.append(Paragraph("No feedback has been submitted yet.", styles["Italic"]))
+        else:
+            for group_type in FEEDBACK_TYPES:
+                items = grouped.get(group_type) or []
+                if not items:
+                    continue
+                story.append(Paragraph(f"{group_type} ({len(items)})", h_group))
+                story.append(HRFlowable(width="100%", thickness=0.3, color=colors.HexColor("#cfe2ff"), spaceAfter=6))
+                for i, e in enumerate(items, start=1):
+                    who = e.user.username if e.user else "unknown"
+                    when = e.created_at.strftime("%Y-%m-%d %H:%M UTC")
+                    status_line = f"Status: {e.status}"
+                    if e.page:
+                        status_line += f" &middot; Page: {xml_escape(e.page)}"
+                    story.append(p(f"{i}. {e.description[:120]}{'…' if len(e.description) > 120 else ''}", h_entry_q))
+                    story.append(Paragraph(f"{xml_escape(who)} &middot; {when} &middot; {status_line}", h_entry_meta))
+                    story.append(p(e.description, h_body))
+                    if e.admin_notes:
+                        story.append(p(f"Admin notes: {e.admin_notes}", h_notes))
+                    story.append(Spacer(1, 4))
+                story.append(Spacer(1, 8))
+
+        doc.build(story)
+        buf.seek(0)
+        fname = f"powerscan-feedback-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
+        return send_file(
+            buf,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=fname,
+        )
 
     # ── Error Handlers ──────────────────────────────────────────
 

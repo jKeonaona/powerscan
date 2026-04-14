@@ -43,6 +43,11 @@
                             <i class="bi bi-people"></i> User Management
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('admin_feedback') }}">
+                            <i class="bi bi-chat-square-text"></i> Feedback
+                        </a>
+                    </li>
                     {% endif %}
                 </ul>
                 <ul class="navbar-nav">
@@ -80,8 +85,150 @@
         {% block content %}{% endblock %}
     </main>
 
+    {% if current_user.is_authenticated %}
+    <!-- Floating Share Idea button -->
+    <button type="button" class="btn btn-warning feedback-fab"
+            data-bs-toggle="modal" data-bs-target="#feedbackModal"
+            title="Share an idea, report a bug, or ask a question">
+        <i class="bi bi-lightbulb-fill"></i> Share Idea
+    </button>
+
+    <!-- Feedback submission modal -->
+    <div class="modal fade" id="feedbackModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <form id="feedbackForm" autocomplete="off">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-lightbulb-fill text-warning"></i> Share Your Feedback</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="feedbackAlert" class="alert alert-danger d-none" role="alert"></div>
+                        <div class="mb-3">
+                            <label for="fbType" class="form-label fw-medium">Type</label>
+                            <select class="form-select" id="fbType" name="type" required>
+                                <option value="">— Choose —</option>
+                                <option value="Idea">Idea</option>
+                                <option value="Bug Report">Bug Report</option>
+                                <option value="Question">Question</option>
+                                <option value="Feature Request">Feature Request</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="fbPage" class="form-label fw-medium">Current page / feature</label>
+                            <input type="text" class="form-control" id="fbPage" name="page"
+                                   placeholder="/projects/1/drawings">
+                            <div class="form-text">Auto-filled from the current URL — edit if you're referring to a different place.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="fbDescription" class="form-label fw-medium">Description <span class="text-danger">*</span></label>
+                            <textarea class="form-control" id="fbDescription" name="description"
+                                      rows="5" required maxlength="10000"
+                                      placeholder="What's the idea, bug, question, or request?"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="fbSubmitBtn">
+                            <i class="bi bi-send"></i> Submit
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success toast -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:1080;">
+        <div id="feedbackToast" class="toast text-bg-success" role="alert">
+            <div class="toast-body">
+                <i class="bi bi-check-circle-fill me-2"></i>
+                Thanks — your feedback has been recorded.
+            </div>
+        </div>
+    </div>
+
+    <style>
+    .feedback-fab {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 1030;
+        border-radius: 999px;
+        padding: .7rem 1.25rem;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
+        font-weight: 500;
+    }
+    .feedback-fab:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 22px rgba(0, 0, 0, .22);
+    }
+    @media (max-width: 576px) {
+        .feedback-fab {
+            bottom: 16px;
+            right: 16px;
+            padding: .6rem .95rem;
+            font-size: .9rem;
+        }
+    }
+    </style>
+    {% endif %}
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% if current_user.is_authenticated %}
+    <script>
+    (function() {
+        const modalEl = document.getElementById('feedbackModal');
+        const pageInput = document.getElementById('fbPage');
+        const alertBox = document.getElementById('feedbackAlert');
+        const form = document.getElementById('feedbackForm');
+        const btn = document.getElementById('fbSubmitBtn');
+
+        // Auto-populate current URL whenever the modal opens (unless user edited it)
+        modalEl.addEventListener('show.bs.modal', () => {
+            alertBox.classList.add('d-none');
+            alertBox.textContent = '';
+            if (!pageInput.value || pageInput.dataset.auto === '1') {
+                pageInput.value = window.location.pathname + window.location.search;
+                pageInput.dataset.auto = '1';
+            }
+        });
+        pageInput.addEventListener('input', () => { pageInput.dataset.auto = '0'; });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            alertBox.classList.add('d-none');
+            btn.disabled = true;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sending...';
+            try {
+                const res = await fetch('{{ url_for("submit_feedback") }}', {
+                    method: 'POST',
+                    body: new FormData(form),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.ok) {
+                    form.reset();
+                    pageInput.dataset.auto = '1';
+                    bootstrap.Modal.getInstance(modalEl).hide();
+                    const toast = new bootstrap.Toast(document.getElementById('feedbackToast'), { delay: 3000 });
+                    toast.show();
+                } else {
+                    alertBox.textContent = data.error || `Submission failed (HTTP ${res.status}).`;
+                    alertBox.classList.remove('d-none');
+                }
+            } catch (err) {
+                alertBox.textContent = 'Network error — please try again.';
+                alertBox.classList.remove('d-none');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        });
+    })();
+    </script>
+    {% endif %}
     {% block scripts %}{% endblock %}
 </body>
 </html>
