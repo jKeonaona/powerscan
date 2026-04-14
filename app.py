@@ -374,7 +374,7 @@ def create_app():
         if not current_user.is_superadmin and current_user.company_id != drawing.project.company_id:
             abort(403)
         if drawing.status == "processing":
-            flash("Drawing is already being processed.", "warning")
+            flash("Document is already being processed.", "warning")
             return redirect(url_for("drawing_detail", drawing_id=drawing.id))
 
         drawing.status = "pending"
@@ -391,7 +391,7 @@ def create_app():
         project_id = drawing.project_id
         db.session.delete(drawing)
         db.session.commit()
-        flash("Drawing deleted.", "success")
+        flash("Document deleted.", "success")
         return redirect(url_for("drawings", project_id=project_id))
 
     @app.route("/processed/<path:filename>")

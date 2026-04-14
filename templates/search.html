@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Search Drawings - PowerScan{% endblock %}
+{% block title %}Search Documents - PowerScan{% endblock %}
 
 {% block content %}
 <div class="container">
-    <h2 class="mb-4"><i class="bi bi-search"></i> Search Drawings</h2>
+    <h2 class="mb-4"><i class="bi bi-search"></i> Search Documents</h2>
 
     <div class="card shadow-sm mb-4">
         <div class="card-body">
@@ -30,7 +30,7 @@
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label for="query" class="form-label">Ask a question about the drawings</label>
+                    <label for="query" class="form-label">Ask a question about the documents</label>
                     <div class="input-group input-group-lg">
                         <input type="text" class="form-control" id="query" name="query"
                                placeholder="e.g., What is the voltage rating on the main transformer?"
@@ -40,7 +40,7 @@
                         </button>
                     </div>
                     <div class="form-text">
-                        Claude Vision reads the actual drawing images in the selected project and answers your question.
+                        Claude Vision reads the actual document images in the selected project and answers your question.
                     </div>
                 </div>
             </form>
@@ -49,7 +49,7 @@
 
     <div id="searchLoading" class="text-center py-5" style="display:none;">
         <div class="spinner-border text-primary" role="status" style="width:3rem;height:3rem;"></div>
-        <p class="text-muted mt-3">Claude is reading the drawings...</p>
+        <p class="text-muted mt-3">Claude is reading the documents...</p>
     </div>
 
     {% if results %}
@@ -86,7 +86,7 @@
     {% if not results and not query %}
     <div class="text-center py-5">
         <i class="bi bi-lightbulb fs-1 text-muted"></i>
-        <p class="text-muted mt-2">Pick a project and ask anything about the drawings.</p>
+        <p class="text-muted mt-2">Pick a project and ask anything about the documents.</p>
     </div>
     {% endif %}
 </div>

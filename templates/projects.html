@@ -29,15 +29,15 @@
                     {% if project.description %}
                     <p class="text-muted small">{{ project.description }}</p>
                     {% endif %}
-                    <p class="text-muted">{{ project.drawings | length }} drawing(s)</p>
+                    <p class="text-muted">{{ project.drawings | length }} document(s)</p>
                 </div>
                 <div class="card-footer bg-transparent d-flex justify-content-between">
                     <a href="{{ url_for('drawings', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">
-                        View Drawings
+                        View Documents
                     </a>
                     {% if current_user.is_admin %}
                     <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                          onsubmit="return confirm('Delete this project and all its drawings?')">
+                          onsubmit="return confirm('Delete this project and all its documents?')">
                         <button type="submit" class="btn btn-sm btn-outline-danger">
                             <i class="bi bi-trash"></i>
                         </button>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Upload Drawings - PowerScan{% endblock %}
+{% block title %}Upload Documents - PowerScan{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -13,7 +13,7 @@
                     <li class="breadcrumb-item active">Upload</li>
                 </ol>
             </nav>
-            <h2 class="mb-4">Upload Drawings</h2>
+            <h2 class="mb-4">Upload Documents</h2>
 
             <div class="mb-3">
                 <label for="docType" class="form-label fw-medium">Document Type</label>
@@ -58,7 +58,7 @@
             <!-- Done Actions -->
             <div id="doneBar" class="text-center mt-4" style="display:none;">
                 <a href="{{ url_for('drawings', project_id=project.id) }}" class="btn btn-success btn-lg">
-                    <i class="bi bi-arrow-right"></i> View Drawings
+                    <i class="bi bi-arrow-right"></i> View Documents
                 </a>
             </div>
         </div>
@@ -303,7 +303,7 @@ function renderList() {
         </div>
     `).join('');
 
-    // Show "View Drawings" when all done
+    // Show "View Documents" when all done
     const terminal = ['success', 'error', 'skipped'];
     const allDone = selectedFiles.every(f => terminal.includes(f.status));
     doneBar.style.display = (allDone && done > 0) ? 'block' : 'none';

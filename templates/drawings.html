@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ project.name }} - Drawings - PowerScan{% endblock %}
+{% block title %}{{ project.name }} - Documents - PowerScan{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -12,13 +12,13 @@
     </nav>
 
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>{{ project.name }} &mdash; Drawings</h2>
+        <h2>{{ project.name }} &mdash; Documents</h2>
         <div class="d-flex gap-2">
             <a href="{{ url_for('search_history', project_id=project.id) }}" class="btn btn-outline-secondary">
                 <i class="bi bi-clock-history"></i> Search History
             </a>
             <a href="{{ url_for('upload_drawing', project_id=project.id) }}" class="btn btn-primary">
-                <i class="bi bi-upload"></i> Upload Drawing
+                <i class="bi bi-upload"></i> Upload Document
             </a>
         </div>
     </div>
@@ -29,7 +29,7 @@
                 <div class="input-group input-group-lg">
                     <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
                     <input type="text" class="form-control" name="query"
-                           placeholder="Ask a question about these drawings..."
+                           placeholder="Ask a question about these documents..."
                            value="{{ query }}" required autocomplete="off">
                     <select name="search_doc_type" class="form-select" style="max-width:180px;">
                         <option value="">All types</option>
@@ -43,7 +43,7 @@
                     </button>
                 </div>
                 <div class="form-text">
-                    Claude Vision reads the ready drawings in this project (filtered by type if chosen) and answers with page citations.
+                    Claude Vision reads the ready documents in this project (filtered by type if chosen) and answers with page citations.
                 </div>
             </form>
         </div>
@@ -60,7 +60,7 @@
                     </div>
                     <div class="modal-body">
                         <p class="text-muted small mb-3">
-                            Claude will read every ready drawing in this project and produce a branded Word document. Large projects are processed in batches and may take a minute.
+                            Claude will read every ready document in this project and produce a branded Word report. Large projects are processed in batches and may take a minute.
                         </p>
                         <div class="row g-3">
                             {% for tpl_id, tpl in report_templates.items() %}
@@ -103,7 +103,7 @@
 
     <div id="searchLoading" class="text-center py-4" style="display:none;">
         <div class="spinner-border text-primary" role="status"></div>
-        <p class="text-muted mt-2 mb-0">Claude is reading the drawings...</p>
+        <p class="text-muted mt-2 mb-0">Claude is reading the documents...</p>
     </div>
 
     {% if results %}
@@ -210,7 +210,7 @@
                         </a>
                         {% if current_user.is_admin %}
                         <form method="POST" action="{{ url_for('delete_drawing', drawing_id=drawing.id) }}"
-                              class="d-inline" onsubmit="return confirm('Delete this drawing?')">
+                              class="d-inline" onsubmit="return confirm('Delete this document?')">
                             <button type="submit" class="btn btn-sm btn-outline-danger">
                                 <i class="bi bi-trash"></i>
                             </button>
@@ -224,13 +224,13 @@
     </div>
     {% else %}
     <div class="text-center py-4">
-        <p class="text-muted mb-0">No drawings match the selected type.</p>
+        <p class="text-muted mb-0">No documents match the selected type.</p>
     </div>
     {% endif %}
     {% else %}
     <div class="text-center py-5">
         <i class="bi bi-file-earmark-pdf fs-1 text-muted"></i>
-        <p class="text-muted mt-2">No drawings uploaded yet.</p>
+        <p class="text-muted mt-2">No documents uploaded yet.</p>
     </div>
     {% endif %}
 </div>
