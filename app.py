@@ -13,12 +13,12 @@ from flask_login import (
 
 from config import Config
 from models import (
-    db, User, Company, Project, Drawing, DrawingPage, SearchHistory,
+    db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
 )
 from pipeline import start_worker
-from reports import REPORT_TEMPLATES, generate_report
+from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
 
 
@@ -47,6 +47,7 @@ def create_app():
 
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
     os.makedirs(app.config["PROCESSED_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["REPORTS_FOLDER"], exist_ok=True)
     os.makedirs(os.path.join(app.instance_path), exist_ok=True)
 
     db.init_app(app)
@@ -76,6 +77,7 @@ def create_app():
 
     # Start background conversion worker thread
     start_worker(app)
+    start_report_worker(app)
 
     # ── Decorators ──────────────────────────────────────────────
 
@@ -271,6 +273,13 @@ def create_app():
             drawings_q = drawings_q.filter_by(doc_type=filter_doc_type)
         drawings_list = drawings_q.order_by(Drawing.created_at.desc()).all()
 
+        reports_list = (
+            Report.query.filter_by(project_id=project.id)
+            .order_by(Report.created_at.desc())
+            .limit(20)
+            .all()
+        )
+
         return render_template(
             "drawings.html",
             project=project,
@@ -281,6 +290,7 @@ def create_app():
             filter_doc_type=filter_doc_type,
             search_doc_type=search_doc_type,
             report_templates=REPORT_TEMPLATES,
+            reports_list=reports_list,
         )
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
@@ -435,47 +445,63 @@ def create_app():
         if not template_id or (template_id != "custom" and template_id not in REPORT_TEMPLATES):
             flash("Please choose a valid report template.", "danger")
             return redirect(url_for("drawings", project_id=project.id))
-        if template_id == "custom" and not custom_prompt:
-            flash("Custom reports require a prompt.", "danger")
-            return redirect(url_for("drawings", project_id=project.id))
 
         try:
-            docx_bytes, filename, template_name, summary = generate_report(
-                project.id,
-                template_id,
-                custom_prompt,
-                app.config["ANTHROPIC_API_KEY"],
-                app.config["PROCESSED_FOLDER"],
-            )
+            enqueue_report(project.id, current_user.id, template_id, custom_prompt)
         except ValueError as e:
             flash(str(e), "danger")
             return redirect(url_for("drawings", project_id=project.id))
-        except Exception as e:
-            print(f"[powerscan] report generation failed: {e}", flush=True)
-            flash(f"Report generation failed: {e}", "danger")
+
+        flash("Report is being generated in the background. It will appear in the Reports section below when ready.", "info")
+        return redirect(url_for("drawings", project_id=project.id))
+
+    @app.route("/reports/<int:report_id>/download")
+    @login_required
+    def download_report(report_id):
+        report = db.session.get(Report, report_id) or abort(404)
+        project = db.session.get(Project, report.project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        if report.status != "ready" or not report.filename:
+            flash("Report is not ready yet.", "warning")
             return redirect(url_for("drawings", project_id=project.id))
-
-        log_query = f"Report: {template_name}"
-        if template_id == "custom":
-            log_query = f"Custom Report: {custom_prompt[:200]}"
-        log_answer = f"Generated .docx report: {filename}."
-        if summary:
-            log_answer += f"\n\nSummary: {summary}"
-        history = SearchHistory(
-            project_id=project.id,
-            user_id=current_user.id,
-            query=log_query,
-            answer=log_answer,
-        )
-        db.session.add(history)
-        db.session.commit()
-
-        return send_file(
-            io.BytesIO(docx_bytes),
-            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        return send_from_directory(
+            app.config["REPORTS_FOLDER"],
+            report.filename,
             as_attachment=True,
-            download_name=filename,
         )
+
+    @app.route("/reports/<int:report_id>/status")
+    @login_required
+    def report_status(report_id):
+        report = db.session.get(Report, report_id) or abort(404)
+        project = db.session.get(Project, report.project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        return jsonify({
+            "id": report.id,
+            "status": report.status,
+            "filename": report.filename,
+            "error_message": report.error_message,
+        })
+
+    @app.route("/reports/<int:report_id>/delete", methods=["POST"])
+    @login_required
+    def delete_report(report_id):
+        report = db.session.get(Report, report_id) or abort(404)
+        project = db.session.get(Project, report.project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        if report.filename:
+            path = os.path.join(app.config["REPORTS_FOLDER"], report.filename)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        db.session.delete(report)
+        db.session.commit()
+        flash("Report deleted.", "success")
+        return redirect(url_for("drawings", project_id=project.id))
 
     @app.route("/projects/<int:project_id>/history/export")
     @login_required

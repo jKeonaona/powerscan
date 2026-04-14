@@ -233,6 +233,73 @@
         <p class="text-muted mt-2">No documents uploaded yet.</p>
     </div>
     {% endif %}
+
+    <!-- Reports section -->
+    <div class="mt-5 mb-3 d-flex align-items-center">
+        <h4 class="mb-0"><i class="bi bi-file-earmark-word"></i> Reports</h4>
+        <small class="text-muted ms-3">Generated Word documents from this project.</small>
+    </div>
+    {% if reports_list %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Template</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in reports_list %}
+                <tr id="report-row-{{ report.id }}">
+                    <td>
+                        <i class="bi bi-file-earmark-word text-primary"></i>
+                        {{ report.template_name }}
+                        {% if report.template_id == 'custom' and report.custom_prompt %}
+                        <div class="small text-muted text-truncate" style="max-width:380px;" title="{{ report.custom_prompt }}">
+                            {{ report.custom_prompt }}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="report-status" data-report-id="{{ report.id }}">
+                        {% if report.status == 'ready' %}
+                        <span class="badge bg-success"><i class="bi bi-check-lg"></i> Ready</span>
+                        {% elif report.status == 'failed' %}
+                        <span class="badge bg-danger" title="{{ report.error_message or '' }}">
+                            <i class="bi bi-exclamation-triangle"></i> Failed
+                        </span>
+                        {% if report.error_message %}
+                        <div class="small text-danger">{{ report.error_message }}</div>
+                        {% endif %}
+                        {% else %}
+                        <span class="badge bg-warning text-dark">
+                            <i class="bi bi-gear-fill spin"></i> Generating
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td>{{ report.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="report-actions">
+                        {% if report.status == 'ready' %}
+                        <a href="{{ url_for('download_report', report_id=report.id) }}" class="btn btn-sm btn-primary">
+                            <i class="bi bi-download"></i> Download
+                        </a>
+                        {% endif %}
+                        <form method="POST" action="{{ url_for('delete_report', report_id=report.id) }}"
+                              class="d-inline" onsubmit="return confirm('Delete this report?')">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted small">No reports generated yet. Click <strong>Generate Report</strong> above to create one.</p>
+    {% endif %}
 </div>
 
 <style>
@@ -278,6 +345,41 @@ document.getElementById('reportForm').addEventListener('submit', (e) => {
     const btn = document.getElementById('btnGenerateReport');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating (this may take a minute)...';
+});
+
+// Poll generating reports
+document.querySelectorAll('.report-status').forEach(cell => {
+    const badge = cell.querySelector('.badge.bg-warning');
+    if (!badge) return;  // only poll if currently generating
+    const reportId = cell.dataset.reportId;
+
+    const poll = setInterval(() => {
+        fetch(`/reports/${reportId}/status`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ready') {
+                    clearInterval(poll);
+                    cell.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-lg"></i> Ready</span>';
+                    const row = document.getElementById(`report-row-${reportId}`);
+                    if (row) {
+                        const actionsCell = row.querySelector('.report-actions');
+                        if (actionsCell && !actionsCell.querySelector('.btn-primary')) {
+                            const dl = document.createElement('a');
+                            dl.href = `/reports/${reportId}/download`;
+                            dl.className = 'btn btn-sm btn-primary me-1';
+                            dl.innerHTML = '<i class="bi bi-download"></i> Download';
+                            actionsCell.prepend(dl);
+                        }
+                    }
+                } else if (data.status === 'failed') {
+                    clearInterval(poll);
+                    const err = data.error_message ? `<div class="small text-danger">${data.error_message}</div>` : '';
+                    cell.innerHTML =
+                        '<span class="badge bg-danger"><i class="bi bi-exclamation-triangle"></i> Failed</span>' + err;
+                }
+            })
+            .catch(() => {});
+    }, 4000);
 });
 
 document.querySelectorAll('.ocr-progress[data-drawing-id]').forEach(el => {

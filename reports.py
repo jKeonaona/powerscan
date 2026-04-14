@@ -8,6 +8,9 @@ import io
 import json
 import os
 import re
+import threading
+import time
+import traceback
 from datetime import datetime, timezone
 
 import anthropic
@@ -18,12 +21,15 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from models import db, Drawing, DrawingPage, Project
+from models import db, Drawing, DrawingPage, Project, Report, SearchHistory
 from search import (
     CLAUDE_MODEL,
     MAX_IMAGES_PER_REQUEST,
     _build_batch_content,
 )
+
+POLL_INTERVAL = 3  # seconds
+SUMMARY_MAX_WORDS = 200
 
 # ── CCC brand constants (swap for real logo path later if desired) ──
 BRAND_NAME = "CCC"
@@ -152,22 +158,79 @@ def _ask_report_batch(client, project, template_prompt, batch_pages, processed_f
     return _parse_json_response(message.content[0].text), index_map
 
 
-def _synthesize_reports(client, project, template_name, template_prompt, batch_reports):
-    """Combine multiple batch JSON reports into a single unified report JSON."""
-    combined = json.dumps(batch_reports, indent=2)
+def _summarize_batch_result(batch_report, max_words=SUMMARY_MAX_WORDS):
+    """Flatten a structured batch JSON to a compact ≤max_words plain-text summary.
+
+    Preserves the semantic skeleton (summary line, headings, a few bullets per
+    list, a couple of rows per table) but drops long prose and deep tables so
+    the synthesis call stays well under token limits.
+    """
+    parts = []
+    summary_text = (batch_report.get("summary") or "").strip()
+    if summary_text:
+        parts.append(summary_text)
+
+    for section in batch_report.get("sections", []) or []:
+        if not isinstance(section, dict):
+            continue
+        stype = (section.get("type") or "").lower()
+
+        if stype == "heading":
+            text = str(section.get("text", "")).strip()
+            if text:
+                parts.append(f"## {text}")
+
+        elif stype == "paragraph":
+            text = str(section.get("text", "")).strip()
+            if text:
+                parts.append(text)
+
+        elif stype == "bullets":
+            items = [str(i).strip() for i in (section.get("items", []) or []) if str(i).strip()]
+            if items:
+                parts.append(" • " + " • ".join(items[:5]))
+
+        elif stype == "table":
+            headers = [str(h).strip() for h in (section.get("headers", []) or [])]
+            rows = section.get("rows", []) or []
+            if headers:
+                parts.append("[" + " | ".join(headers) + "]")
+            for row in rows[:3]:
+                if isinstance(row, (list, tuple)):
+                    cells = [str(c).strip() for c in row[:len(headers) or len(row)]]
+                    parts.append("- " + " | ".join(cells))
+            if len(rows) > 3:
+                parts.append(f"(+{len(rows) - 3} more rows)")
+
+    text = " ".join(p for p in parts if p)
+    words = text.split()
+    if len(words) > max_words:
+        text = " ".join(words[:max_words]) + " …"
+    return text
+
+
+def _synthesize_reports(client, project, template_name, template_prompt, batch_summaries):
+    """Combine per-batch text summaries into a single structured JSON report."""
+    numbered = "\n\n".join(
+        f"--- BATCH {i} SUMMARY ---\n{s}" for i, s in enumerate(batch_summaries, start=1) if s
+    )
+
     prompt = (
-        f"You previously asked multiple batches of project documents (project: "
-        f"'{project.name}') for a '{template_name}' report. Each batch returned its own "
-        f"JSON report in this schema:\n{SCHEMA_DESCRIPTION}\n\n"
+        f"You previously asked {len(batch_summaries)} batches of project documents "
+        f"(project: '{project.name}') for a '{template_name}' report. Each batch produced "
+        f"its own structured result; those have been condensed into short summaries "
+        f"(≤{SUMMARY_MAX_WORDS} words each) to fit within token limits.\n\n"
         f"TEMPLATE INTENT:\n{template_prompt}\n\n"
-        f"PER-BATCH RESULTS:\n{combined}\n\n"
-        f"Merge all batches into ONE final JSON report using the SAME schema. Rules:\n"
+        f"PER-BATCH SUMMARIES:\n{numbered}\n\n"
+        f"Produce ONE final report by merging the information above. Return a single JSON "
+        f"object matching this schema EXACTLY:\n{SCHEMA_DESCRIPTION}\n\n"
+        f"Rules:\n"
         f"1. Deduplicate items that appear in multiple batches.\n"
-        f"2. Combine table rows with matching identifiers into a single table per category.\n"
-        f"3. Reconcile any contradictions, noting the discrepancy if it cannot be resolved.\n"
-        f"4. Preserve every unique finding.\n"
-        f"5. Write a unified executive summary covering the whole project, not per-batch.\n"
-        f"6. Do NOT mention 'batches' in the final output.\n\n"
+        f"2. Reconstruct tables where the summaries referenced them. Use your best judgment "
+        f"for column structure when a batch only gave partial rows.\n"
+        f"3. Reconcile contradictions or list them if unresolvable.\n"
+        f"4. Write a unified executive summary covering the whole project.\n"
+        f"5. Do NOT mention 'batches' or 'summaries' in the final output.\n\n"
         f"Return ONLY the final JSON. No markdown fences, no commentary."
     )
     message = client.messages.create(
@@ -349,71 +412,222 @@ def _render_report_docx(report, template_name, project):
     return buf.getvalue()
 
 
-# ───────────────────────── Public entry point ─────────────────────────
+# ───────────────────────── Public enqueue + background worker ─────────────────────────
 
-def generate_report(project_id, template_id, custom_prompt, api_key, processed_folder):
-    """Run the full pipeline and return (docx_bytes, filename, template_name, summary)."""
+def _resolve_template(template_id, custom_prompt):
+    """Return (template_name, prompt_text) or raise ValueError."""
+    if template_id == "custom":
+        prompt = (custom_prompt or "").strip()
+        if not prompt:
+            raise ValueError("Custom report requires a prompt.")
+        return "Custom Report", prompt
+
+    tpl = REPORT_TEMPLATES.get(template_id)
+    if not tpl:
+        raise ValueError(f"Unknown template: {template_id}")
+    return tpl["name"], tpl["prompt"]
+
+
+def _build_safe_filename(project_name, template_name, report_id):
+    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_name).strip("_") or "project"
+    safe_template = re.sub(r"[^A-Za-z0-9_-]+", "_", template_name).strip("_") or "report"
+    return f"{safe_project}-{safe_template}-{report_id}.docx"
+
+
+def enqueue_report(project_id, user_id, template_id, custom_prompt):
+    """Validate input, create a Report row in 'generating' state, return the id.
+
+    Actual generation runs on the background worker thread. Raises ValueError
+    for invalid input so the route can flash a friendly message.
+    """
     project = db.session.get(Project, project_id)
     if not project:
         raise ValueError("Project not found.")
 
-    if template_id == "custom":
-        template_name = "Custom Report"
-        prompt = (custom_prompt or "").strip()
-        if not prompt:
-            raise ValueError("Custom report requires a prompt.")
-    else:
-        tpl = REPORT_TEMPLATES.get(template_id)
-        if not tpl:
-            raise ValueError(f"Unknown template: {template_id}")
-        template_name = tpl["name"]
-        prompt = tpl["prompt"]
+    template_name, _ = _resolve_template(template_id, custom_prompt)
 
-    pages = (
-        db.session.query(DrawingPage, Drawing)
+    has_pages = (
+        db.session.query(DrawingPage.id)
         .join(Drawing, DrawingPage.drawing_id == Drawing.id)
         .filter(Drawing.project_id == project_id)
         .filter(Drawing.status == "ready")
-        .order_by(Drawing.original_filename, DrawingPage.page_number)
-        .all()
+        .first()
     )
-    if not pages:
-        raise ValueError("No ready drawings in this project. Upload and wait for conversion first.")
+    if not has_pages:
+        raise ValueError("No ready documents in this project. Upload and wait for conversion first.")
 
-    client = anthropic.Anthropic(api_key=api_key)
-    batches = [
-        pages[i:i + MAX_IMAGES_PER_REQUEST]
-        for i in range(0, len(pages), MAX_IMAGES_PER_REQUEST)
-    ]
-    total_batches = len(batches)
-    print(f"[powerscan] generate_report {template_id}: {len(pages)} pages in {total_batches} batch(es)", flush=True)
+    report = Report(
+        project_id=project_id,
+        user_id=user_id,
+        template_id=template_id,
+        template_name=template_name,
+        custom_prompt=(custom_prompt or "").strip() or None,
+        status="generating",
+    )
+    db.session.add(report)
+    db.session.commit()
+    return report.id
 
-    batch_reports = []
-    next_index = 1
-    for batch_num, batch in enumerate(batches, start=1):
-        print(f"[powerscan] report batch {batch_num}/{total_batches}", flush=True)
-        result, _ = _ask_report_batch(
-            client, project, prompt, batch, processed_folder,
-            start_index=next_index, batch_num=batch_num, total_batches=total_batches,
-        )
-        next_index += len(batch)
-        if result:
-            batch_reports.append(result)
 
-    if not batch_reports:
-        raise ValueError("No content returned from Claude for any batch.")
+def _process_report(app, report_id):
+    """Runs inside the background worker thread with an app context open."""
+    with app.app_context():
+        report = db.session.get(Report, report_id)
+        if not report:
+            return
 
-    if total_batches == 1:
-        final_report = batch_reports[0]
-    else:
-        print(f"[powerscan] synthesizing {len(batch_reports)} batch reports", flush=True)
-        final_report = _synthesize_reports(client, project, template_name, prompt, batch_reports)
+        project = db.session.get(Project, report.project_id)
+        if not project:
+            report.status = "failed"
+            report.error_message = "Project no longer exists."
+            report.completed_at = datetime.now(timezone.utc)
+            db.session.commit()
+            return
 
-    docx_bytes = _render_report_docx(final_report, template_name, project)
+        try:
+            _, prompt = _resolve_template(report.template_id, report.custom_prompt)
 
-    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project.name).strip("_") or "project"
-    safe_template = re.sub(r"[^A-Za-z0-9_-]+", "_", template_name).strip("_") or "report"
-    filename = f"{safe_project}-{safe_template}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.docx"
+            pages = (
+                db.session.query(DrawingPage, Drawing)
+                .join(Drawing, DrawingPage.drawing_id == Drawing.id)
+                .filter(Drawing.project_id == project.id)
+                .filter(Drawing.status == "ready")
+                .order_by(Drawing.original_filename, DrawingPage.page_number)
+                .all()
+            )
+            if not pages:
+                raise ValueError("No ready documents in this project.")
 
-    summary = (final_report.get("summary") or "").strip()
-    return docx_bytes, filename, template_name, summary
+            api_key = app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                raise ValueError("ANTHROPIC_API_KEY is not configured.")
+
+            processed_folder = app.config["PROCESSED_FOLDER"]
+            reports_folder = app.config["REPORTS_FOLDER"]
+            os.makedirs(reports_folder, exist_ok=True)
+
+            client = anthropic.Anthropic(api_key=api_key)
+            batches = [
+                pages[i:i + MAX_IMAGES_PER_REQUEST]
+                for i in range(0, len(pages), MAX_IMAGES_PER_REQUEST)
+            ]
+            total_batches = len(batches)
+            print(
+                f"[powerscan] report {report.id} ({report.template_id}): "
+                f"{len(pages)} pages in {total_batches} batch(es)",
+                flush=True,
+            )
+
+            batch_reports = []
+            next_index = 1
+            for batch_num, batch in enumerate(batches, start=1):
+                print(f"[powerscan] report {report.id} batch {batch_num}/{total_batches}", flush=True)
+                result, _ = _ask_report_batch(
+                    client, project, prompt, batch, processed_folder,
+                    start_index=next_index, batch_num=batch_num, total_batches=total_batches,
+                )
+                next_index += len(batch)
+                if result:
+                    batch_reports.append(result)
+
+            if not batch_reports:
+                raise ValueError("No content returned from Claude for any batch.")
+
+            if total_batches == 1:
+                final_report = batch_reports[0]
+            else:
+                print(
+                    f"[powerscan] report {report.id}: summarizing "
+                    f"{len(batch_reports)} batches (≤{SUMMARY_MAX_WORDS} words each)",
+                    flush=True,
+                )
+                summaries = [_summarize_batch_result(br) for br in batch_reports]
+                total_words = sum(len(s.split()) for s in summaries)
+                print(
+                    f"[powerscan] report {report.id}: synthesis input ≈ {total_words} words",
+                    flush=True,
+                )
+                final_report = _synthesize_reports(
+                    client, project, report.template_name, prompt, summaries,
+                )
+
+            docx_bytes = _render_report_docx(final_report, report.template_name, project)
+            filename = _build_safe_filename(project.name, report.template_name, report.id)
+            out_path = os.path.join(reports_folder, filename)
+            with open(out_path, "wb") as f:
+                f.write(docx_bytes)
+
+            report.filename = filename
+            report.status = "ready"
+            report.completed_at = datetime.now(timezone.utc)
+            db.session.commit()
+
+            # Log to search history
+            log_query = f"Report: {report.template_name}"
+            if report.template_id == "custom" and report.custom_prompt:
+                log_query = f"Custom Report: {report.custom_prompt[:200]}"
+            log_answer = f"Generated .docx report: {filename}."
+            final_summary = (final_report.get("summary") or "").strip()
+            if final_summary:
+                log_answer += f"\n\nSummary: {final_summary}"
+            history = SearchHistory(
+                project_id=project.id,
+                user_id=report.user_id,
+                query=log_query,
+                answer=log_answer,
+            )
+            db.session.add(history)
+            db.session.commit()
+
+            print(f"[powerscan] report {report.id} ready -> {filename}", flush=True)
+
+        except Exception as e:
+            db.session.rollback()
+            print(f"[powerscan] report {report_id} failed: {e}", flush=True)
+            traceback.print_exc()
+            # Re-fetch in case the session was rolled back
+            report = db.session.get(Report, report_id)
+            if report:
+                report.status = "failed"
+                report.error_message = str(e)[:500]
+                report.completed_at = datetime.now(timezone.utc)
+                db.session.commit()
+
+
+def _worker_loop(app):
+    # Recover anything stuck on startup — report generation isn't resumable.
+    with app.app_context():
+        stuck = Report.query.filter_by(status="generating").all()
+        for r in stuck:
+            print(f"[powerscan] recovering stuck report {r.id} as failed", flush=True)
+            r.status = "failed"
+            r.error_message = "Server restarted during generation."
+            r.completed_at = datetime.now(timezone.utc)
+        if stuck:
+            db.session.commit()
+
+    # We use a sentinel to avoid re-picking the same row in tight loop if it
+    # fails before status flips.
+    while True:
+        try:
+            with app.app_context():
+                report = (
+                    Report.query
+                    .filter_by(status="generating")
+                    .order_by(Report.created_at)
+                    .first()
+                )
+                if report:
+                    _process_report(app, report.id)
+                    continue
+            time.sleep(POLL_INTERVAL)
+        except Exception as e:
+            print(f"[powerscan] report worker error: {e}", flush=True)
+            traceback.print_exc()
+            time.sleep(POLL_INTERVAL)
+
+
+def start_report_worker(app):
+    thread = threading.Thread(target=_worker_loop, args=(app,), daemon=True)
+    thread.start()
+    print("[powerscan] report worker started", flush=True)
