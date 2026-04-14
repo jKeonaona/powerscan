@@ -1,19 +1,25 @@
 """Fire-and-forget email notifications for PowerScan feedback submissions.
 
-SMTP settings come from app.config (loaded from .env via config.py):
-    SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, ADMIN_EMAIL
-    APP_PUBLIC_URL (used in the 'Log in to review' line)
+Uses the Resend HTTP API (https://api.resend.com/emails). Config comes
+from app.config, which is loaded from .env via config.py:
 
-If any required field is missing, we log a single-line warning and
-return cleanly — the feedback row is still saved either way.
+    RESEND_API_KEY  — Resend API key (Bearer token)
+    ADMIN_EMAIL     — recipient for feedback notifications
+    APP_PUBLIC_URL  — shown at the bottom of the email body
+
+If either RESEND_API_KEY or ADMIN_EMAIL is missing, we log a single-line
+warning and return — the feedback row is still saved.
 """
-import smtplib
-import ssl
 import threading
 import traceback
-from email.message import EmailMessage
+
+import requests
 
 from models import db, Feedback
+
+RESEND_ENDPOINT = "https://api.resend.com/emails"
+FROM_ADDRESS = "PowerScan <powerscan@notify.ccctrainingonline.com>"
+HTTP_TIMEOUT = 15  # seconds
 
 
 def _send_sync(app, feedback_id):
@@ -23,40 +29,32 @@ def _send_sync(app, feedback_id):
             if not fb:
                 return
 
+            api_key = (app.config.get("RESEND_API_KEY") or "").strip()
             admin_email = (app.config.get("ADMIN_EMAIL") or "").strip()
-            smtp_server = (app.config.get("SMTP_SERVER") or "").strip()
-            smtp_port = int(app.config.get("SMTP_PORT") or 0)
-            smtp_user = (app.config.get("SMTP_USER") or "").strip()
-            smtp_password = app.config.get("SMTP_PASSWORD") or ""
             app_url = (app.config.get("APP_PUBLIC_URL") or "https://powerscan.ccctrainingonline.com").strip()
 
-            missing = [
-                name for name, val in (
-                    ("ADMIN_EMAIL", admin_email),
-                    ("SMTP_SERVER", smtp_server),
-                    ("SMTP_PORT", smtp_port),
-                    ("SMTP_USER", smtp_user),
-                    ("SMTP_PASSWORD", smtp_password),
-                ) if not val
-            ]
-            if missing:
+            if not api_key or not admin_email:
+                missing = []
+                if not api_key:
+                    missing.append("RESEND_API_KEY")
+                if not admin_email:
+                    missing.append("ADMIN_EMAIL")
                 print(
-                    f"[powerscan] feedback email skipped for #{fb.id}: "
-                    f"missing config {missing}",
+                    f"[powerscan] feedback email skipped for #{fb.id}: missing config {missing}",
                     flush=True,
                 )
                 return
 
             user = fb.user
             user_label = user.username if user else "(unknown user)"
-            user_email = user.email if user else "(unknown)"
+            user_email = user.email if user else ""
 
             snippet = " ".join((fb.description or "").split())[:60]
             subject = f"PowerScan Feedback — {fb.type}: {snippet}"
 
             body_lines = [
                 f"Type: {fb.type}",
-                f"From: {user_label} <{user_email}>",
+                f"From: {user_label} <{user_email or 'unknown'}>",
                 f"Page: {fb.page or '(not provided)'}",
                 f"Submitted: {fb.created_at.strftime('%Y-%m-%d %H:%M UTC')}",
                 "",
@@ -67,31 +65,45 @@ def _send_sync(app, feedback_id):
             ]
             body = "\n".join(body_lines)
 
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = smtp_user
-            msg["To"] = admin_email
+            payload = {
+                "from": FROM_ADDRESS,
+                "to": [admin_email],
+                "subject": subject,
+                "text": body,
+            }
             if user_email and "@" in str(user_email):
-                msg["Reply-To"] = user_email
-            msg.set_content(body)
+                payload["reply_to"] = user_email
 
-            if smtp_port == 465:
-                context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context, timeout=30) as server:
-                    server.login(smtp_user, smtp_password)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
-                    server.ehlo()
-                    server.starttls(context=ssl.create_default_context())
-                    server.ehlo()
-                    server.login(smtp_user, smtp_password)
-                    server.send_message(msg)
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
 
-            print(
-                f"[powerscan] feedback email sent to {admin_email} for feedback #{fb.id}",
-                flush=True,
+            resp = requests.post(
+                RESEND_ENDPOINT,
+                json=payload,
+                headers=headers,
+                timeout=HTTP_TIMEOUT,
             )
+
+            if 200 <= resp.status_code < 300:
+                try:
+                    resend_id = resp.json().get("id", "?")
+                except Exception:
+                    resend_id = "?"
+                print(
+                    f"[powerscan] feedback email sent via Resend to {admin_email} "
+                    f"for feedback #{fb.id} (resend id {resend_id})",
+                    flush=True,
+                )
+            else:
+                body_preview = (resp.text or "")[:300]
+                print(
+                    f"[powerscan] feedback email failed for #{fb.id}: "
+                    f"Resend returned HTTP {resp.status_code} — {body_preview}",
+                    flush=True,
+                )
+
         except Exception as e:
             print(f"[powerscan] feedback email failed: {e}", flush=True)
             traceback.print_exc()
