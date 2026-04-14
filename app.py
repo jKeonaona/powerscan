@@ -18,6 +18,7 @@ from models import (
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
 )
+from email_notify import send_feedback_email_async
 from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
@@ -842,6 +843,10 @@ def create_app():
         )
         db.session.add(entry)
         db.session.commit()
+
+        # Fire-and-forget email notification — failures are logged but never block submission.
+        send_feedback_email_async(app, entry.id)
+
         return jsonify({"ok": True, "id": entry.id})
 
     @app.route("/admin/feedback")

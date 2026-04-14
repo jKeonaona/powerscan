@@ -15,6 +15,14 @@ print(
 print(f"[powerscan] ANTHROPIC_API_KEY loaded: {_key[:10] if _key else '(empty)'}", flush=True)
 
 
+def _int_env(name, default):
+    raw = os.environ.get(name, "")
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
 class Config:
     # Fixed fallback (NOT random) so sessions survive restarts even without .env.
     SECRET_KEY = os.environ.get("SECRET_KEY", "powerscan-dev-key-change-in-production")
@@ -25,3 +33,11 @@ class Config:
     REPORTS_FOLDER = os.path.join(BASE_DIR, "reports_output")
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024
     ANTHROPIC_API_KEY = _key
+
+    # ── Email notifications ────────────────────────────────────
+    SMTP_SERVER = os.environ.get("SMTP_SERVER", "")
+    SMTP_PORT = _int_env("SMTP_PORT", 587)
+    SMTP_USER = os.environ.get("SMTP_USER", "")
+    SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+    ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
+    APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "https://powerscan.ccctrainingonline.com")
