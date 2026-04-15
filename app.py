@@ -965,6 +965,10 @@ def create_app():
         for t in FEEDBACK_TYPES:
             counts[t] = db.session.query(Feedback).filter_by(type=t).count()
 
+        status_counts = {}
+        for s in FEEDBACK_STATUSES:
+            status_counts[s] = db.session.query(Feedback).filter_by(status=s).count()
+
         return render_template(
             "admin/feedback.html",
             entries=entries,
@@ -972,6 +976,7 @@ def create_app():
             feedback_types=FEEDBACK_TYPES,
             feedback_statuses=FEEDBACK_STATUSES,
             counts=counts,
+            status_counts=status_counts,
         )
 
     @app.route("/admin/feedback/<int:feedback_id>/update", methods=["POST"])
@@ -1003,6 +1008,16 @@ def create_app():
         db.session.commit()
         send_reply_email_async(app, feedback_id)
         flash("Reply sent and status set to Reviewed.", "success")
+        return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
+
+    @app.route("/admin/feedback/<int:feedback_id>/delete", methods=["POST"])
+    @login_required
+    @superadmin_required
+    def delete_feedback(feedback_id):
+        entry = db.session.get(Feedback, feedback_id) or abort(404)
+        db.session.delete(entry)
+        db.session.commit()
+        flash("Feedback deleted.", "success")
         return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
 
     @app.route("/admin/feedback/export")
