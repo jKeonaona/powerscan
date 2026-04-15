@@ -574,10 +574,106 @@ def create_app():
         if report.status != "ready" or not report.file_path:
             flash("Report is not ready yet.", "warning")
             return redirect(url_for("drawings", project_id=project.id, tab="reports"))
-        return send_from_directory(
-            app.config["REPORTS_FOLDER"],
-            report.file_path,
+        file_path = os.path.join(app.config["REPORTS_FOLDER"], report.file_path)
+        with open(file_path, "rb") as f:
+            data = f.read()
+        return send_file(
+            io.BytesIO(data),
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             as_attachment=True,
+            download_name=report.file_path,
+        )
+
+    @app.route("/reports/<int:report_id>/download/pdf")
+    @login_required
+    def download_report_pdf(report_id):
+        import subprocess
+        import shutil
+        import tempfile
+
+        report = db.session.get(Report, report_id) or abort(404)
+        project = db.session.get(Project, report.project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        if report.status != "ready" or not report.file_path:
+            flash("Report is not ready yet.", "warning")
+            return redirect(url_for("drawings", project_id=project.id, tab="reports"))
+
+        docx_path = os.path.join(app.config["REPORTS_FOLDER"], report.file_path)
+        pdf_name = os.path.splitext(report.file_path)[0] + ".pdf"
+
+        # Try LibreOffice conversion first
+        pdf_bytes = None
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            result = subprocess.run(
+                ["libreoffice", "--headless", "--convert-to", "pdf",
+                 "--outdir", tmp_dir, docx_path],
+                capture_output=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                base = os.path.splitext(os.path.basename(docx_path))[0]
+                pdf_path = os.path.join(tmp_dir, base + ".pdf")
+                if os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+        except Exception:
+            pass
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # Fall back to reportlab if LibreOffice unavailable or failed
+        if pdf_bytes is None:
+            from docx import Document as DocxDocument
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib.units import inch
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+            from xml.sax.saxutils import escape as xml_escape
+
+            buf = io.BytesIO()
+            rdoc = SimpleDocTemplate(
+                buf, pagesize=letter,
+                leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+                topMargin=0.75 * inch, bottomMargin=0.75 * inch,
+            )
+            styles = getSampleStyleSheet()
+            story = []
+            try:
+                docx = DocxDocument(docx_path)
+                for para in docx.paragraphs:
+                    text = para.text.strip()
+                    if not text:
+                        story.append(Spacer(1, 6))
+                        continue
+                    style_name = para.style.name if para.style else "Normal"
+                    if "Heading 1" in style_name:
+                        story.append(Paragraph(xml_escape(text), styles["Heading1"]))
+                    elif "Heading 2" in style_name:
+                        story.append(Paragraph(xml_escape(text), styles["Heading2"]))
+                    elif "Heading 3" in style_name:
+                        story.append(Paragraph(xml_escape(text), styles["Heading3"]))
+                    else:
+                        story.append(Paragraph(xml_escape(text), styles["BodyText"]))
+                for table in docx.tables:
+                    for row in table.rows:
+                        cells = " | ".join(xml_escape(c.text.strip()) for c in row.cells)
+                        story.append(Paragraph(cells, styles["Normal"]))
+                    story.append(Spacer(1, 6))
+            except Exception:
+                story.append(Paragraph("(could not read report content)", styles["Normal"]))
+            if not story:
+                story.append(Paragraph("(empty report)", styles["Normal"]))
+            rdoc.build(story)
+            buf.seek(0)
+            pdf_bytes = buf.read()
+
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=pdf_name,
         )
 
     @app.route("/reports/<int:report_id>/status")
