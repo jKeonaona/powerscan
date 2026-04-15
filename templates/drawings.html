@@ -30,6 +30,9 @@
                     id="search-tab" data-bs-toggle="tab" data-bs-target="#tab-search"
                     type="button" role="tab">
                 <i class="bi bi-search"></i> Search
+                {% if has_ready_docs %}
+                <span class="badge bg-success ms-1 pulse-badge">Ask Questions Here</span>
+                {% endif %}
             </button>
         </li>
         <li class="nav-item" role="presentation">
@@ -65,6 +68,15 @@
                     <i class="bi bi-upload"></i> Upload Document
                 </a>
             </div>
+
+            {% if has_ready_docs %}
+            <div class="alert alert-success d-flex align-items-center justify-content-between mb-3 py-2" role="alert">
+                <span><i class="bi bi-check-circle-fill me-2"></i><strong>Documents are ready!</strong> Click the Search tab to ask questions about these documents.</span>
+                <button class="btn btn-success btn-sm ms-3" id="goToSearchBtn">
+                    <i class="bi bi-search"></i> Go to Search
+                </button>
+            </div>
+            {% endif %}
 
             {% if project.drawings %}
             <form method="GET" class="d-flex align-items-center gap-2 mb-3">
@@ -171,7 +183,24 @@
         <!-- ─────────────── SEARCH TAB ─────────────── -->
         <div class="tab-pane fade {% if active_tab == 'search' %}show active{% endif %}"
              id="tab-search" role="tabpanel">
-            <h5 class="mb-3">Ask a question about these documents</h5>
+
+            <div class="text-center mb-4 pt-2">
+                <h4 class="fw-bold mb-1">Ask anything about your project documents</h4>
+                <p class="text-muted mb-3">Claude Vision reads every ready document and answers with page citations.</p>
+                <div class="d-flex flex-wrap gap-2 justify-content-center" id="questionChips">
+                    <button type="button" class="btn btn-outline-secondary btn-sm chip-question"
+                            data-q="What are the submittal requirements?">What are the submittal requirements?</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm chip-question"
+                            data-q="What are the insurance and bonding requirements?">What are the insurance and bonding requirements?</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm chip-question"
+                            data-q="Summarize the key project milestones and deadlines.">Key milestones and deadlines</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm chip-question"
+                            data-q="What safety requirements are specified?">Safety requirements</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm chip-question"
+                            data-q="List all materials and specifications mentioned.">Materials and specifications</button>
+                </div>
+            </div>
+
             <div class="card shadow-sm mb-4">
                 <div class="card-body">
                     <form method="POST" id="searchForm" action="{{ url_for('drawings', project_id=project.id, tab='search') }}">
@@ -417,6 +446,14 @@
 <style>
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { display: inline-block; animation: spin 1.5s linear infinite; }
+
+@keyframes pulse-scale {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: .75; transform: scale(1.08); }
+}
+.pulse-badge { animation: pulse-scale 1.8s ease-in-out infinite; display: inline-block; }
+
+.chip-question { border-radius: 20px; }
 .ocr-progress { min-width: 180px; }
 .progress { border-radius: 3px; background: #e9ecef; }
 
@@ -574,5 +611,26 @@ document.querySelectorAll('#hubTabs button[data-bs-toggle="tab"]').forEach(btn =
         window.history.replaceState({}, '', url);
     });
 });
+
+// ─── Search chips ───
+document.querySelectorAll('.chip-question').forEach(chip => {
+    chip.addEventListener('click', () => {
+        const q = chip.dataset.q;
+        const input = document.querySelector('#searchForm input[name="query"]');
+        if (input) {
+            input.value = q;
+            input.focus();
+        }
+    });
+});
+
+// ─── "Go to Search" button on Documents tab banner ───
+const goToSearchBtn = document.getElementById('goToSearchBtn');
+if (goToSearchBtn) {
+    goToSearchBtn.addEventListener('click', () => {
+        const searchTab = document.getElementById('search-tab');
+        if (searchTab) bootstrap.Tab.getOrCreateInstance(searchTab).show();
+    });
+}
 </script>
 {% endblock %}

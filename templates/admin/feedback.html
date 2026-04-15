@@ -77,6 +77,11 @@
                             <i class="bi bi-chat-left-dots"></i> {{ fb.admin_notes }}
                         </div>
                         {% endif %}
+                        {% if fb.admin_reply %}
+                        <div class="small text-success mt-1">
+                            <i class="bi bi-reply-fill"></i> <strong>Reply:</strong> {{ fb.admin_reply }}
+                        </div>
+                        {% endif %}
                     </td>
                     <td>
                         {% if fb.status == 'Pending' %}
@@ -88,14 +93,25 @@
                         {% elif fb.status == 'Declined' %}
                         <span class="badge bg-dark">Declined</span>
                         {% endif %}
+                        {% if fb.admin_reply %}
+                        <span class="badge bg-success ms-1">Replied</span>
+                        {% endif %}
                     </td>
                     <td>
-                        <button type="button" class="btn btn-sm btn-outline-primary edit-feedback"
+                        {% if current_user.is_superadmin %}
+                        <button type="button" class="btn btn-sm btn-outline-primary edit-feedback me-1"
                                 data-id="{{ fb.id }}"
                                 data-status="{{ fb.status }}"
                                 data-notes="{{ fb.admin_notes or '' }}">
                             <i class="bi bi-pencil"></i> Edit
                         </button>
+                        <button type="button" class="btn btn-sm btn-outline-success reply-feedback"
+                                data-id="{{ fb.id }}"
+                                data-description="{{ fb.description | truncate(120, True) }}"
+                                data-reply="{{ fb.admin_reply or '' }}">
+                            <i class="bi bi-reply"></i> Reply
+                        </button>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -114,6 +130,38 @@
         </p>
     </div>
     {% endif %}
+</div>
+
+<!-- Reply modal -->
+<div class="modal fade" id="replyFeedbackModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form id="replyFeedbackForm" method="POST">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-reply"></i> Reply to Feedback</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-medium text-muted small">Original feedback</label>
+                        <div id="replyOriginalText" class="p-2 bg-light rounded small text-muted" style="white-space:pre-wrap;max-height:120px;overflow-y:auto;"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="replyText" class="form-label fw-medium">Your reply</label>
+                        <textarea class="form-control" id="replyText" name="admin_reply" rows="5"
+                                  placeholder="Type your reply to the user..." required></textarea>
+                        <div class="form-text">The user will receive this by email. Status will be set to <strong>Reviewed</strong> automatically.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-send"></i> Send Reply
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 
 <!-- Edit feedback modal -->
@@ -164,19 +212,37 @@
 {% block scripts %}
 <script>
 (function() {
-    const modalEl = document.getElementById('editFeedbackModal');
-    const modal = new bootstrap.Modal(modalEl);
-    const form = document.getElementById('editFeedbackForm');
+    // Edit modal
+    const editModalEl = document.getElementById('editFeedbackModal');
+    const editModal = new bootstrap.Modal(editModalEl);
+    const editForm = document.getElementById('editFeedbackForm');
     const statusSel = document.getElementById('editStatus');
     const notesTa = document.getElementById('editNotes');
 
     document.querySelectorAll('.edit-feedback').forEach(btn => {
         btn.addEventListener('click', () => {
             const id = btn.dataset.id;
-            form.action = `/admin/feedback/${id}/update` + window.location.search;
+            editForm.action = `/admin/feedback/${id}/update` + window.location.search;
             statusSel.value = btn.dataset.status || 'Pending';
             notesTa.value = btn.dataset.notes || '';
-            modal.show();
+            editModal.show();
+        });
+    });
+
+    // Reply modal
+    const replyModalEl = document.getElementById('replyFeedbackModal');
+    const replyModal = new bootstrap.Modal(replyModalEl);
+    const replyForm = document.getElementById('replyFeedbackForm');
+    const replyText = document.getElementById('replyText');
+    const replyOriginal = document.getElementById('replyOriginalText');
+
+    document.querySelectorAll('.reply-feedback').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.dataset.id;
+            replyForm.action = `/admin/feedback/${id}/reply` + window.location.search;
+            replyOriginal.textContent = btn.dataset.description || '';
+            replyText.value = btn.dataset.reply || '';
+            replyModal.show();
         });
     });
 })();

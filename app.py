@@ -18,7 +18,7 @@ from models import (
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
 )
-from email_notify import send_feedback_email_async
+from email_notify import send_feedback_email_async, send_reply_email_async
 from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
@@ -79,6 +79,7 @@ def _run_migrations(database):
         ("drawing", "doc_type", "VARCHAR(40) DEFAULT 'Drawing'"),
         ("report", "file_path", "VARCHAR(300)"),
         ("user", "must_change_password", "BOOLEAN DEFAULT 0 NOT NULL"),
+        ("feedback", "admin_reply", "TEXT"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -387,6 +388,8 @@ def create_app():
             else:
                 active_tab = "documents"
 
+        has_ready_docs = Drawing.query.filter_by(project_id=project.id, status="ready").count() > 0
+
         return render_template(
             "drawings.html",
             project=project,
@@ -400,6 +403,7 @@ def create_app():
             reports_list=reports_list,
             history_entries=history_entries,
             active_tab=active_tab,
+            has_ready_docs=has_ready_docs,
         )
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
@@ -972,7 +976,7 @@ def create_app():
 
     @app.route("/admin/feedback/<int:feedback_id>/update", methods=["POST"])
     @login_required
-    @admin_required
+    @superadmin_required
     def update_feedback(feedback_id):
         entry = db.session.get(Feedback, feedback_id) or abort(404)
         new_status = (request.form.get("status") or "").strip()
@@ -983,6 +987,22 @@ def create_app():
         entry.admin_notes = (request.form.get("admin_notes") or "").strip() or None
         db.session.commit()
         flash("Feedback updated.", "success")
+        return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
+
+    @app.route("/admin/feedback/<int:feedback_id>/reply", methods=["POST"])
+    @login_required
+    @superadmin_required
+    def reply_feedback(feedback_id):
+        entry = db.session.get(Feedback, feedback_id) or abort(404)
+        reply_text = (request.form.get("admin_reply") or "").strip()
+        if not reply_text:
+            flash("Reply cannot be empty.", "danger")
+            return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
+        entry.admin_reply = reply_text
+        entry.status = "Reviewed"
+        db.session.commit()
+        send_reply_email_async(app, feedback_id)
+        flash("Reply sent and status set to Reviewed.", "success")
         return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
 
     @app.route("/admin/feedback/export")
