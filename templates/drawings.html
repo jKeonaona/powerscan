@@ -431,6 +431,22 @@
                         <textarea class="form-control" id="customPrompt" name="custom_prompt" rows="4"
                                   placeholder="e.g., Extract all fire protection requirements with specification references..."></textarea>
                     </div>
+                    <div class="mt-3" id="estimatingWrap" style="display:none;">
+                        <label class="form-label fw-medium">Estimation Notes to include</label>
+                        <div class="d-flex gap-3 mb-2">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="notes_scope" id="scopeProject" value="project" checked>
+                                <label class="form-check-label" for="scopeProject">This project only</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="notes_scope" id="scopeAll" value="all">
+                                <label class="form-check-label" for="scopeAll">All historical notes across all projects</label>
+                            </div>
+                        </div>
+                        <label for="focusAreas" class="form-label fw-medium">Additional focus areas <span class="text-muted fw-normal">(optional)</span></label>
+                        <textarea class="form-control" id="focusAreas" name="focus_areas" rows="3"
+                                  placeholder="e.g., paint system types, prevailing wage zones, bridge deck work..."></textarea>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -505,12 +521,14 @@ if (searchForm) {
     });
 }
 
-// ─── Report modal: show custom-prompt textarea only when Custom is selected ───
+// ─── Report modal: show extra panels based on selected template ───
 const customWrap = document.getElementById('customPromptWrap');
+const estimatingWrap = document.getElementById('estimatingWrap');
 document.querySelectorAll('input[name="template_id"]').forEach(r => {
     r.addEventListener('change', () => {
-        const customSelected = document.getElementById('tplCustom').checked;
-        customWrap.style.display = customSelected ? 'block' : 'none';
+        const val = r.value;
+        customWrap.style.display = (val === 'custom') ? 'block' : 'none';
+        estimatingWrap.style.display = (val === 'estimating_intelligence') ? 'block' : 'none';
     });
 });
 const reportForm = document.getElementById('reportForm');

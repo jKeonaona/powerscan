@@ -21,7 +21,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from models import db, Drawing, DrawingPage, Project, Report, SearchHistory
+from models import db, Drawing, DrawingPage, Project, Report, SearchHistory, LaborRate, InsuranceRate
 from search import (
     CLAUDE_MODEL,
     MAX_IMAGES_PER_REQUEST,
@@ -101,6 +101,26 @@ REPORT_TEMPLATES = {
             "(High / Medium / Low), source reference, and recommended mitigation. "
             "Present as a table with columns: Risk, Severity, Source, Mitigation. "
             "Start with an executive summary listing the top three risks."
+        ),
+    },
+    "estimating_intelligence": {
+        "name": "Estimating Intelligence Report",
+        "description": "Bid-critical data: dates, sequencing, submittals, permits, specs, safety, and LDs.",
+        "prompt": (
+            "Extract and organize ALL estimate-critical information from these project documents. "
+            "Begin with a one-page Summary section listing the top 10 most important items the estimator must address. "
+            "Then include a section for each category where you find relevant content: "
+            "(1) Bid Dates & Deadlines — bid due, pre-bid meetings, RFI deadlines, addendum cutoffs, award, NTP, milestones; "
+            "(2) Work Sequence Constraints — phasing, access limitations, occupied spaces, coordination requirements; "
+            "(3) Submittal Requirements — all required submittals with type, timing, and spec section; "
+            "(4) Environmental & Permit Requirements — permits needed, SWPPP, hazmat, disposal; "
+            "(5) Traffic Control Requirements — lane closures, detour requirements, working-hours restrictions; "
+            "(6) Paint & Coating Specifications — surface prep standards, coating systems, DFT, warranty; "
+            "(7) Safety Requirements — site-specific safety plans, training, PPE, confined space, fall protection; "
+            "(8) Liquidated Damages — daily LD rate, milestone LDs, bonus provisions; "
+            "(9) Key Bid Items — major line items, allowances, unit price items, alternates; "
+            "(10) Other Estimate-Critical Items — anything else a contractor must price or plan for. "
+            "For each item include the source reference (spec section, page, or document name)."
         ),
     },
 }
@@ -425,7 +445,41 @@ def _resolve_template(template_id, custom_prompt):
     tpl = REPORT_TEMPLATES.get(template_id)
     if not tpl:
         raise ValueError(f"Unknown template: {template_id}")
-    return tpl["name"], tpl["prompt"]
+
+    base_prompt = tpl["prompt"]
+    if template_id == "estimating_intelligence":
+        try:
+            opts = json.loads(custom_prompt or "{}")
+        except (json.JSONDecodeError, TypeError):
+            opts = {}
+        focus = (opts.get("focus_areas") or "").strip()
+        if focus:
+            base_prompt += f"\n\nAdditional focus areas specified by the user: {focus}"
+
+    return tpl["name"], base_prompt
+
+
+def _get_rates_context():
+    """Return formatted string of active labor and insurance rates, or '' if none."""
+    try:
+        labor = LaborRate.query.filter_by(active=True).order_by(LaborRate.category, LaborRate.craft_type).all()
+        insurance = InsuranceRate.query.filter_by(active=True).order_by(InsuranceRate.category, InsuranceRate.rate_type).all()
+        if not labor and not insurance:
+            return ""
+        lines = ["\n\n--- CURRENT RATES CONTEXT (use when estimating costs) ---"]
+        if labor:
+            lines.append("Labor Rates ($/hour):")
+            for r in labor:
+                lines.append(f"  {r.category} / {r.craft_type} ({r.region}): ${r.hourly_cost:.2f}/hr")
+        if insurance:
+            lines.append("Insurance Rates (% of contract value):")
+            for r in insurance:
+                lines.append(f"  {r.category} / {r.rate_type}: {r.rate_percent:.3f}%"
+                              + (f" — {r.notes}" if r.notes else ""))
+        lines.append("--- END RATES CONTEXT ---")
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 def _build_safe_filename(project_name, template_name, report_id):
@@ -487,6 +541,10 @@ def _process_report(app, report_id):
         try:
             _, prompt = _resolve_template(report.template_id, report.custom_prompt)
 
+            # Inject active rates context for estimation-relevant templates
+            if report.template_id in ("estimating_intelligence", "bid_summary"):
+                prompt += _get_rates_context()
+
             pages = (
                 db.session.query(DrawingPage, Drawing)
                 .join(Drawing, DrawingPage.drawing_id == Drawing.id)
@@ -495,6 +553,26 @@ def _process_report(app, report_id):
                 .order_by(Drawing.original_filename, DrawingPage.page_number)
                 .all()
             )
+
+            # For Estimating Intelligence with "all" notes scope, append global Estimation Notes
+            if report.template_id == "estimating_intelligence":
+                try:
+                    opts = json.loads(report.custom_prompt or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    opts = {}
+                if opts.get("notes_scope") == "all":
+                    existing_drawing_ids = {d.id for _, d in pages}
+                    extra = (
+                        db.session.query(DrawingPage, Drawing)
+                        .join(Drawing, DrawingPage.drawing_id == Drawing.id)
+                        .filter(Drawing.doc_type == "Estimation Notes")
+                        .filter(Drawing.status == "ready")
+                        .filter(Drawing.project_id != project.id)
+                        .order_by(Drawing.original_filename, DrawingPage.page_number)
+                        .all()
+                    )
+                    pages = pages + [p for p in extra if p[1].id not in existing_drawing_ids]
+
             if not pages:
                 raise ValueError("No ready documents in this project.")
 

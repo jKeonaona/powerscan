@@ -39,6 +39,11 @@
                     {% endif %}
                     {% if current_user.is_admin %}
                     <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('notes_library') }}">
+                            <i class="bi bi-journal-text"></i> Notes
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('admin_users') }}">
                             <i class="bi bi-people"></i> User Management
                         </a>
@@ -46,6 +51,13 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('admin_feedback') }}">
                             <i class="bi bi-chat-square-text"></i> Feedback
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if current_user.is_superadmin %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('admin_rates') }}">
+                            <i class="bi bi-currency-dollar"></i> Rates
                         </a>
                     </li>
                     {% endif %}

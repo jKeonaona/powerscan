@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Estimation Notes Library - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-journal-text"></i> Estimation Notes Library</h2>
+            <p class="text-muted mb-0">All documents uploaded as Estimation Notes across
+                {% if current_user.is_superadmin %}all companies{% else %}your company{% endif %}.
+                Manage notes from within each project.
+            </p>
+        </div>
+    </div>
+
+    {% if notes %}
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Document</th>
+                    <th>Project</th>
+                    <th>Company</th>
+                    <th>Status</th>
+                    <th>Uploaded by</th>
+                    <th>Date</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for note in notes %}
+                <tr>
+                    <td>
+                        <i class="bi bi-file-earmark-pdf text-danger"></i>
+                        {{ note.original_filename }}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('drawings', project_id=note.project_id) }}">{{ note.project.name }}</a>
+                    </td>
+                    <td class="text-muted small">{{ note.project.company.name }}</td>
+                    <td>
+                        {% if note.status == 'ready' %}
+                        <span class="badge bg-success"><i class="bi bi-check-lg"></i> Ready</span>
+                        {% elif note.status == 'processing' %}
+                        <span class="badge bg-warning text-dark"><i class="bi bi-gear-fill"></i> Processing</span>
+                        {% elif note.status == 'failed' %}
+                        <span class="badge bg-danger">Failed</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted">{{ note.uploader.username if note.uploader else '—' }}</td>
+                    <td class="small text-muted text-nowrap">{{ note.created_at.strftime('%Y-%m-%d') }}</td>
+                    <td>
+                        <a href="{{ url_for('drawing_detail', drawing_id=note.id) }}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-journal-text fs-1 text-muted"></i>
+        <p class="text-muted mt-2">No Estimation Notes have been uploaded yet.</p>
+        <p class="text-muted small">Upload a document and choose <strong>Estimation Notes</strong> as its type.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

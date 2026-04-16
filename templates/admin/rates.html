@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Labor & Insurance Rates - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-currency-dollar"></i> Labor & Insurance Rates</h2>
+            <p class="text-muted mb-0">Upload and manage rate tables used in cost estimation reports.</p>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <ul class="nav nav-tabs mb-4" id="ratesTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link {% if active_tab == 'labor' %}active{% endif %}"
+                    data-bs-toggle="tab" data-bs-target="#tab-labor" type="button">
+                <i class="bi bi-people"></i> Labor Rates
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link {% if active_tab == 'insurance' %}active{% endif %}"
+                    data-bs-toggle="tab" data-bs-target="#tab-insurance" type="button">
+                <i class="bi bi-shield-check"></i> Insurance Rates
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+
+        <!-- ── Labor Rates tab ── -->
+        <div class="tab-pane fade {% if active_tab == 'labor' %}show active{% endif %}" id="tab-labor">
+
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span class="fw-medium">Upload New Version</span>
+                            <a href="{{ url_for('download_labor_template') }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-download"></i> CSV Template
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            <form action="{{ url_for('upload_labor_rates') }}" method="POST" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label class="form-label small fw-medium">CSV File</label>
+                                    <input type="file" name="csv_file" class="form-control form-control-sm" accept=".csv" required>
+                                    <div class="form-text">Required columns: category, craft_type, region, hourly_cost<br>Optional: effective_date, expiry_date (YYYY-MM-DD)</div>
+                                </div>
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-upload"></i> Upload & Activate
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if active_labor %}
+            <h6 class="fw-bold mb-2">Active Labor Rates (v{{ active_labor[0].version }})</h6>
+            <div class="table-responsive mb-4">
+                <table class="table table-sm table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Craft Type</th>
+                            <th>Region</th>
+                            <th class="text-end">$/Hour</th>
+                            <th>Effective</th>
+                            <th>Expiry</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in active_labor %}
+                        <tr>
+                            <td>{{ r.category }}</td>
+                            <td>{{ r.craft_type }}</td>
+                            <td class="text-muted small">{{ r.region }}</td>
+                            <td class="text-end fw-medium">${{ '%.2f' % r.hourly_cost }}</td>
+                            <td class="small text-muted">{{ r.effective_date or '—' }}</td>
+                            <td class="small text-muted">{{ r.expiry_date or '—' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No active labor rates. Upload a CSV to get started.</p>
+            {% endif %}
+
+            {% if history_labor %}
+            <h6 class="text-muted fw-medium mb-2">Version History</h6>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <thead>
+                        <tr><th>Version</th><th>Category</th><th>Craft Type</th><th class="text-end">$/Hr</th><th>Uploaded</th><th>By</th><th>Active</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for r in history_labor %}
+                        <tr class="{% if not r.active %}text-muted{% endif %}">
+                            <td>v{{ r.version }}</td>
+                            <td>{{ r.category }}</td>
+                            <td>{{ r.craft_type }}</td>
+                            <td class="text-end">${{ '%.2f' % r.hourly_cost }}</td>
+                            <td class="small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td class="small">{{ r.uploader.username if r.uploader else '—' }}</td>
+                            <td>{% if r.active %}<span class="badge bg-success">Active</span>{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- ── Insurance Rates tab ── -->
+        <div class="tab-pane fade {% if active_tab == 'insurance' %}show active{% endif %}" id="tab-insurance">
+
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span class="fw-medium">Upload New Version</span>
+                            <a href="{{ url_for('download_insurance_template') }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-download"></i> CSV Template
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            <form action="{{ url_for('upload_insurance_rates') }}" method="POST" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label class="form-label small fw-medium">CSV File</label>
+                                    <input type="file" name="csv_file" class="form-control form-control-sm" accept=".csv" required>
+                                    <div class="form-text">Required columns: category, rate_type, rate_percent<br>Optional: effective_date, expiry_date (YYYY-MM-DD), notes</div>
+                                </div>
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-upload"></i> Upload & Activate
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if active_insurance %}
+            <h6 class="fw-bold mb-2">Active Insurance Rates (v{{ active_insurance[0].version }})</h6>
+            <div class="table-responsive mb-4">
+                <table class="table table-sm table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Rate Type</th>
+                            <th class="text-end">Rate %</th>
+                            <th>Effective</th>
+                            <th>Expiry</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in active_insurance %}
+                        <tr>
+                            <td>{{ r.category }}</td>
+                            <td>{{ r.rate_type }}</td>
+                            <td class="text-end fw-medium">{{ '%.3f' % r.rate_percent }}%</td>
+                            <td class="small text-muted">{{ r.effective_date or '—' }}</td>
+                            <td class="small text-muted">{{ r.expiry_date or '—' }}</td>
+                            <td class="small text-muted">{{ r.notes or '—' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No active insurance rates. Upload a CSV to get started.</p>
+            {% endif %}
+
+            {% if history_insurance %}
+            <h6 class="text-muted fw-medium mb-2">Version History</h6>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <thead>
+                        <tr><th>Version</th><th>Category</th><th>Rate Type</th><th class="text-end">%</th><th>Uploaded</th><th>By</th><th>Active</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for r in history_insurance %}
+                        <tr class="{% if not r.active %}text-muted{% endif %}">
+                            <td>v{{ r.version }}</td>
+                            <td>{{ r.category }}</td>
+                            <td>{{ r.rate_type }}</td>
+                            <td class="text-end">{{ '%.3f' % r.rate_percent }}%</td>
+                            <td class="small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td class="small">{{ r.uploader.username if r.uploader else '—' }}</td>
+                            <td>{% if r.active %}<span class="badge bg-success">Active</span>{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+
+    </div><!-- tab-content -->
+</div>
+{% endblock %}

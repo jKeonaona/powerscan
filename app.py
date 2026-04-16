@@ -1,5 +1,8 @@
+import csv as _csv
 import io
+import json
 import os
+import secrets
 import uuid
 from datetime import datetime, timezone
 
@@ -14,11 +17,14 @@ from flask_login import (
 from config import Config
 from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
+    LaborRate, InsuranceRate, PasswordResetToken,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
 )
-from email_notify import send_feedback_email_async, send_reply_email_async
+from email_notify import (
+    send_feedback_email_async, send_reply_email_async, send_password_reset_email_async,
+)
 from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
@@ -198,6 +204,51 @@ def create_app():
                 return redirect(url_for("dashboard"))
         return render_template("change_password.html", forced=current_user.must_change_password)
 
+    @app.route("/forgot-password", methods=["GET", "POST"])
+    def forgot_password():
+        if current_user.is_authenticated:
+            return redirect(url_for("dashboard"))
+        if request.method == "POST":
+            email = (request.form.get("email") or "").strip().lower()
+            user = User.query.filter(db.func.lower(User.email) == email).first()
+            if user:
+                token_val = secrets.token_urlsafe(32)
+                tok = PasswordResetToken(user_id=user.id, token=token_val)
+                db.session.add(tok)
+                db.session.commit()
+                send_password_reset_email_async(app, tok.id)
+            flash("If that email is on file you will receive a reset link shortly.", "info")
+            return redirect(url_for("login"))
+        return render_template("forgot_password.html")
+
+    @app.route("/reset-password/<token>", methods=["GET", "POST"])
+    def reset_password(token):
+        if current_user.is_authenticated:
+            return redirect(url_for("dashboard"))
+        tok = PasswordResetToken.query.filter_by(token=token, used=False).first()
+        if not tok:
+            flash("This reset link is invalid or has already been used.", "danger")
+            return redirect(url_for("login"))
+        age = (datetime.now(timezone.utc) - tok.created_at.replace(tzinfo=timezone.utc)).total_seconds()
+        if age > 3600:
+            flash("This reset link has expired. Please request a new one.", "danger")
+            return redirect(url_for("forgot_password"))
+        if request.method == "POST":
+            new_pw = request.form.get("new_password", "")
+            confirm_pw = request.form.get("confirm_password", "")
+            if len(new_pw) < 8:
+                flash("Password must be at least 8 characters.", "danger")
+            elif new_pw != confirm_pw:
+                flash("Passwords do not match.", "danger")
+            else:
+                tok.user.set_password(new_pw)
+                tok.user.must_change_password = False
+                tok.used = True
+                db.session.commit()
+                flash("Password updated. Please log in.", "success")
+                return redirect(url_for("login"))
+        return render_template("reset_password.html", token=token)
+
     # Guard: users with a forced reset flag are locked to the change-password page
     # until they pick a new password (or log out).
     @app.before_request
@@ -206,7 +257,7 @@ def create_app():
             return None
         if not current_user.must_change_password:
             return None
-        allowed_endpoints = {"change_password", "logout", "login", "static"}
+        allowed_endpoints = {"change_password", "logout", "login", "static", "forgot_password", "reset_password"}
         if request.endpoint in allowed_endpoints:
             return None
         return redirect(url_for("change_password"))
@@ -406,13 +457,30 @@ def create_app():
             has_ready_docs=has_ready_docs,
         )
 
+    @app.route("/notes")
+    @login_required
+    @admin_required
+    def notes_library():
+        q = db.session.query(Drawing).filter_by(doc_type="Estimation Notes")
+        if not current_user.is_superadmin:
+            q = q.join(Project, Drawing.project_id == Project.id).filter(
+                Project.company_id == current_user.company_id
+            )
+        notes = q.order_by(Drawing.created_at.desc()).all()
+        return render_template("notes.html", notes=notes)
+
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
     @login_required
     def upload_drawing(project_id):
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        return render_template("upload.html", project=project, doc_types=DOC_TYPES)
+        return render_template(
+            "upload.html",
+            project=project,
+            doc_types=DOC_TYPES,
+            api_key_configured=bool(app.config.get("ANTHROPIC_API_KEY")),
+        )
 
     @app.route("/projects/<int:project_id>/upload-file", methods=["POST"])
     @login_required
@@ -470,6 +538,67 @@ def create_app():
             "filename": file.filename,
             "status": "pending",
         })
+
+    @app.route("/projects/<int:project_id>/classify-file", methods=["POST"])
+    @login_required
+    def classify_file(project_id):
+        """AJAX: receive a PDF, classify its first page with Claude Vision."""
+        import base64
+        from pdf2image import convert_from_bytes
+        from search import CLAUDE_MODEL
+        import anthropic as _anthropic
+
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        api_key = app.config.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return jsonify({"doc_type": DEFAULT_DOC_TYPE})
+
+        file = request.files.get("pdf_file")
+        if not file:
+            return jsonify({"doc_type": DEFAULT_DOC_TYPE})
+
+        try:
+            pdf_bytes = file.read()
+            images = convert_from_bytes(pdf_bytes, first_page=1, last_page=1, dpi=100)
+            if not images:
+                return jsonify({"doc_type": DEFAULT_DOC_TYPE})
+
+            from PIL import Image as _Image
+            img = images[0]
+            if img.width > 800:
+                ratio = 800 / img.width
+                img = img.resize((800, int(img.height * ratio)), _Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=75)
+            img_b64 = base64.standard_b64encode(buf.getvalue()).decode()
+
+            client = _anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=20,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                        {"type": "text", "text": (
+                            "Classify this construction document page as exactly one of: "
+                            "Drawing, Contract, Specification, Bid Doc, Addendum, Estimation Notes, Other. "
+                            "Estimation Notes are estimating notes, takeoff sheets, or handwritten cost notes. "
+                            "Reply with only the type name, nothing else."
+                        )},
+                    ],
+                }],
+            )
+            doc_type = resp.content[0].text.strip()
+            if doc_type not in DOC_TYPES:
+                doc_type = DEFAULT_DOC_TYPE
+            return jsonify({"doc_type": doc_type})
+        except Exception as e:
+            print(f"[powerscan] classify_file error: {e}", flush=True)
+            return jsonify({"doc_type": DEFAULT_DOC_TYPE})
 
     @app.route("/drawings/<int:drawing_id>")
     @login_required
@@ -554,10 +683,17 @@ def create_app():
             return redirect(url_for("drawings", project_id=project.id))
 
         template_id = request.form.get("template_id", "").strip()
-        custom_prompt = request.form.get("custom_prompt", "").strip()
         if not template_id or (template_id != "custom" and template_id not in REPORT_TEMPLATES):
             flash("Please choose a valid report template.", "danger")
             return redirect(url_for("drawings", project_id=project.id))
+
+        if template_id == "estimating_intelligence":
+            custom_prompt = json.dumps({
+                "notes_scope": request.form.get("notes_scope", "project").strip(),
+                "focus_areas": request.form.get("focus_areas", "").strip(),
+            })
+        else:
+            custom_prompt = request.form.get("custom_prompt", "").strip()
 
         try:
             enqueue_report(project.id, current_user.id, template_id, custom_prompt)
@@ -1114,6 +1250,172 @@ def create_app():
             mimetype="application/pdf",
             as_attachment=True,
             download_name=fname,
+        )
+
+    # ── Admin Rates ─────────────────────────────────────────────
+
+    @app.route("/admin/rates")
+    @login_required
+    @superadmin_required
+    def admin_rates():
+        active_labor = LaborRate.query.filter_by(active=True).order_by(LaborRate.category, LaborRate.craft_type).all()
+        active_insurance = InsuranceRate.query.filter_by(active=True).order_by(InsuranceRate.category, InsuranceRate.rate_type).all()
+        history_labor = LaborRate.query.order_by(LaborRate.created_at.desc()).limit(200).all()
+        history_insurance = InsuranceRate.query.order_by(InsuranceRate.created_at.desc()).limit(200).all()
+        active_tab = request.args.get("tab", "labor")
+        return render_template(
+            "admin/rates.html",
+            active_labor=active_labor,
+            active_insurance=active_insurance,
+            history_labor=history_labor,
+            history_insurance=history_insurance,
+            active_tab=active_tab,
+        )
+
+    @app.route("/admin/rates/labor/upload", methods=["POST"])
+    @login_required
+    @superadmin_required
+    def upload_labor_rates():
+        f = request.files.get("csv_file")
+        if not f:
+            flash("No file uploaded.", "danger")
+            return redirect(url_for("admin_rates", tab="labor"))
+        try:
+            content = f.read().decode("utf-8-sig")
+            reader = _csv.DictReader(io.StringIO(content))
+            required = {"category", "craft_type", "region", "hourly_cost"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                flash(f"CSV missing columns: {required - set(reader.fieldnames or [])}", "danger")
+                return redirect(url_for("admin_rates", tab="labor"))
+            rows = list(reader)
+            if not rows:
+                flash("CSV is empty.", "danger")
+                return redirect(url_for("admin_rates", tab="labor"))
+            max_ver = db.session.query(db.func.max(LaborRate.version)).scalar() or 0
+            new_ver = max_ver + 1
+            LaborRate.query.update({"active": False})
+            count = 0
+            for row in rows:
+                try:
+                    cost = float(row["hourly_cost"])
+                except (ValueError, KeyError):
+                    continue
+                eff = exp = None
+                try:
+                    if row.get("effective_date"):
+                        eff = datetime.strptime(row["effective_date"].strip(), "%Y-%m-%d").date()
+                    if row.get("expiry_date"):
+                        exp = datetime.strptime(row["expiry_date"].strip(), "%Y-%m-%d").date()
+                except ValueError:
+                    pass
+                db.session.add(LaborRate(
+                    category=row.get("category", "").strip(),
+                    craft_type=row.get("craft_type", "").strip(),
+                    region=row.get("region", "General").strip(),
+                    hourly_cost=cost,
+                    effective_date=eff,
+                    expiry_date=exp,
+                    version=new_ver,
+                    uploaded_by=current_user.id,
+                    active=True,
+                ))
+                count += 1
+            db.session.commit()
+            flash(f"Uploaded {count} labor rates (version {new_ver}).", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Upload failed: {e}", "danger")
+        return redirect(url_for("admin_rates", tab="labor"))
+
+    @app.route("/admin/rates/insurance/upload", methods=["POST"])
+    @login_required
+    @superadmin_required
+    def upload_insurance_rates():
+        f = request.files.get("csv_file")
+        if not f:
+            flash("No file uploaded.", "danger")
+            return redirect(url_for("admin_rates", tab="insurance"))
+        try:
+            content = f.read().decode("utf-8-sig")
+            reader = _csv.DictReader(io.StringIO(content))
+            required = {"category", "rate_type", "rate_percent"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                flash(f"CSV missing columns: {required - set(reader.fieldnames or [])}", "danger")
+                return redirect(url_for("admin_rates", tab="insurance"))
+            rows = list(reader)
+            if not rows:
+                flash("CSV is empty.", "danger")
+                return redirect(url_for("admin_rates", tab="insurance"))
+            max_ver = db.session.query(db.func.max(InsuranceRate.version)).scalar() or 0
+            new_ver = max_ver + 1
+            InsuranceRate.query.update({"active": False})
+            count = 0
+            for row in rows:
+                try:
+                    pct = float(row["rate_percent"])
+                except (ValueError, KeyError):
+                    continue
+                eff = exp = None
+                try:
+                    if row.get("effective_date"):
+                        eff = datetime.strptime(row["effective_date"].strip(), "%Y-%m-%d").date()
+                    if row.get("expiry_date"):
+                        exp = datetime.strptime(row["expiry_date"].strip(), "%Y-%m-%d").date()
+                except ValueError:
+                    pass
+                db.session.add(InsuranceRate(
+                    category=row.get("category", "").strip(),
+                    rate_type=row.get("rate_type", "").strip(),
+                    rate_percent=pct,
+                    effective_date=eff,
+                    expiry_date=exp,
+                    version=new_ver,
+                    notes=row.get("notes", "").strip() or None,
+                    uploaded_by=current_user.id,
+                    active=True,
+                ))
+                count += 1
+            db.session.commit()
+            flash(f"Uploaded {count} insurance rates (version {new_ver}).", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Upload failed: {e}", "danger")
+        return redirect(url_for("admin_rates", tab="insurance"))
+
+    @app.route("/admin/rates/labor/template")
+    @login_required
+    @superadmin_required
+    def download_labor_template():
+        headers = ["category", "craft_type", "region", "hourly_cost", "effective_date", "expiry_date"]
+        buf = io.StringIO()
+        w = _csv.DictWriter(buf, fieldnames=headers)
+        w.writeheader()
+        w.writerow({"category": "Painting", "craft_type": "Journeyman Painter",
+                    "region": "Southern California", "hourly_cost": "75.50",
+                    "effective_date": "2025-01-01", "expiry_date": "2025-12-31"})
+        return send_file(
+            io.BytesIO(buf.getvalue().encode()),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name="labor_rates_template.csv",
+        )
+
+    @app.route("/admin/rates/insurance/template")
+    @login_required
+    @superadmin_required
+    def download_insurance_template():
+        headers = ["category", "rate_type", "rate_percent", "effective_date", "expiry_date", "notes"]
+        buf = io.StringIO()
+        w = _csv.DictWriter(buf, fieldnames=headers)
+        w.writeheader()
+        w.writerow({"category": "General Liability", "rate_type": "Standard GL",
+                    "rate_percent": "1.25", "effective_date": "2025-01-01",
+                    "expiry_date": "2025-12-31", "notes": "Per AIA A201"})
+        return send_file(
+            io.BytesIO(buf.getvalue().encode()),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name="insurance_rates_template.csv",
         )
 
     # ── Error Handlers ──────────────────────────────────────────

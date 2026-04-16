@@ -10,7 +10,7 @@ ROLE_ADMIN = "admin"
 ROLE_USER = "user"
 ROLES = [ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER]
 
-DOC_TYPES = ["Drawing", "Contract", "Specification", "Bid Doc", "Addendum", "Other"]
+DOC_TYPES = ["Drawing", "Contract", "Specification", "Bid Doc", "Addendum", "Estimation Notes", "Other"]
 DEFAULT_DOC_TYPE = "Drawing"
 
 FEEDBACK_TYPES = ["Idea", "Bug Report", "Question", "Feature Request"]
@@ -110,6 +110,48 @@ class Feedback(db.Model):
     admin_notes = db.Column(db.Text, nullable=True)
     admin_reply = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship("User")
+
+
+class LaborRate(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(100), nullable=False)
+    craft_type = db.Column(db.String(100), nullable=False)
+    region = db.Column(db.String(100), nullable=False, default="General")
+    hourly_cost = db.Column(db.Float, nullable=False)
+    effective_date = db.Column(db.Date, nullable=True)
+    expiry_date = db.Column(db.Date, nullable=True)
+    version = db.Column(db.Integer, nullable=False, default=1)
+    uploaded_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    active = db.Column(db.Boolean, nullable=False, default=True)
+
+    uploader = db.relationship("User", foreign_keys=[uploaded_by])
+
+
+class InsuranceRate(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(100), nullable=False)
+    rate_type = db.Column(db.String(100), nullable=False)
+    rate_percent = db.Column(db.Float, nullable=False)
+    effective_date = db.Column(db.Date, nullable=True)
+    expiry_date = db.Column(db.Date, nullable=True)
+    version = db.Column(db.Integer, nullable=False, default=1)
+    notes = db.Column(db.Text, nullable=True)
+    uploaded_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    active = db.Column(db.Boolean, nullable=False, default=True)
+
+    uploader = db.relationship("User", foreign_keys=[uploaded_by])
+
+
+class PasswordResetToken(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    token = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    used = db.Column(db.Boolean, nullable=False, default=False)
 
     user = db.relationship("User")
 

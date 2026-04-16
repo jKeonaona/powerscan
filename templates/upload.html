@@ -16,14 +16,27 @@
             <h2 class="mb-4">Upload Documents</h2>
 
             <div class="mb-3">
-                <label for="docType" class="form-label fw-medium">Document Type</label>
+                <label for="docType" class="form-label fw-medium">Default Document Type</label>
                 <select id="docType" class="form-select">
                     {% for dt in doc_types %}
                     <option value="{{ dt }}">{{ dt }}</option>
                     {% endfor %}
                 </select>
-                <div class="form-text">Applies to every file uploaded in this batch.</div>
+                <div class="form-text">Used when Auto-detect is off, or as fallback for files that can't be classified.</div>
             </div>
+
+            {% if api_key_configured %}
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="autoDetect">
+                <label class="form-check-label fw-medium" for="autoDetect">
+                    <i class="bi bi-magic"></i> Auto-detect document types
+                </label>
+                <div class="form-text">
+                    Sends the first page of each PDF to Claude Vision to suggest a document type.
+                    You can override any suggestion before uploading.
+                </div>
+            </div>
+            {% endif %}
 
             <!-- Drop Zone -->
             <div id="dropZone" class="drop-zone">
@@ -106,12 +119,10 @@
 }
 
 /* File list */
-.file-list {
-    margin-top: 1.5rem;
-}
+.file-list { margin-top: 1.5rem; }
 .file-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 1rem;
     padding: .85rem 1rem;
     background: #fff;
@@ -125,21 +136,16 @@
     font-size: 1.6rem;
     color: #dc3545;
     flex-shrink: 0;
+    margin-top: .1rem;
 }
-.file-item .file-info {
-    flex: 1;
-    min-width: 0;
-}
+.file-item .file-info { flex: 1; min-width: 0; }
 .file-item .file-name {
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.file-item .file-size {
-    font-size: .8rem;
-    color: #8da0b8;
-}
+.file-item .file-size { font-size: .8rem; color: #8da0b8; }
 .file-item .file-actions {
     flex-shrink: 0;
     display: flex;
@@ -187,6 +193,7 @@
     white-space: nowrap;
 }
 .file-status.waiting { background: #f0f1f3; color: #6c757d; }
+.file-status.classifying { background: #e8f0fe; color: #0d6efd; }
 .file-status.uploading { background: #e8f0fe; color: #0d6efd; }
 .file-status.success { background: #d1f5e0; color: #0f5132; }
 .file-status.error { background: #fde2e4; color: #842029; }
@@ -194,30 +201,52 @@
 .file-status.skipped { background: #f0f1f3; color: #6c757d; }
 .file-item.duplicate { border-color: #ffc107; }
 .file-item.skipped { opacity: .55; }
+
+/* Per-file type selector */
+.file-type-row { margin-top: .4rem; display: flex; align-items: center; gap: .5rem; }
+.file-type-badge {
+    font-size: .75rem;
+    background: #e8f0fe;
+    color: #0d4fa3;
+    border-radius: 4px;
+    padding: .15rem .45rem;
+}
+.spinner-xs {
+    width: .9rem; height: .9rem;
+    border: 2px solid #c5d9fd;
+    border-top-color: #0d6efd;
+    border-radius: 50%;
+    display: inline-block;
+    animation: spin-xs .6s linear infinite;
+    vertical-align: middle;
+}
+@keyframes spin-xs { to { transform: rotate(360deg); } }
 </style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const UPLOAD_URL = "{{ url_for('upload_single_file', project_id=project.id) }}";
-const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('fileInput');
-const fileList = document.getElementById('fileList');
-const fileItems = document.getElementById('fileItems');
-const fileListTitle = document.getElementById('fileListTitle');
-const btnUpload = document.getElementById('btnUpload');
-const btnClear = document.getElementById('btnClear');
-const doneBar = document.getElementById('doneBar');
+const UPLOAD_URL   = "{{ url_for('upload_single_file', project_id=project.id) }}";
+const CLASSIFY_URL = "{{ url_for('classify_file', project_id=project.id) }}";
+const ALL_DOC_TYPES = {{ doc_types | tojson }};
+
+const dropZone       = document.getElementById('dropZone');
+const fileInput      = document.getElementById('fileInput');
+const fileList       = document.getElementById('fileList');
+const fileItems      = document.getElementById('fileItems');
+const fileListTitle  = document.getElementById('fileListTitle');
+const btnUpload      = document.getElementById('btnUpload');
+const btnClear       = document.getElementById('btnClear');
+const doneBar        = document.getElementById('doneBar');
+const autoDetectChk  = document.getElementById('autoDetect');
 
 let selectedFiles = [];
 
 // --- Drag & drop ---
-['dragenter','dragover'].forEach(e => {
-    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.add('drag-over'); });
-});
-['dragleave','drop'].forEach(e => {
-    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.remove('drag-over'); });
-});
+['dragenter','dragover'].forEach(e =>
+    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.add('drag-over'); }));
+['dragleave','drop'].forEach(e =>
+    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.remove('drag-over'); }));
 dropZone.addEventListener('drop', ev => {
     const files = [...ev.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
     addFiles(files);
@@ -232,23 +261,70 @@ fileInput.addEventListener('change', () => {
 });
 
 function addFiles(files) {
+    const newEntries = [];
     files.forEach(f => {
         if (!selectedFiles.some(s => s.file.name === f.name && s.file.size === f.size)) {
-            selectedFiles.push({ file: f, status: 'waiting', progress: 0 });
+            const entry = { file: f, status: 'waiting', progress: 0, doc_type: null, classifying: false };
+            selectedFiles.push(entry);
+            newEntries.push(entry);
         }
     });
     renderList();
+    if (autoDetectChk && autoDetectChk.checked && newEntries.length) {
+        classifyEntries(newEntries);
+    }
 }
 
-function removeFile(index) {
-    selectedFiles.splice(index, 1);
-    renderList();
+async function classifyEntries(entries) {
+    for (const entry of entries) {
+        if (entry.status !== 'waiting') continue;
+        entry.classifying = true;
+        renderList();
+        try {
+            const fd = new FormData();
+            fd.append('pdf_file', entry.file);
+            const resp = await fetch(CLASSIFY_URL, { method: 'POST', body: fd });
+            const data = await resp.json();
+            entry.doc_type = data.doc_type || null;
+        } catch (e) { /* keep null — fall back to global */ }
+        entry.classifying = false;
+        renderList();
+    }
 }
+
+// Re-classify when checkbox is toggled on
+if (autoDetectChk) {
+    autoDetectChk.addEventListener('change', () => {
+        if (autoDetectChk.checked) {
+            const unclassified = selectedFiles.filter(e => e.status === 'waiting' && !e.doc_type && !e.classifying);
+            if (unclassified.length) classifyEntries(unclassified);
+        }
+    });
+}
+
+function removeFile(index) { selectedFiles.splice(index, 1); renderList(); }
+function updateDocType(idx, val) { selectedFiles[idx].doc_type = val; }
 
 function formatSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function buildTypeSelector(entry, i) {
+    if (!autoDetectChk || !autoDetectChk.checked) return '';
+    if (entry.classifying) {
+        return `<div class="file-type-row"><span class="spinner-xs"></span><span class="small text-muted ms-1">Detecting type…</span></div>`;
+    }
+    const current = entry.doc_type || document.getElementById('docType').value;
+    const opts = ALL_DOC_TYPES.map(t =>
+        `<option value="${t}" ${t === current ? 'selected' : ''}>${t}</option>`
+    ).join('');
+    return `<div class="file-type-row">
+        <span class="small text-muted">Type:</span>
+        <select class="form-select form-select-sm" style="max-width:200px;" onchange="updateDocType(${i}, this.value)">${opts}</select>
+        ${entry.doc_type ? '<span class="file-type-badge"><i class="bi bi-magic"></i> Auto-detected</span>' : ''}
+    </div>`;
 }
 
 function renderList() {
@@ -258,15 +334,17 @@ function renderList() {
         return;
     }
     fileList.style.display = 'block';
-    const pending = selectedFiles.filter(f => f.status === 'waiting').length;
     const done = selectedFiles.filter(f => f.status === 'success').length;
     fileListTitle.textContent = `${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''} selected`;
     if (done > 0) fileListTitle.textContent += ` (${done} uploaded)`;
 
-    const uploading = selectedFiles.some(f => f.status === 'uploading');
-    btnUpload.disabled = uploading || pending === 0;
-    btnClear.disabled = uploading;
-    document.getElementById('docType').disabled = uploading;
+    const anyUploading = selectedFiles.some(f => f.status === 'uploading');
+    const anyClassifying = selectedFiles.some(f => f.classifying);
+    const pending = selectedFiles.filter(f => f.status === 'waiting').length;
+    btnUpload.disabled = anyUploading || anyClassifying || pending === 0;
+    btnClear.disabled = anyUploading;
+    document.getElementById('docType').disabled = anyUploading;
+    if (autoDetectChk) autoDetectChk.disabled = anyUploading;
 
     fileItems.innerHTML = selectedFiles.map((entry, i) => `
         <div class="file-item ${entry.status}" data-idx="${i}">
@@ -274,36 +352,35 @@ function renderList() {
             <div class="file-info">
                 <div class="file-name" title="${entry.file.name}">${entry.file.name}</div>
                 <div class="file-size">${formatSize(entry.file.size)}</div>
+                ${buildTypeSelector(entry, i)}
                 <div class="file-progress"><div class="file-progress-bar" style="width:${entry.progress}%"></div></div>
                 ${entry.errorMsg ? `<div class="text-danger" style="font-size:.8rem">${entry.errorMsg}</div>` : ''}
                 ${entry.status === 'duplicate' ? `
                 <div class="dup-warning mt-1">
-                    <small class="text-warning"><i class="bi bi-exclamation-triangle-fill"></i> A file with this name already exists in this project.</small>
+                    <small class="text-warning"><i class="bi bi-exclamation-triangle-fill"></i> A file with this name already exists.</small>
                     <div class="mt-1 d-flex gap-2">
-                        <button class="btn btn-sm btn-outline-warning" onclick="replaceFile(${i})">
-                            <i class="bi bi-arrow-repeat"></i> Replace
-                        </button>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="skipFile(${i})">
-                            Skip
-                        </button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="replaceFile(${i})"><i class="bi bi-arrow-repeat"></i> Replace</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="skipFile(${i})">Skip</button>
                     </div>
                 </div>` : ''}
             </div>
             <div class="file-actions">
                 <span class="file-status ${entry.status}">
-                    ${entry.status === 'waiting' ? 'Ready' : ''}
+                    ${entry.status === 'waiting' && !entry.classifying ? 'Ready' : ''}
+                    ${entry.classifying ? '<span class="spinner-xs"></span>' : ''}
                     ${entry.status === 'uploading' ? 'Uploading...' : ''}
                     ${entry.status === 'success' ? '<i class="bi bi-check-lg"></i> Done' : ''}
                     ${entry.status === 'error' ? '<i class="bi bi-exclamation-triangle"></i> Failed' : ''}
                     ${entry.status === 'duplicate' ? '<i class="bi bi-files"></i> Duplicate' : ''}
                     ${entry.status === 'skipped' ? 'Skipped' : ''}
                 </span>
-                ${entry.status === 'waiting' ? `<button class="btn-remove" onclick="removeFile(${i})" title="Remove"><i class="bi bi-x-lg"></i></button>` : ''}
+                ${entry.status === 'waiting' && !entry.classifying
+                    ? `<button class="btn-remove" onclick="removeFile(${i})" title="Remove"><i class="bi bi-x-lg"></i></button>`
+                    : ''}
             </div>
         </div>
     `).join('');
 
-    // Show "View Documents" when all done
     const terminal = ['success', 'error', 'skipped'];
     const allDone = selectedFiles.every(f => terminal.includes(f.status));
     doneBar.style.display = (allDone && done > 0) ? 'block' : 'none';
@@ -315,13 +392,10 @@ btnUpload.addEventListener('click', startUpload);
 async function startUpload() {
     const pending = selectedFiles.filter(f => f.status === 'waiting');
     if (pending.length === 0) return;
-
-    // Upload sequentially to avoid overwhelming the server
     for (const entry of pending) {
         entry.status = 'uploading';
         entry.progress = 0;
         renderList();
-
         try {
             await uploadFile(entry);
             entry.status = 'success';
@@ -340,12 +414,17 @@ async function startUpload() {
     }
 }
 
+function getEntryDocType(entry) {
+    // Prefer per-file type (auto-detected or user-overridden), then global dropdown
+    return entry.doc_type || document.getElementById('docType').value;
+}
+
 function uploadFile(entry, replace = false) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         const formData = new FormData();
         formData.append('pdf_file', entry.file);
-        formData.append('doc_type', document.getElementById('docType').value);
+        formData.append('doc_type', getEntryDocType(entry));
         if (replace) formData.append('replace', '1');
 
         xhr.upload.addEventListener('progress', ev => {
@@ -355,27 +434,18 @@ function uploadFile(entry, replace = false) {
                 if (el) el.style.width = entry.progress + '%';
             }
         });
-
         xhr.addEventListener('load', () => {
             if (xhr.status >= 200 && xhr.status < 300) {
                 resolve(JSON.parse(xhr.responseText));
             } else if (xhr.status === 409) {
-                const err = new Error('Duplicate');
-                err.duplicate = true;
-                reject(err);
+                const err = new Error('Duplicate'); err.duplicate = true; reject(err);
             } else {
-                try {
-                    const data = JSON.parse(xhr.responseText);
-                    reject(new Error(data.error || `HTTP ${xhr.status}`));
-                } catch {
-                    reject(new Error(`HTTP ${xhr.status}`));
-                }
+                try { reject(new Error(JSON.parse(xhr.responseText).error || `HTTP ${xhr.status}`)); }
+                catch { reject(new Error(`HTTP ${xhr.status}`)); }
             }
         });
-
         xhr.addEventListener('error', () => reject(new Error('Network error')));
         xhr.addEventListener('abort', () => reject(new Error('Aborted')));
-
         xhr.open('POST', UPLOAD_URL);
         xhr.send(formData);
     });
@@ -383,30 +453,19 @@ function uploadFile(entry, replace = false) {
 
 async function replaceFile(index) {
     const entry = selectedFiles[index];
-    entry.status = 'uploading';
-    entry.progress = 0;
-    renderList();
+    entry.status = 'uploading'; entry.progress = 0; renderList();
     try {
         await uploadFile(entry, true);
-        entry.status = 'success';
-        entry.progress = 100;
+        entry.status = 'success'; entry.progress = 100;
     } catch (err) {
-        entry.status = 'error';
-        entry.progress = 100;
+        entry.status = 'error'; entry.progress = 100;
         entry.errorMsg = err.message || 'Replace failed';
     }
     renderList();
 }
 
-function skipFile(index) {
-    selectedFiles[index].status = 'skipped';
-    renderList();
-}
+function skipFile(index) { selectedFiles[index].status = 'skipped'; renderList(); }
 
-// --- Clear ---
-btnClear.addEventListener('click', () => {
-    selectedFiles = [];
-    renderList();
-});
+btnClear.addEventListener('click', () => { selectedFiles = []; renderList(); });
 </script>
 {% endblock %}
