@@ -17,7 +17,7 @@ from flask_login import (
 from config import Config
 from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
-    LaborRate, InsuranceRate, PasswordResetToken,
+    LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
@@ -176,6 +176,12 @@ def create_app():
             )
             if user and user.check_password(password):
                 login_user(user)
+                try:
+                    ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip()[:45]
+                    db.session.add(LoginEvent(user_id=user.id, ip_address=ip or None))
+                    db.session.commit()
+                except Exception:
+                    pass
                 if user.must_change_password:
                     flash("Please choose a new password to finish logging in.", "info")
                     return redirect(url_for("change_password"))
@@ -1570,6 +1576,235 @@ def create_app():
             as_attachment=True,
             download_name="insurance_rates_template.csv",
         )
+
+    # ── Activity History ─────────────────────────────────────────
+
+    @app.route("/admin/history")
+    @login_required
+    @superadmin_required
+    def admin_history():
+        uid = request.args.get("user_id", type=int)
+        cid = request.args.get("company_id", type=int)
+        atype = request.args.get("activity_type", "")
+        date_from = request.args.get("date_from", "")
+        date_to = request.args.get("date_to", "")
+
+        dt_from = dt_to = None
+        if date_from:
+            try: dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+            except ValueError: pass
+        if date_to:
+            try: dt_to = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            except ValueError: pass
+
+        LIMIT = 500
+        events = []
+
+        if not atype or atype == "search":
+            q = db.session.query(SearchHistory)
+            if uid: q = q.filter(SearchHistory.user_id == uid)
+            if cid: q = q.join(User, SearchHistory.user_id == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(SearchHistory.created_at >= dt_from)
+            if dt_to: q = q.filter(SearchHistory.created_at <= dt_to)
+            for s in q.order_by(SearchHistory.created_at.desc()).limit(LIMIT).all():
+                events.append({
+                    "type": "search", "date": s.created_at, "user": s.user,
+                    "detail": s.query, "full_answer": s.answer,
+                    "context": s.project.name if s.project else "—",
+                    "context2": s.doc_type_filter or "All types", "id": s.id,
+                })
+
+        if not atype or atype == "report":
+            q = db.session.query(Report)
+            if uid: q = q.filter(Report.user_id == uid)
+            if cid: q = q.join(User, Report.user_id == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(Report.created_at >= dt_from)
+            if dt_to: q = q.filter(Report.created_at <= dt_to)
+            for r in q.order_by(Report.created_at.desc()).limit(LIMIT).all():
+                events.append({
+                    "type": "report", "date": r.created_at, "user": r.user,
+                    "detail": r.template_name,
+                    "context": r.project.name if r.project else "—",
+                    "context2": r.status, "id": r.id,
+                    "report_status": r.status, "report_file": r.file_path,
+                })
+
+        if not atype or atype == "upload":
+            q = db.session.query(Drawing)
+            if uid: q = q.filter(Drawing.uploaded_by == uid)
+            if cid: q = q.join(User, Drawing.uploaded_by == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(Drawing.created_at >= dt_from)
+            if dt_to: q = q.filter(Drawing.created_at <= dt_to)
+            for d in q.order_by(Drawing.created_at.desc()).limit(LIMIT).all():
+                events.append({
+                    "type": "upload", "date": d.created_at, "user": d.uploader,
+                    "detail": d.original_filename,
+                    "context": d.project.name if d.project else "—",
+                    "context2": d.doc_type, "id": d.id,
+                })
+
+        if not atype or atype == "login":
+            q = db.session.query(LoginEvent)
+            if uid: q = q.filter(LoginEvent.user_id == uid)
+            if cid: q = q.join(User, LoginEvent.user_id == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(LoginEvent.created_at >= dt_from)
+            if dt_to: q = q.filter(LoginEvent.created_at <= dt_to)
+            for l in q.order_by(LoginEvent.created_at.desc()).limit(LIMIT).all():
+                events.append({
+                    "type": "login", "date": l.created_at, "user": l.user,
+                    "detail": l.ip_address or "—",
+                    "context": "—", "context2": "—", "id": l.id,
+                })
+
+        events.sort(key=lambda e: e["date"] or datetime.min, reverse=True)
+        total = len(events)
+        events = events[:500]
+
+        counts = {}
+        for e in events:
+            counts[e["type"]] = counts.get(e["type"], 0) + 1
+
+        return render_template("admin/history.html",
+            events=events, total=total, counts=counts,
+            all_users=User.query.order_by(User.username).all(),
+            all_companies=Company.query.order_by(Company.name).all(),
+            filters={"user_id": uid, "company_id": cid, "activity_type": atype,
+                     "date_from": date_from, "date_to": date_to},
+        )
+
+    @app.route("/admin/history/export")
+    @login_required
+    @superadmin_required
+    def admin_history_export():
+        from reportlab.lib.pagesizes import letter, landscape
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib import colors as rl_colors
+        from xml.sax.saxutils import escape as xml_escape
+
+        uid = request.args.get("user_id", type=int)
+        cid = request.args.get("company_id", type=int)
+        atype = request.args.get("activity_type", "")
+        date_from = request.args.get("date_from", "")
+        date_to = request.args.get("date_to", "")
+
+        dt_from = dt_to = None
+        if date_from:
+            try: dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+            except ValueError: pass
+        if date_to:
+            try: dt_to = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            except ValueError: pass
+
+        LIMIT = 500
+        events = []
+
+        if not atype or atype == "search":
+            q = db.session.query(SearchHistory)
+            if uid: q = q.filter(SearchHistory.user_id == uid)
+            if cid: q = q.join(User, SearchHistory.user_id == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(SearchHistory.created_at >= dt_from)
+            if dt_to: q = q.filter(SearchHistory.created_at <= dt_to)
+            for s in q.order_by(SearchHistory.created_at.desc()).limit(LIMIT).all():
+                events.append(("Search", s.created_at,
+                    s.user.username if s.user else "—",
+                    (s.user.company.name if s.user and s.user.company else "—"),
+                    (s.query[:150] + "…") if len(s.query) > 150 else s.query,
+                    s.project.name if s.project else "—"))
+
+        if not atype or atype == "report":
+            q = db.session.query(Report)
+            if uid: q = q.filter(Report.user_id == uid)
+            if cid: q = q.join(User, Report.user_id == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(Report.created_at >= dt_from)
+            if dt_to: q = q.filter(Report.created_at <= dt_to)
+            for r in q.order_by(Report.created_at.desc()).limit(LIMIT).all():
+                events.append(("Report", r.created_at,
+                    r.user.username if r.user else "—",
+                    (r.user.company.name if r.user and r.user.company else "—"),
+                    r.template_name, r.project.name if r.project else "—"))
+
+        if not atype or atype == "upload":
+            q = db.session.query(Drawing)
+            if uid: q = q.filter(Drawing.uploaded_by == uid)
+            if cid: q = q.join(User, Drawing.uploaded_by == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(Drawing.created_at >= dt_from)
+            if dt_to: q = q.filter(Drawing.created_at <= dt_to)
+            for d in q.order_by(Drawing.created_at.desc()).limit(LIMIT).all():
+                events.append(("Upload", d.created_at,
+                    d.uploader.username if d.uploader else "—",
+                    (d.uploader.company.name if d.uploader and d.uploader.company else "—"),
+                    d.original_filename, d.project.name if d.project else "—"))
+
+        if not atype or atype == "login":
+            q = db.session.query(LoginEvent)
+            if uid: q = q.filter(LoginEvent.user_id == uid)
+            if cid: q = q.join(User, LoginEvent.user_id == User.id).filter(User.company_id == cid)
+            if dt_from: q = q.filter(LoginEvent.created_at >= dt_from)
+            if dt_to: q = q.filter(LoginEvent.created_at <= dt_to)
+            for l in q.order_by(LoginEvent.created_at.desc()).limit(LIMIT).all():
+                events.append(("Login", l.created_at,
+                    l.user.username if l.user else "—",
+                    (l.user.company.name if l.user and l.user.company else "—"),
+                    l.ip_address or "—", "—"))
+
+        events.sort(key=lambda e: e[1] or datetime.min, reverse=True)
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(letter),
+            leftMargin=0.5*inch, rightMargin=0.5*inch,
+            topMargin=0.75*inch, bottomMargin=0.75*inch)
+        styles = getSampleStyleSheet()
+        BRAND = rl_colors.HexColor(0x1F4E79)
+
+        story = []
+        title_style = ParagraphStyle("Title", parent=styles["Heading1"],
+            textColor=BRAND, fontSize=16, spaceAfter=6)
+        story.append(Paragraph("User Activity History", title_style))
+
+        sub_parts = []
+        if date_from or date_to:
+            sub_parts.append(f"{date_from or 'start'} → {date_to or 'today'}")
+        if atype:
+            sub_parts.append(f"Type: {atype.capitalize()}")
+        if sub_parts:
+            story.append(Paragraph(" | ".join(sub_parts), styles["Normal"]))
+        story.append(Paragraph(
+            f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · {len(events)} events",
+            styles["Normal"]))
+        story.append(Spacer(1, 0.2*inch))
+
+        headers = ["Type", "Date / Time", "User", "Company", "Detail", "Project"]
+        table_data = [headers]
+        for evtype, evdate, user, company, detail, ctx in events:
+            table_data.append([
+                evtype,
+                evdate.strftime("%Y-%m-%d %H:%M") if evdate else "—",
+                user, company,
+                Paragraph(xml_escape(str(detail)), styles["Normal"]),
+                ctx,
+            ])
+
+        col_widths = [0.7*inch, 1.1*inch, 1.0*inch, 1.1*inch, 4.0*inch, 1.5*inch]
+        tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), BRAND),
+            ("TEXTCOLOR", (0,0), (-1,0), rl_colors.white),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [rl_colors.white, rl_colors.HexColor(0xF0F4F8)]),
+            ("GRID", (0,0), (-1,-1), 0.25, rl_colors.HexColor(0xCCCCCC)),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("TOPPADDING", (0,0), (-1,-1), 3),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+        ]))
+        story.append(tbl)
+
+        doc.build(story)
+        buf.seek(0)
+        fname = f"activity-history-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
+        return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=fname)
 
     # ── Error Handlers ──────────────────────────────────────────
 

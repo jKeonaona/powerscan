@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}User Activity History - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-clock-history"></i> User Activity History</h2>
+            <p class="text-muted mb-0">Complete log of searches, reports, uploads, and logins across all companies.</p>
+        </div>
+        <a href="{{ url_for('admin_history_export', **filters) }}" class="btn btn-outline-danger">
+            <i class="bi bi-file-earmark-pdf"></i> Export PDF
+        </a>
+    </div>
+
+    <!-- ── Filters ── -->
+    <div class="card mb-4">
+        <div class="card-body py-3">
+            <form method="GET" action="{{ url_for('admin_history') }}" class="row g-2 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label small fw-medium mb-1">User</label>
+                    <select name="user_id" class="form-select form-select-sm">
+                        <option value="">All Users</option>
+                        {% for u in all_users %}
+                        <option value="{{ u.id }}" {% if filters.user_id == u.id %}selected{% endif %}>
+                            {{ u.username }}{% if u.company %} ({{ u.company.name }}){% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-medium mb-1">Company</label>
+                    <select name="company_id" class="form-select form-select-sm">
+                        <option value="">All Companies</option>
+                        {% for c in all_companies %}
+                        <option value="{{ c.id }}" {% if filters.company_id == c.id %}selected{% endif %}>
+                            {{ c.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-medium mb-1">Activity Type</label>
+                    <select name="activity_type" class="form-select form-select-sm">
+                        <option value="" {% if not filters.activity_type %}selected{% endif %}>All Activity</option>
+                        <option value="search" {% if filters.activity_type == 'search' %}selected{% endif %}>Searches</option>
+                        <option value="report" {% if filters.activity_type == 'report' %}selected{% endif %}>Reports</option>
+                        <option value="upload" {% if filters.activity_type == 'upload' %}selected{% endif %}>Uploads</option>
+                        <option value="login" {% if filters.activity_type == 'login' %}selected{% endif %}>Logins</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-medium mb-1">Date From</label>
+                    <input type="date" name="date_from" class="form-control form-control-sm" value="{{ filters.date_from }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-medium mb-1">Date To</label>
+                    <input type="date" name="date_to" class="form-control form-control-sm" value="{{ filters.date_to }}">
+                </div>
+                <div class="col-md-2 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm flex-fill">
+                        <i class="bi bi-funnel"></i> Apply
+                    </button>
+                    <a href="{{ url_for('admin_history') }}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-x"></i>
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ── Stats bar ── -->
+    <div class="d-flex gap-3 mb-3 flex-wrap">
+        <span class="badge bg-secondary fs-6 fw-normal px-3 py-2">
+            {{ total }} total
+            {% if total > 500 %}<small class="opacity-75">(showing 500)</small>{% endif %}
+        </span>
+        {% if counts.get('search') %}
+        <span class="badge bg-primary fs-6 fw-normal px-3 py-2">
+            <i class="bi bi-search"></i> {{ counts.search }} search{{ 'es' if counts.search != 1 else '' }}
+        </span>
+        {% endif %}
+        {% if counts.get('report') %}
+        <span class="badge px-3 py-2 fs-6 fw-normal" style="background:#6f42c1;">
+            <i class="bi bi-file-earmark-word"></i> {{ counts.report }} report{{ 's' if counts.report != 1 else '' }}
+        </span>
+        {% endif %}
+        {% if counts.get('upload') %}
+        <span class="badge bg-warning text-dark fs-6 fw-normal px-3 py-2">
+            <i class="bi bi-upload"></i> {{ counts.upload }} upload{{ 's' if counts.upload != 1 else '' }}
+        </span>
+        {% endif %}
+        {% if counts.get('login') %}
+        <span class="badge bg-success fs-6 fw-normal px-3 py-2">
+            <i class="bi bi-box-arrow-in-right"></i> {{ counts.login }} login{{ 's' if counts.login != 1 else '' }}
+        </span>
+        {% endif %}
+    </div>
+
+    <!-- ── Main table ── -->
+    {% if events %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle" id="historyTable">
+            <thead class="table-dark">
+                <tr>
+                    <th style="width:90px">Type</th>
+                    <th style="width:135px">Date / Time</th>
+                    <th style="width:110px">User</th>
+                    <th style="width:140px">Company</th>
+                    <th>Detail</th>
+                    <th style="width:160px">Context</th>
+                    <th style="width:60px"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in events %}
+
+                <!-- main row -->
+                <tr class="{% if event.type == 'search' %}history-search{% elif event.type == 'report' %}history-report{% elif event.type == 'upload' %}history-upload{% else %}history-login{% endif %}">
+                    <td>
+                        {% if event.type == 'search' %}
+                        <span class="badge bg-primary">
+                            <i class="bi bi-search"></i> Search
+                        </span>
+                        {% elif event.type == 'report' %}
+                        <span class="badge" style="background:#6f42c1;">
+                            <i class="bi bi-file-earmark-word"></i> Report
+                        </span>
+                        {% elif event.type == 'upload' %}
+                        <span class="badge bg-warning text-dark">
+                            <i class="bi bi-upload"></i> Upload
+                        </span>
+                        {% else %}
+                        <span class="badge bg-success">
+                            <i class="bi bi-box-arrow-in-right"></i> Login
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted text-nowrap">
+                        {{ event.date.strftime('%Y-%m-%d %H:%M') if event.date else '—' }}
+                    </td>
+                    <td class="small fw-medium">{{ event.user.username if event.user else '—' }}</td>
+                    <td class="small text-muted">
+                        {{ event.user.company.name if event.user and event.user.company else '—' }}
+                    </td>
+                    <td class="small" style="max-width:400px;">
+                        {% if event.type == 'search' %}
+                        <span class="text-truncate d-block" style="max-width:400px;" title="{{ event.detail }}">
+                            {{ event.detail | truncate(160) }}
+                        </span>
+                        {% elif event.type == 'upload' %}
+                        <i class="bi bi-file-earmark-pdf text-danger"></i>
+                        {{ event.detail }}
+                        {% else %}
+                        {{ event.detail }}
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted">
+                        {% if event.type == 'search' %}
+                        <div>{{ event.context }}</div>
+                        <div class="opacity-75">{{ event.context2 }}</div>
+                        {% elif event.type == 'report' %}
+                        <div>{{ event.context }}</div>
+                        <div>
+                            {% if event.report_status == 'ready' %}
+                            <span class="badge bg-success-subtle text-success-emphasis">Ready</span>
+                            {% elif event.report_status == 'failed' %}
+                            <span class="badge bg-danger-subtle text-danger-emphasis">Failed</span>
+                            {% else %}
+                            <span class="badge bg-warning-subtle text-warning-emphasis">Generating</span>
+                            {% endif %}
+                        </div>
+                        {% elif event.type == 'upload' %}
+                        <div>{{ event.context }}</div>
+                        <div class="opacity-75">{{ event.context2 }}</div>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if event.type == 'search' %}
+                        <button class="btn btn-sm btn-outline-secondary py-0 px-1"
+                                data-bs-toggle="collapse"
+                                data-bs-target="#qa-{{ loop.index }}"
+                                aria-expanded="false"
+                                title="Show full Q&A">
+                            <i class="bi bi-chevron-down small"></i>
+                        </button>
+                        {% elif event.type == 'report' and event.report_status == 'ready' and event.report_file %}
+                        <a href="{{ url_for('download_report', report_id=event.id) }}"
+                           class="btn btn-sm btn-outline-primary py-0 px-1" title="Download report">
+                            <i class="bi bi-download small"></i>
+                        </a>
+                        {% elif event.type == 'upload' %}
+                        <a href="{{ url_for('drawing_detail', drawing_id=event.id) }}"
+                           class="btn btn-sm btn-outline-secondary py-0 px-1" title="View document">
+                            <i class="bi bi-eye small"></i>
+                        </a>
+                        {% endif %}
+                    </td>
+                </tr>
+
+                <!-- expandable Q&A row (searches only) -->
+                {% if event.type == 'search' %}
+                <tr class="collapse" id="qa-{{ loop.index }}">
+                    <td colspan="7" class="p-0">
+                        <div class="bg-light border-start border-primary border-3 p-3 mx-2 mb-2 rounded-end">
+                            <div class="mb-3">
+                                <p class="fw-semibold small mb-1 text-primary">
+                                    <i class="bi bi-chat-left-quote"></i> Question
+                                </p>
+                                <p class="small mb-0">{{ event.detail }}</p>
+                            </div>
+                            {% if event.full_answer %}
+                            <div>
+                                <p class="fw-semibold small mb-1 text-secondary">
+                                    <i class="bi bi-chat-right-text"></i> Answer
+                                </p>
+                                <div class="small" style="white-space:pre-wrap;">{{ event.full_answer }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-clock-history fs-1 text-muted"></i>
+        <p class="text-muted mt-3">No activity found for the selected filters.</p>
+        {% if filters.user_id or filters.company_id or filters.activity_type or filters.date_from or filters.date_to %}
+        <a href="{{ url_for('admin_history') }}" class="btn btn-outline-secondary btn-sm">Clear filters</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+</div>
+
+<style>
+.history-search td { border-left: 3px solid #0d6efd; }
+.history-report td { border-left: 3px solid #6f42c1; }
+.history-upload td { border-left: 3px solid #ffc107; }
+.history-login td { border-left: 3px solid #198754; }
+</style>
+{% endblock %}
