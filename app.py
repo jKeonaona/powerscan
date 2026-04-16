@@ -816,6 +816,159 @@ def create_app():
             download_name=pdf_name,
         )
 
+    @app.route("/reports/<int:report_id>/download/excel")
+    @login_required
+    def download_report_excel(report_id):
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+        from docx import Document as _DocxDoc
+        from docx.text.paragraph import Paragraph as _DocxPara
+        from docx.table import Table as _DocxTable
+
+        report = db.session.get(Report, report_id) or abort(404)
+        project = db.session.get(Project, report.project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        if report.status != "ready" or not report.file_path:
+            flash("Report is not ready yet.", "warning")
+            return redirect(url_for("drawings", project_id=project.id, tab="reports"))
+
+        docx_path = os.path.join(app.config["REPORTS_FOLDER"], report.file_path)
+        if not os.path.exists(docx_path):
+            abort(404)
+
+        doc = _DocxDoc(docx_path)
+
+        def _iter_blocks(document):
+            from docx.oxml.ns import qn
+            for child in document.element.body:
+                tag = child.tag.split("}")[-1]
+                if tag == "p":
+                    yield _DocxPara(child, document)
+                elif tag == "tbl":
+                    yield _DocxTable(child, document)
+
+        # Parse docx into sections: [(sheet_name, [items])]
+        sections = [("Summary", [])]
+        seen_first_h1 = False
+        used_names = {"Summary": 1}
+
+        for block in _iter_blocks(doc):
+            if isinstance(block, _DocxPara):
+                style = (block.style.name or "") if block.style else ""
+                text = block.text.strip()
+                if not text:
+                    continue
+
+                if "Heading 1" in style:
+                    if not seen_first_h1:
+                        seen_first_h1 = True
+                        sections[0][1].append({"type": "text", "text": text, "bold": True, "size": 14})
+                    else:
+                        raw = text[:31].strip()
+                        count = used_names.get(raw, 0) + 1
+                        used_names[raw] = count
+                        tab_name = raw if count == 1 else f"{raw[:28]} {count}"
+                        sections.append((tab_name, []))
+                elif "Heading 2" in style:
+                    sections[-1][1].append({"type": "text", "text": text, "bold": True, "size": 11})
+                elif "Heading 3" in style:
+                    sections[-1][1].append({"type": "text", "text": text, "bold": True, "size": 10})
+                elif "List" in style:
+                    sections[-1][1].append({"type": "text", "text": "• " + text, "bold": False, "size": 10})
+                else:
+                    sections[-1][1].append({"type": "text", "text": text, "bold": False, "size": 10})
+
+            elif isinstance(block, _DocxTable):
+                rows = []
+                for row in block.rows:
+                    rows.append([cell.text.strip() for cell in row.cells])
+                if rows:
+                    sections[-1][1].append({"type": "table", "rows": rows})
+
+        # Build workbook
+        BRAND_HEX = "1F4E79"
+        ACCENT_HEX = "D6E4F0"
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        hdr_fill = PatternFill("solid", fgColor=BRAND_HEX)
+        hdr_font = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+        alt_fill = PatternFill("solid", fgColor=ACCENT_HEX)
+
+        for section_name, items in sections:
+            if not any(i.get("text") or i.get("rows") for i in items):
+                continue
+            ws = wb.create_sheet(title=section_name)
+            row_idx = 1
+
+            for item in items:
+                if item["type"] == "text":
+                    text = item.get("text", "")
+                    if not text:
+                        continue
+                    cell = ws.cell(row=row_idx, column=1, value=text)
+                    cell.font = Font(name="Calibri", bold=item.get("bold", False), size=item.get("size", 10))
+                    cell.alignment = Alignment(wrap_text=True)
+                    row_idx += 1
+
+                elif item["type"] == "table":
+                    rows = item["rows"]
+                    if not rows:
+                        continue
+                    ncols = max(len(r) for r in rows)
+
+                    # Column widths based on content
+                    for c in range(ncols):
+                        col_letter = get_column_letter(c + 1)
+                        max_w = max((len(str(r[c])) for r in rows if c < len(r)), default=10)
+                        new_w = min(max_w + 4, 55)
+                        current_w = ws.column_dimensions[col_letter].width or 0
+                        ws.column_dimensions[col_letter].width = max(current_w, new_w)
+
+                    # Header row
+                    for c_idx, hdr in enumerate(rows[0], 1):
+                        cell = ws.cell(row=row_idx, column=c_idx, value=hdr)
+                        cell.font = hdr_font
+                        cell.fill = hdr_fill
+                        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+                    row_idx += 1
+
+                    # Data rows
+                    for r_num, data_row in enumerate(rows[1:]):
+                        fill = alt_fill if r_num % 2 == 0 else PatternFill()
+                        for c_idx in range(1, ncols + 1):
+                            val = data_row[c_idx - 1] if c_idx - 1 < len(data_row) else ""
+                            cell = ws.cell(row=row_idx, column=c_idx, value=val)
+                            cell.font = Font(name="Calibri", size=10)
+                            cell.fill = fill
+                            cell.alignment = Alignment(wrap_text=True)
+                        row_idx += 1
+
+                    row_idx += 1  # blank spacer after table
+
+            # Ensure column A is readable for text-heavy sheets
+            if ws.column_dimensions["A"].width < 60:
+                ws.column_dimensions["A"].width = 80
+
+        if not wb.sheetnames:
+            ws = wb.create_sheet("Report")
+            ws.cell(row=1, column=1, value="No structured content available.")
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+
+        xlsx_name = os.path.splitext(report.file_path)[0] + ".xlsx"
+        return send_file(
+            out,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=xlsx_name,
+        )
+
     @app.route("/reports/<int:report_id>/status")
     @login_required
     def report_status(report_id):
