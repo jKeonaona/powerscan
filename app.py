@@ -51,6 +51,8 @@ WORK_SCOPE_OPTIONS = [
     "Confined Space",
     "Traffic Control",
     "Environmental Compliance",
+    "SWPPP",
+    "Encroachment Permit Work",
     "Other",
 ]
 
