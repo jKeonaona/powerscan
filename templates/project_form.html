@@ -1,33 +1,78 @@
 {% extends "base.html" %}
-{% block title %}New Project - PowerScan{% endblock %}
+{% block title %}{% if project %}Edit Project{% else %}New Project{% endif %} - PowerScan{% endblock %}
 
 {% block content %}
 <div class="container">
     <div class="row justify-content-center">
-        <div class="col-md-6">
+        <div class="col-md-7">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
                     <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=company.id) }}">{{ company.name }}</a></li>
+                    {% if project %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('drawings', project_id=project.id) }}">{{ project.name }}</a></li>
+                    <li class="breadcrumb-item active">Edit</li>
+                    {% else %}
                     <li class="breadcrumb-item active">New Project</li>
+                    {% endif %}
                 </ol>
             </nav>
-            <h2 class="mb-4">New Project</h2>
+
+            <h2 class="mb-4">{% if project %}Edit Project{% else %}New Project{% endif %}</h2>
+
             <div class="card shadow-sm">
                 <div class="card-body">
                     <form method="POST">
+
                         <div class="mb-3">
-                            <label for="name" class="form-label">Project Name</label>
-                            <input type="text" class="form-control" id="name" name="name" required autofocus>
+                            <label for="name" class="form-label fw-medium">Project Name</label>
+                            <input type="text" class="form-control" id="name" name="name" required autofocus
+                                   value="{{ project.name if project else '' }}">
                         </div>
+
+                        <div class="mb-4">
+                            <label for="description" class="form-label fw-medium">Description <span class="text-muted fw-normal">(optional)</span></label>
+                            <textarea class="form-control" id="description" name="description" rows="3">{{ project.description if project else '' }}</textarea>
+                        </div>
+
+                        <hr class="my-4">
+
                         <div class="mb-3">
-                            <label for="description" class="form-label">Description (optional)</label>
-                            <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                            <label class="form-label fw-medium">Work Scope</label>
+                            <p class="text-muted small mb-2">Select all categories that apply. This context is sent to Claude when searching or generating reports.</p>
+                            <div class="border rounded p-3 bg-light">
+                                <div class="row row-cols-1 row-cols-sm-2 g-2">
+                                    {% for option in scope_options %}
+                                    <div class="col">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input" type="checkbox"
+                                                   name="work_scope" value="{{ option }}"
+                                                   id="scope_{{ loop.index }}"
+                                                   {% if option in (current_scope or []) %}checked{% endif %}>
+                                            <label class="form-check-label small" for="scope_{{ loop.index }}">
+                                                {{ option }}
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
                         </div>
+
+                        <div class="mb-4">
+                            <label for="scope_details" class="form-label fw-medium">Additional scope details <span class="text-muted fw-normal">(optional)</span></label>
+                            <textarea class="form-control form-control-sm" id="scope_details" name="scope_details"
+                                      rows="2" placeholder="e.g., 'Zone 3 blast, DFT min 10 mils, 30-year warranty required'">{{ project.scope_details if project else '' }}</textarea>
+                        </div>
+
                         <div class="d-flex gap-2">
-                            <button type="submit" class="btn btn-primary">Create Project</button>
-                            <a href="{{ url_for('projects', company_id=company.id) }}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary">
+                                {% if project %}<i class="bi bi-check-lg"></i> Save Changes{% else %}<i class="bi bi-plus-lg"></i> Create Project{% endif %}
+                            </button>
+                            <a href="{% if project %}{{ url_for('drawings', project_id=project.id) }}{% else %}{{ url_for('projects', company_id=company.id) }}{% endif %}"
+                               class="btn btn-outline-secondary">Cancel</a>
                         </div>
+
                     </form>
                 </div>
             </div>

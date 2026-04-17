@@ -59,8 +59,20 @@ class Project(db.Model):
     description = db.Column(db.Text)
     company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    work_scope = db.Column(db.Text, nullable=True)   # JSON array of selected scope items
+    scope_details = db.Column(db.Text, nullable=True)
 
     drawings = db.relationship("Drawing", backref="project", cascade="all, delete-orphan")
+
+    @property
+    def work_scope_list(self):
+        if not self.work_scope:
+            return []
+        try:
+            import json
+            return json.loads(self.work_scope)
+        except Exception:
+            return []
 
 
 class Drawing(db.Model):

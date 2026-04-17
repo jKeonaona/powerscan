@@ -545,6 +545,28 @@ def _process_report(app, report_id):
             if report.template_id in ("estimating_intelligence", "bid_summary"):
                 prompt += _get_rates_context()
 
+            # Inject work scope context for all templates
+            scope_items = project.work_scope_list
+            if scope_items:
+                scope_text = ", ".join(scope_items)
+                scope_ctx = (
+                    f"\n\nProject Work Scope: This project involves the following work: {scope_text}."
+                )
+                if project.scope_details:
+                    scope_ctx += f" Additional scope details: {project.scope_details}."
+                scope_ctx += (
+                    " Focus on provisions, requirements, and specifications relevant to this scope."
+                )
+                if report.template_id == "estimating_intelligence":
+                    scope_ctx += (
+                        "\n\nFor the Estimating Intelligence Report, include a dedicated section "
+                        "called 'Scope-Relevant Provisions' that lists ONLY the special provisions, "
+                        "requirements, and specifications that directly apply to the defined work "
+                        "scope above. For any provision identified as not applicable to this scope, "
+                        "flag it with: 'Out of scope for this project.'"
+                    )
+                prompt += scope_ctx
+
             pages = (
                 db.session.query(DrawingPage, Drawing)
                 .join(Drawing, DrawingPage.drawing_id == Drawing.id)

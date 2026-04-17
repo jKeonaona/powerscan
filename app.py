@@ -39,6 +39,20 @@ CCC_ADMIN_SEEDS = [
 CCC_ADMIN_TEMP_PASSWORD = "Temp?Access123"
 CCC_COMPANY_ID = 1
 
+WORK_SCOPE_OPTIONS = [
+    "Coating & Painting",
+    "Lead Abatement",
+    "Blast Cleaning",
+    "Bridge Work",
+    "Marine Vessels",
+    "Industrial Tanks",
+    "Scaffolding",
+    "Confined Space",
+    "Traffic Control",
+    "Environmental Compliance",
+    "Other",
+]
+
 
 def _seed_ccc_admins():
     """Idempotently ensure the four CCC admin accounts exist with a forced password reset.
@@ -86,6 +100,8 @@ def _run_migrations(database):
         ("report", "file_path", "VARCHAR(300)"),
         ("user", "must_change_password", "BOOLEAN DEFAULT 0 NOT NULL"),
         ("feedback", "admin_reply", "TEXT"),
+        ("project", "work_scope", "TEXT"),
+        ("project", "scope_details", "TEXT"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -354,15 +370,51 @@ def create_app():
         if request.method == "POST":
             name = request.form.get("name", "").strip()
             description = request.form.get("description", "").strip()
+            scope_items = request.form.getlist("work_scope")
+            scope_details = request.form.get("scope_details", "").strip()
             if not name:
                 flash("Project name is required.", "danger")
             else:
-                project = Project(name=name, description=description, company_id=company.id)
+                project = Project(
+                    name=name,
+                    description=description,
+                    company_id=company.id,
+                    work_scope=json.dumps(scope_items) if scope_items else None,
+                    scope_details=scope_details or None,
+                )
                 db.session.add(project)
                 db.session.commit()
                 flash(f"Project '{name}' created.", "success")
                 return redirect(url_for("projects", company_id=company.id))
-        return render_template("project_form.html", company=company)
+        return render_template("project_form.html", company=company, project=None,
+                               scope_options=WORK_SCOPE_OPTIONS, current_scope=[])
+
+    @app.route("/projects/<int:project_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def edit_project(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        company = db.session.get(Company, project.company_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            description = request.form.get("description", "").strip()
+            scope_items = request.form.getlist("work_scope")
+            scope_details = request.form.get("scope_details", "").strip()
+            if not name:
+                flash("Project name is required.", "danger")
+            else:
+                project.name = name
+                project.description = description
+                project.work_scope = json.dumps(scope_items) if scope_items else None
+                project.scope_details = scope_details or None
+                db.session.commit()
+                flash("Project updated.", "success")
+                return redirect(url_for("drawings", project_id=project.id))
+        return render_template("project_form.html", company=company, project=project,
+                               scope_options=WORK_SCOPE_OPTIONS,
+                               current_scope=project.work_scope_list)
 
     @app.route("/projects/<int:project_id>/delete", methods=["POST"])
     @login_required
@@ -401,12 +453,25 @@ def create_app():
             elif not app.config["ANTHROPIC_API_KEY"]:
                 flash("Claude API key not configured. Set ANTHROPIC_API_KEY environment variable.", "danger")
             else:
+                scope_items = project.work_scope_list
+                scope_context = None
+                if scope_items:
+                    scope_text = ", ".join(scope_items)
+                    scope_context = (
+                        f"This project involves the following work scope: {scope_text}."
+                    )
+                    if project.scope_details:
+                        scope_context += f" Additional details: {project.scope_details}."
+                    scope_context += (
+                        " Focus your answer on provisions and requirements relevant to this scope."
+                    )
                 results = search_drawings(
                     query,
                     project.id,
                     app.config["ANTHROPIC_API_KEY"],
                     app.config["PROCESSED_FOLDER"],
                     doc_type=search_doc_type or None,
+                    scope_context=scope_context,
                 )
                 history = SearchHistory(
                     project_id=project.id,

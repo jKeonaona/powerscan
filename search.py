@@ -62,7 +62,7 @@ def _build_batch_content(batch_pages, processed_folder, start_index):
 
 
 def _ask_batch(client, query, project, batch_pages, processed_folder, start_index,
-               batch_num=None, total_batches=None):
+               batch_num=None, total_batches=None, scope_context=None):
     """Send one batch of images to Claude Vision and return (answer_text, index_map)."""
     content, index_map = _build_batch_content(batch_pages, processed_folder, start_index)
     if not content:
@@ -78,10 +78,11 @@ def _ask_batch(client, query, project, batch_pages, processed_folder, start_inde
     else:
         batch_context = ""
 
+    scope_prefix = f"Project work scope: {scope_context}\n\n" if scope_context else ""
     content.append({
         "type": "text",
         "text": (
-            f"QUESTION: {query}\n\n"
+            f"{scope_prefix}QUESTION: {query}\n\n"
             "You are an engineering drawing assistant. The images above are pages from "
             f"the project '{project.name}'. Each image is preceded by an 'INDEX N' label "
             "identifying its filename and page number. Study the actual drawing images "
@@ -102,15 +103,16 @@ def _ask_batch(client, query, project, batch_pages, processed_folder, start_inde
     return message.content[0].text, index_map
 
 
-def _synthesize(client, query, project, batch_answers):
+def _synthesize(client, query, project, batch_answers, scope_context=None):
     """Combine per-batch answers into one coherent response via a text-only call."""
     sections = []
     for i, ans in enumerate(batch_answers, start=1):
         sections.append(f"--- BATCH {i} ANSWER ---\n{ans}")
     joined = "\n\n".join(sections)
 
+    scope_prefix = f"Project work scope: {scope_context}\n\n" if scope_context else ""
     prompt = (
-        f"You asked multiple batches of engineering drawings from the project "
+        f"{scope_prefix}You asked multiple batches of engineering drawings from the project "
         f"'{project.name}' the following question:\n\n"
         f"QUESTION: {query}\n\n"
         f"Each batch answered independently based only on the images it could see. "
@@ -147,7 +149,7 @@ def _extract_sources(answer, index_map):
     return sources
 
 
-def search_drawings(query, project_id, api_key, processed_folder, doc_type=None):
+def search_drawings(query, project_id, api_key, processed_folder, doc_type=None, scope_context=None):
     """Send all page images from a project to Claude Vision with the query.
 
     Projects with more than MAX_IMAGES_PER_REQUEST pages are split into batches,
@@ -196,6 +198,7 @@ def search_drawings(query, project_id, api_key, processed_folder, doc_type=None)
     if total_batches == 1:
         answer, index_map = _ask_batch(
             client, query, project, batches[0], processed_folder, start_index=1,
+            scope_context=scope_context,
         )
         if not index_map:
             return {"answer": "No page images could be loaded from disk.", "sources": []}
@@ -210,6 +213,7 @@ def search_drawings(query, project_id, api_key, processed_folder, doc_type=None)
         answer, index_map = _ask_batch(
             client, query, project, batch, processed_folder,
             start_index=next_index, batch_num=batch_num, total_batches=total_batches,
+            scope_context=scope_context,
         )
         next_index += len(batch)
         if not index_map:
@@ -221,7 +225,7 @@ def search_drawings(query, project_id, api_key, processed_folder, doc_type=None)
         return {"answer": "No page images could be loaded from disk.", "sources": []}
 
     print(f"[powerscan] synthesizing {len(batch_answers)} batch answers", flush=True)
-    final_answer = _synthesize(client, query, project, batch_answers)
+    final_answer = _synthesize(client, query, project, batch_answers, scope_context=scope_context)
     return {
         "answer": final_answer,
         "sources": _extract_sources(final_answer, full_index_map),

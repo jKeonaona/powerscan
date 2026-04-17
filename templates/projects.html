@@ -27,9 +27,16 @@
                 <div class="card-body">
                     <h5 class="card-title"><i class="bi bi-folder"></i> {{ project.name }}</h5>
                     {% if project.description %}
-                    <p class="text-muted small">{{ project.description }}</p>
+                    <p class="text-muted small mb-2">{{ project.description }}</p>
                     {% endif %}
-                    <p class="text-muted">{{ project.drawings | length }} document(s)</p>
+                    {% if project.work_scope_list %}
+                    <div class="d-flex flex-wrap gap-1 mb-2">
+                        {% for item in project.work_scope_list %}
+                        <span class="badge bg-info-subtle text-info-emphasis small">{{ item }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <p class="text-muted mb-0">{{ project.drawings | length }} document(s)</p>
                 </div>
                 <div class="card-footer bg-transparent d-flex justify-content-between">
                     <a href="{{ url_for('drawings', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">
