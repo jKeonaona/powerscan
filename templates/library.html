@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Intelligence Library - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2><i class="bi bi-lightbulb"></i> Intelligence Library</h2>
+        <a href="{{ url_for('library_add') }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> Add Entry
+        </a>
+    </div>
+
+    {% if tag_cloud %}
+    <div class="card shadow-sm mb-3">
+        <div class="card-body py-2">
+            <span class="text-muted small me-2">Tags:</span>
+            {% for tag in tag_cloud %}
+            <a href="{{ url_for('intelligence_library', tag=tag.name) }}"
+               class="badge text-decoration-none me-1 mb-1 {% if tag_filter == tag.name %}bg-primary{% else %}bg-secondary{% endif %}">
+                {{ tag.name }} <span class="opacity-75">({{ tag.usage_count }})</span>
+            </a>
+            {% endfor %}
+            {% if tag_filter %}
+            <a href="{{ url_for('intelligence_library') }}" class="btn btn-outline-secondary btn-sm ms-2">
+                <i class="bi bi-x"></i> Clear filter
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="GET" action="{{ url_for('intelligence_library') }}" class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <input type="text" class="form-control form-control-sm" name="q"
+                           placeholder="Search title or description..." value="{{ search_q }}">
+                </div>
+                <div class="col-md-3">
+                    <select name="scope" class="form-select form-select-sm">
+                        <option value="">All work scopes</option>
+                        {% for opt in scope_options %}
+                        <option value="{{ opt }}" {% if scope_filter == opt %}selected{% endif %}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select name="project_id" class="form-select form-select-sm">
+                        <option value="">All projects (incl. global)</option>
+                        {% for p in all_projects %}
+                        <option value="{{ p.id }}" {% if project_filter == p.id|string %}selected{% endif %}>{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex gap-1">
+                    <button type="submit" class="btn btn-sm btn-primary flex-grow-1">Filter</button>
+                    <a href="{{ url_for('intelligence_library') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+                </div>
+                {% if tag_filter %}
+                <input type="hidden" name="tag" value="{{ tag_filter }}">
+                {% endif %}
+            </form>
+        </div>
+    </div>
+
+    {% if items %}
+    <div class="table-responsive mb-4">
+        <table class="table table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Title</th>
+                    <th>Tags</th>
+                    <th>Work Scope</th>
+                    <th>Project</th>
+                    <th>Type</th>
+                    <th>Auto-include</th>
+                    <th>Added</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>
+                        <strong>{{ item.title }}</strong>
+                        {% if item.description %}
+                        <div class="text-muted small">{{ item.description | truncate(80) }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% for tag in item.tags %}
+                        <a href="{{ url_for('intelligence_library', tag=tag.name) }}"
+                           class="badge bg-info-subtle text-info-emphasis text-decoration-none me-1">{{ tag.name }}</a>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        {% if item.work_scope_list %}
+                        <div class="d-flex flex-wrap gap-1">
+                            {% for s in item.work_scope_list %}
+                            <span class="badge bg-warning-subtle text-warning-emphasis small">{{ s }}</span>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <span class="text-muted small">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        {% if item.project %}{{ item.project.name }}{% else %}<span class="text-muted">Global</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if item.entry_type == 'file' %}
+                        <span class="badge bg-secondary"><i class="bi bi-paperclip"></i> File</span>
+                        {% else %}
+                        <span class="badge bg-light text-dark border"><i class="bi bi-text-left"></i> Text</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.auto_include_in_search %}
+                        <i class="bi bi-check-circle-fill text-success"></i>
+                        {% else %}
+                        <i class="bi bi-dash-circle text-muted"></i>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted text-nowrap">{{ item.created_at.strftime('%b %d, %Y') }}</td>
+                    <td class="text-nowrap">
+                        {% if item.entry_type == 'file' and item.file_path %}
+                        <a href="{{ url_for('library_download', item_id=item.id) }}"
+                           class="btn btn-sm btn-outline-secondary me-1" title="Download">
+                            <i class="bi bi-download"></i>
+                        </a>
+                        {% endif %}
+                        <a href="{{ url_for('library_edit', item_id=item.id) }}"
+                           class="btn btn-sm btn-outline-primary me-1">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <form method="POST" action="{{ url_for('library_delete', item_id=item.id) }}"
+                              class="d-inline" onsubmit="return confirm('Delete this entry?')">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% elif not legacy_notes %}
+    <div class="text-center py-5">
+        <i class="bi bi-lightbulb fs-1 text-muted"></i>
+        <p class="text-muted mt-2">No entries yet. Add your first Intelligence Library entry.</p>
+    </div>
+    {% else %}
+    <p class="text-muted">No library entries match the current filters.</p>
+    {% endif %}
+
+    {% if legacy_notes %}
+    <h5 class="text-muted mt-2 mb-3"><i class="bi bi-archive"></i> Legacy Estimation Notes</h5>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle table-sm">
+            <thead class="table-light">
+                <tr>
+                    <th>Filename</th>
+                    <th>Project</th>
+                    <th>Uploaded</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for note in legacy_notes %}
+                <tr>
+                    <td>
+                        {{ note.original_filename }}
+                        <span class="badge bg-secondary ms-1">Legacy</span>
+                    </td>
+                    <td class="small">{{ note.project.name }}</td>
+                    <td class="small text-muted">{{ note.created_at.strftime('%b %d, %Y') }}</td>
+                    <td>
+                        <a href="{{ url_for('drawings', project_id=note.project_id) }}"
+                           class="btn btn-sm btn-outline-secondary">View in Project</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

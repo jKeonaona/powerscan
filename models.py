@@ -177,6 +177,51 @@ class LoginEvent(db.Model):
     user = db.relationship("User")
 
 
+intelligence_item_tags = db.Table(
+    "intelligence_item_tags",
+    db.Column("item_id", db.Integer, db.ForeignKey("intelligence_item.id"), primary_key=True),
+    db.Column("tag_id", db.Integer, db.ForeignKey("intelligence_tag.id"), primary_key=True),
+)
+
+
+class IntelligenceTag(db.Model):
+    __tablename__ = "intelligence_tag"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    usage_count = db.Column(db.Integer, nullable=False, default=0)
+
+
+class IntelligenceItem(db.Model):
+    __tablename__ = "intelligence_item"
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    entry_type = db.Column(db.String(10), nullable=False, default="text")  # "text" or "file"
+    text_content = db.Column(db.Text, nullable=True)
+    file_path = db.Column(db.String(500), nullable=True)
+    original_filename = db.Column(db.String(300), nullable=True)
+    file_mime = db.Column(db.String(100), nullable=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=True)
+    work_scope_json = db.Column(db.Text, nullable=True)
+    auto_include_in_search = db.Column(db.Boolean, nullable=False, default=True)
+    uploaded_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    project = db.relationship("Project", backref=db.backref("intelligence_items", cascade="all, delete-orphan"))
+    uploader = db.relationship("User", backref="intelligence_items")
+    tags = db.relationship("IntelligenceTag", secondary=intelligence_item_tags, backref="items")
+
+    @property
+    def work_scope_list(self):
+        if not self.work_scope_json:
+            return []
+        try:
+            import json
+            return json.loads(self.work_scope_json)
+        except Exception:
+            return []
+
+
 class Report(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)

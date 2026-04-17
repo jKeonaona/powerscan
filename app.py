@@ -18,6 +18,7 @@ from config import Config
 from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
+    IntelligenceTag, IntelligenceItem,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
@@ -117,6 +118,38 @@ def _run_migrations(database):
     conn.close()
 
 
+def _apply_item_tags(item, raw_tags_str):
+    """Parse comma-separated tags, upsert IntelligenceTag rows, attach to item."""
+    names = [t.strip() for t in raw_tags_str.split(",") if t.strip()]
+    new_tags = []
+    for name in names:
+        tag = IntelligenceTag.query.filter_by(name=name).first()
+        if not tag:
+            tag = IntelligenceTag(name=name, usage_count=0)
+            db.session.add(tag)
+            db.session.flush()
+        new_tags.append(tag)
+
+    current_names = {t.name for t in item.tags}
+    new_names = {t.name for t in new_tags}
+
+    for tag in new_tags:
+        if tag.name not in current_names:
+            item.tags.append(tag)
+            tag.usage_count += 1
+
+    for tag in list(item.tags):
+        if tag.name not in new_names:
+            item.tags.remove(tag)
+            if tag.usage_count > 0:
+                tag.usage_count -= 1
+
+
+def _decrement_removed_tags(old_tags, current_tags):
+    """No-op: tag counts are already managed inside _apply_item_tags."""
+    pass
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -125,6 +158,9 @@ def create_app():
     os.makedirs(app.config["PROCESSED_FOLDER"], exist_ok=True)
     os.makedirs(app.config["REPORTS_FOLDER"], exist_ok=True)
     os.makedirs(os.path.join(app.instance_path), exist_ok=True)
+    library_folder = os.path.join(os.path.dirname(app.config["UPLOAD_FOLDER"]), "library_files")
+    app.config["LIBRARY_FOLDER"] = library_folder
+    os.makedirs(library_folder, exist_ok=True)
 
     db.init_app(app)
 
@@ -473,6 +509,42 @@ def create_app():
                     scope_context += (
                         " Focus your answer on provisions and requirements relevant to this scope."
                     )
+                include_library = request.form.get("include_library") == "1"
+                library_context = None
+                if include_library:
+                    lib_items = (
+                        IntelligenceItem.query
+                        .filter_by(auto_include_in_search=True)
+                        .filter(
+                            db.or_(
+                                IntelligenceItem.project_id.is_(None),
+                                IntelligenceItem.project_id == project.id,
+                            )
+                        )
+                        .all()
+                    )
+                    if not current_user.is_superadmin:
+                        lib_items = [
+                            it for it in lib_items
+                            if it.project_id is None or (
+                                it.project and it.project.company_id == current_user.company_id
+                            )
+                        ]
+                    if lib_items:
+                        parts = []
+                        for it in lib_items:
+                            tags_str = ", ".join(t.name for t in it.tags)
+                            body = it.text_content or f"[file: {it.original_filename}]"
+                            entry = f"- {it.title}"
+                            if it.description:
+                                entry += f": {it.description}"
+                            if tags_str:
+                                entry += f" [tags: {tags_str}]"
+                            if it.text_content:
+                                entry += f"\n  Content: {body}"
+                            parts.append(entry)
+                        library_context = "Intelligence Library entries:\n" + "\n".join(parts)
+
                 results = search_drawings(
                     query,
                     project.id,
@@ -480,6 +552,7 @@ def create_app():
                     app.config["PROCESSED_FOLDER"],
                     doc_type=search_doc_type or None,
                     scope_context=scope_context,
+                    library_context=library_context,
                 )
                 history = SearchHistory(
                     project_id=project.id,
@@ -540,13 +613,279 @@ def create_app():
     @login_required
     @admin_required
     def notes_library():
-        q = db.session.query(Drawing).filter_by(doc_type="Estimation Notes")
+        return redirect(url_for("intelligence_library"))
+
+    # ── Intelligence Library ───────────────────────────────────────────────────
+
+    @app.route("/library")
+    @login_required
+    @admin_required
+    def intelligence_library():
+        tag_filter = request.args.get("tag", "").strip()
+        scope_filter = request.args.get("scope", "").strip()
+        project_filter = request.args.get("project_id", "").strip()
+        search_q = request.args.get("q", "").strip()
+
+        q = IntelligenceItem.query
         if not current_user.is_superadmin:
-            q = q.join(Project, Drawing.project_id == Project.id).filter(
+            q = q.filter(
+                db.or_(
+                    IntelligenceItem.project_id.is_(None),
+                    IntelligenceItem.project_id.in_(
+                        db.session.query(Project.id).filter_by(company_id=current_user.company_id)
+                    ),
+                )
+            )
+        if tag_filter:
+            q = q.join(IntelligenceItem.tags).filter(IntelligenceTag.name == tag_filter)
+        if scope_filter:
+            q = q.filter(IntelligenceItem.work_scope_json.contains(scope_filter))
+        if project_filter:
+            q = q.filter(IntelligenceItem.project_id == int(project_filter))
+        if search_q:
+            like = f"%{search_q}%"
+            q = q.filter(
+                db.or_(
+                    IntelligenceItem.title.ilike(like),
+                    IntelligenceItem.description.ilike(like),
+                )
+            )
+        items = q.order_by(IntelligenceItem.created_at.desc()).all()
+
+        # Legacy Estimation Notes
+        lq = db.session.query(Drawing).filter_by(doc_type="Estimation Notes")
+        if not current_user.is_superadmin:
+            lq = lq.join(Project, Drawing.project_id == Project.id).filter(
                 Project.company_id == current_user.company_id
             )
-        notes = q.order_by(Drawing.created_at.desc()).all()
-        return render_template("notes.html", notes=notes)
+        if not tag_filter and not scope_filter:
+            legacy_notes = lq.order_by(Drawing.created_at.desc()).all()
+        else:
+            legacy_notes = []
+
+        tag_cloud = (
+            IntelligenceTag.query
+            .filter(IntelligenceTag.usage_count > 0)
+            .order_by(IntelligenceTag.usage_count.desc())
+            .limit(40)
+            .all()
+        )
+
+        # Projects for filter dropdown (scoped per user)
+        if current_user.is_superadmin:
+            all_projects = Project.query.order_by(Project.name).all()
+        else:
+            all_projects = (
+                Project.query
+                .filter_by(company_id=current_user.company_id)
+                .order_by(Project.name)
+                .all()
+            )
+
+        return render_template(
+            "library.html",
+            items=items,
+            legacy_notes=legacy_notes,
+            tag_cloud=tag_cloud,
+            all_projects=all_projects,
+            scope_options=WORK_SCOPE_OPTIONS,
+            tag_filter=tag_filter,
+            scope_filter=scope_filter,
+            project_filter=project_filter,
+            search_q=search_q,
+        )
+
+    @app.route("/library/tags")
+    @login_required
+    @admin_required
+    def library_tags():
+        """Autocomplete endpoint — returns JSON list of tag names sorted by usage desc."""
+        q = request.args.get("q", "").strip()
+        query = IntelligenceTag.query
+        if q:
+            query = query.filter(IntelligenceTag.name.ilike(f"%{q}%"))
+        tags = query.order_by(IntelligenceTag.usage_count.desc(), IntelligenceTag.name).limit(20).all()
+        return jsonify([t.name for t in tags])
+
+    @app.route("/library/add", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def library_add():
+        if request.method == "POST":
+            title = request.form.get("title", "").strip()
+            if not title:
+                flash("Title is required.", "danger")
+                return redirect(url_for("library_add"))
+
+            entry_type = request.form.get("entry_type", "text")
+            description = request.form.get("description", "").strip() or None
+            text_content = request.form.get("text_content", "").strip() or None
+            work_scope_selected = request.form.getlist("work_scope")
+            auto_include = request.form.get("auto_include_in_search") == "1"
+            project_id_raw = request.form.get("project_id", "").strip()
+            project_id = int(project_id_raw) if project_id_raw.isdigit() else None
+            raw_tags = request.form.get("tags_input", "")
+
+            file_path = None
+            original_filename = None
+            file_mime = None
+
+            if entry_type == "file":
+                f = request.files.get("library_file")
+                if f and f.filename:
+                    ext = os.path.splitext(f.filename)[1]
+                    safe_name = uuid.uuid4().hex + ext
+                    dest = os.path.join(app.config["LIBRARY_FOLDER"], safe_name)
+                    f.save(dest)
+                    file_path = safe_name
+                    original_filename = f.filename
+                    file_mime = f.content_type
+                else:
+                    flash("Please select a file to upload.", "danger")
+                    return redirect(url_for("library_add"))
+
+            item = IntelligenceItem(
+                title=title,
+                description=description,
+                entry_type=entry_type,
+                text_content=text_content if entry_type == "text" else None,
+                file_path=file_path,
+                original_filename=original_filename,
+                file_mime=file_mime,
+                project_id=project_id,
+                work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
+                auto_include_in_search=auto_include,
+                uploaded_by=current_user.id,
+            )
+            db.session.add(item)
+            db.session.flush()
+
+            _apply_item_tags(item, raw_tags)
+            db.session.commit()
+            flash("Intelligence Library item added.", "success")
+            return redirect(url_for("intelligence_library"))
+
+        if current_user.is_superadmin:
+            all_projects = Project.query.order_by(Project.name).all()
+        else:
+            all_projects = (
+                Project.query
+                .filter_by(company_id=current_user.company_id)
+                .order_by(Project.name)
+                .all()
+            )
+        return render_template(
+            "library_item_form.html",
+            item=None,
+            all_projects=all_projects,
+            scope_options=WORK_SCOPE_OPTIONS,
+        )
+
+    @app.route("/library/<int:item_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def library_edit(item_id):
+        item = db.session.get(IntelligenceItem, item_id) or abort(404)
+        if not current_user.is_superadmin and item.project_id:
+            proj = db.session.get(Project, item.project_id)
+            if proj and proj.company_id != current_user.company_id:
+                abort(403)
+
+        if request.method == "POST":
+            title = request.form.get("title", "").strip()
+            if not title:
+                flash("Title is required.", "danger")
+                return redirect(url_for("library_edit", item_id=item_id))
+
+            item.title = title
+            item.description = request.form.get("description", "").strip() or None
+            item.auto_include_in_search = request.form.get("auto_include_in_search") == "1"
+            project_id_raw = request.form.get("project_id", "").strip()
+            item.project_id = int(project_id_raw) if project_id_raw.isdigit() else None
+            work_scope_selected = request.form.getlist("work_scope")
+            item.work_scope_json = json.dumps(work_scope_selected) if work_scope_selected else None
+
+            if item.entry_type == "text":
+                item.text_content = request.form.get("text_content", "").strip() or None
+            else:
+                new_file = request.files.get("library_file")
+                if new_file and new_file.filename:
+                    if item.file_path:
+                        old = os.path.join(app.config["LIBRARY_FOLDER"], item.file_path)
+                        if os.path.exists(old):
+                            os.remove(old)
+                    ext = os.path.splitext(new_file.filename)[1]
+                    safe_name = uuid.uuid4().hex + ext
+                    dest = os.path.join(app.config["LIBRARY_FOLDER"], safe_name)
+                    new_file.save(dest)
+                    item.file_path = safe_name
+                    item.original_filename = new_file.filename
+                    item.file_mime = new_file.content_type
+
+            old_tags = list(item.tags)
+            raw_tags = request.form.get("tags_input", "")
+            _apply_item_tags(item, raw_tags)
+            _decrement_removed_tags(old_tags, item.tags)
+            db.session.commit()
+            flash("Item updated.", "success")
+            return redirect(url_for("intelligence_library"))
+
+        if current_user.is_superadmin:
+            all_projects = Project.query.order_by(Project.name).all()
+        else:
+            all_projects = (
+                Project.query
+                .filter_by(company_id=current_user.company_id)
+                .order_by(Project.name)
+                .all()
+            )
+        return render_template(
+            "library_item_form.html",
+            item=item,
+            all_projects=all_projects,
+            scope_options=WORK_SCOPE_OPTIONS,
+            current_tags=", ".join(t.name for t in item.tags),
+            current_scope=item.work_scope_list,
+        )
+
+    @app.route("/library/<int:item_id>/delete", methods=["POST"])
+    @login_required
+    @admin_required
+    def library_delete(item_id):
+        item = db.session.get(IntelligenceItem, item_id) or abort(404)
+        if not current_user.is_superadmin and item.project_id:
+            proj = db.session.get(Project, item.project_id)
+            if proj and proj.company_id != current_user.company_id:
+                abort(403)
+        if item.file_path:
+            fpath = os.path.join(app.config["LIBRARY_FOLDER"], item.file_path)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+        for tag in list(item.tags):
+            if tag.usage_count > 0:
+                tag.usage_count -= 1
+        db.session.delete(item)
+        db.session.commit()
+        flash("Item deleted.", "success")
+        return redirect(url_for("intelligence_library"))
+
+    @app.route("/library/<int:item_id>/download")
+    @login_required
+    @admin_required
+    def library_download(item_id):
+        item = db.session.get(IntelligenceItem, item_id) or abort(404)
+        if not item.file_path:
+            abort(404)
+        if not current_user.is_superadmin and item.project_id:
+            proj = db.session.get(Project, item.project_id)
+            if proj and proj.company_id != current_user.company_id:
+                abort(403)
+        return send_from_directory(
+            app.config["LIBRARY_FOLDER"],
+            item.file_path,
+            as_attachment=True,
+            download_name=item.original_filename or item.file_path,
+        )
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
     @login_required

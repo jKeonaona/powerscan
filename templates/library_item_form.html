@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}{% if item %}Edit Entry{% else %}Add Entry{% endif %} - Intelligence Library - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('intelligence_library') }}">Intelligence Library</a></li>
+                    <li class="breadcrumb-item active">{% if item %}Edit{% else %}Add Entry{% endif %}</li>
+                </ol>
+            </nav>
+
+            <h2 class="mb-4">{% if item %}Edit Entry{% else %}Add Entry{% endif %}</h2>
+
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <form method="POST" enctype="multipart/form-data">
+
+                        <div class="mb-3">
+                            <label for="title" class="form-label fw-medium">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="title" name="title" required autofocus
+                                   value="{{ item.title if item else '' }}">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label fw-medium">Description <span class="text-muted fw-normal">(optional)</span></label>
+                            <textarea class="form-control" id="description" name="description" rows="2">{{ item.description if item else '' }}</textarea>
+                        </div>
+
+                        {% if not item %}
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">Entry type</label>
+                            <div class="d-flex gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="entry_type" id="typeText" value="text" checked>
+                                    <label class="form-check-label" for="typeText"><i class="bi bi-text-left"></i> Text / paste</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="entry_type" id="typeFile" value="file">
+                                    <label class="form-check-label" for="typeFile"><i class="bi bi-paperclip"></i> File upload</label>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <div id="textSection" class="mb-3 {% if item and item.entry_type == 'file' %}d-none{% endif %}">
+                            <label for="text_content" class="form-label fw-medium">Content</label>
+                            <textarea class="form-control font-monospace" id="text_content" name="text_content"
+                                      rows="6" placeholder="Paste clause text, notes, quotes, determinations...">{{ item.text_content if item else '' }}</textarea>
+                        </div>
+
+                        <div id="fileSection" class="mb-3 {% if not item or item.entry_type != 'file' %}d-none{% endif %}">
+                            <label for="library_file" class="form-label fw-medium">
+                                File
+                                {% if item and item.original_filename %}
+                                <span class="text-muted fw-normal small">(current: {{ item.original_filename }})</span>
+                                {% endif %}
+                            </label>
+                            <input type="file" class="form-control" id="library_file" name="library_file"
+                                   accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg">
+                            {% if item and item.original_filename %}
+                            <div class="form-text">Leave empty to keep existing file.</div>
+                            {% endif %}
+                        </div>
+
+                        <hr class="my-3">
+
+                        <div class="mb-3">
+                            <label for="tags_input" class="form-label fw-medium">Tags</label>
+                            <input type="text" class="form-control" id="tags_input" name="tags_input"
+                                   placeholder="e.g. Bid Clause, Prevailing Wage, Subcontractor Quote"
+                                   value="{{ current_tags if current_tags else '' }}"
+                                   autocomplete="off">
+                            <div id="tagSuggestions" class="dropdown-menu" style="max-height:200px;overflow-y:auto;"></div>
+                            <div class="form-text">Comma-separated. Start typing for suggestions.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">Work Scope <span class="text-muted fw-normal">(optional)</span></label>
+                            <div class="border rounded p-3 bg-light">
+                                <div class="row row-cols-1 row-cols-sm-2 g-2">
+                                    {% for option in scope_options %}
+                                    <div class="col">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input" type="checkbox"
+                                                   name="work_scope" value="{{ option }}"
+                                                   id="scope_{{ loop.index }}"
+                                                   {% if option in (current_scope or []) %}checked{% endif %}>
+                                            <label class="form-check-label small" for="scope_{{ loop.index }}">{{ option }}</label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="project_id" class="form-label fw-medium">Associated Project <span class="text-muted fw-normal">(optional)</span></label>
+                            <select class="form-select" id="project_id" name="project_id">
+                                <option value="">Global (applies to all projects)</option>
+                                {% for p in all_projects %}
+                                <option value="{{ p.id }}"
+                                    {% if item and item.project_id == p.id %}selected{% endif %}>
+                                    {{ p.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-4">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="auto_include_in_search"
+                                       value="1" id="chkAutoInclude"
+                                       {% if not item or item.auto_include_in_search %}checked{% endif %}>
+                                <label class="form-check-label" for="chkAutoInclude">
+                                    Auto-include in search &amp; reports
+                                </label>
+                                <div class="form-text">When checked, this entry is passed to Claude as context during searches and report generation.</div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                {% if item %}<i class="bi bi-check-lg"></i> Save Changes{% else %}<i class="bi bi-plus-lg"></i> Add Entry{% endif %}
+                            </button>
+                            <a href="{{ url_for('intelligence_library') }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var typeInputs = document.querySelectorAll('input[name="entry_type"]');
+    var textSection = document.getElementById('textSection');
+    var fileSection = document.getElementById('fileSection');
+
+    function toggleSections() {
+        var selected = document.querySelector('input[name="entry_type"]:checked');
+        if (!selected) return;
+        if (selected.value === 'text') {
+            textSection.classList.remove('d-none');
+            fileSection.classList.add('d-none');
+        } else {
+            fileSection.classList.remove('d-none');
+            textSection.classList.add('d-none');
+        }
+    }
+
+    typeInputs.forEach(function (el) { el.addEventListener('change', toggleSections); });
+
+    // Tag autocomplete
+    var tagInput = document.getElementById('tags_input');
+    var suggBox = document.getElementById('tagSuggestions');
+
+    if (tagInput && suggBox) {
+        tagInput.addEventListener('input', function () {
+            var val = tagInput.value;
+            var parts = val.split(',');
+            var last = parts[parts.length - 1].trim();
+            if (!last) { suggBox.classList.remove('show'); return; }
+
+            fetch('/library/tags?q=' + encodeURIComponent(last))
+                .then(function (r) { return r.json(); })
+                .then(function (names) {
+                    suggBox.innerHTML = '';
+                    if (!names.length) { suggBox.classList.remove('show'); return; }
+                    names.forEach(function (name) {
+                        var a = document.createElement('a');
+                        a.href = '#';
+                        a.className = 'dropdown-item';
+                        a.textContent = name;
+                        a.addEventListener('click', function (e) {
+                            e.preventDefault();
+                            var existing = parts.slice(0, -1).join(', ');
+                            tagInput.value = existing ? existing + ', ' + name + ', ' : name + ', ';
+                            suggBox.classList.remove('show');
+                            tagInput.focus();
+                        });
+                        suggBox.appendChild(a);
+                    });
+                    var rect = tagInput.getBoundingClientRect();
+                    suggBox.style.position = 'absolute';
+                    suggBox.style.top = (tagInput.offsetTop + tagInput.offsetHeight) + 'px';
+                    suggBox.style.left = tagInput.offsetLeft + 'px';
+                    suggBox.style.minWidth = tagInput.offsetWidth + 'px';
+                    suggBox.classList.add('show');
+                });
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!suggBox.contains(e.target) && e.target !== tagInput) {
+                suggBox.classList.remove('show');
+            }
+        });
+    }
+})();
+</script>
+{% endblock %}

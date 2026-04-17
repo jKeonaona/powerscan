@@ -21,7 +21,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from models import db, Drawing, DrawingPage, Project, Report, SearchHistory, LaborRate, InsuranceRate
+from models import db, Drawing, DrawingPage, Project, Report, SearchHistory, LaborRate, InsuranceRate, IntelligenceItem
 from search import (
     CLAUDE_MODEL,
     MAX_IMAGES_PER_REQUEST,
@@ -570,6 +570,37 @@ def _process_report(app, report_id):
                         "flag it with: 'Out of scope for this project.'"
                     )
                 prompt += scope_ctx
+
+            # Inject Intelligence Library context
+            lib_items = (
+                IntelligenceItem.query
+                .filter_by(auto_include_in_search=True)
+                .filter(
+                    db.or_(
+                        IntelligenceItem.project_id.is_(None),
+                        IntelligenceItem.project_id == project.id,
+                    )
+                )
+                .all()
+            )
+            if lib_items:
+                parts = []
+                for it in lib_items:
+                    tags_str = ", ".join(t.name for t in it.tags)
+                    entry = f"- {it.title}"
+                    if it.description:
+                        entry += f": {it.description}"
+                    if tags_str:
+                        entry += f" [tags: {tags_str}]"
+                    if it.text_content:
+                        entry += f"\n  Content: {it.text_content}"
+                    parts.append(entry)
+                lib_ctx = (
+                    "\n\nIntelligence Library — use the following reference entries to "
+                    "inform your analysis. These are curated estimating resources for this project:\n"
+                    + "\n".join(parts)
+                )
+                prompt += lib_ctx
 
             pages = (
                 db.session.query(DrawingPage, Drawing)
