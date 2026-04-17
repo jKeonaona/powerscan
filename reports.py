@@ -548,7 +548,11 @@ def _process_report(app, report_id):
             # Inject work scope context for all templates
             scope_items = project.work_scope_list
             if scope_items:
-                scope_text = ", ".join(scope_items)
+                _lead_triggers = {"Coating & Painting", "Blast Cleaning", "High Pressure Water Washing"}
+                prompt_scope = list(scope_items)
+                if _lead_triggers.intersection(scope_items) and "Lead Abatement" not in scope_items:
+                    prompt_scope.append("Lead Abatement")
+                scope_text = ", ".join(prompt_scope)
                 scope_ctx = (
                     f"\n\nProject Work Scope: This project involves the following work: {scope_text}."
                 )

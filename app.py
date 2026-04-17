@@ -43,6 +43,7 @@ WORK_SCOPE_OPTIONS = [
     "Coating & Painting",
     "Lead Abatement",
     "Blast Cleaning",
+    "High Pressure Water Washing",
     "Bridge Work",
     "Marine Vessels",
     "Industrial Tanks",
@@ -52,6 +53,8 @@ WORK_SCOPE_OPTIONS = [
     "Environmental Compliance",
     "Other",
 ]
+
+_LEAD_TRIGGER_SCOPES = {"Coating & Painting", "Blast Cleaning", "High Pressure Water Washing"}
 
 
 def _seed_ccc_admins():
@@ -456,7 +459,10 @@ def create_app():
                 scope_items = project.work_scope_list
                 scope_context = None
                 if scope_items:
-                    scope_text = ", ".join(scope_items)
+                    prompt_scope = list(scope_items)
+                    if _LEAD_TRIGGER_SCOPES.intersection(scope_items) and "Lead Abatement" not in scope_items:
+                        prompt_scope.append("Lead Abatement")
+                    scope_text = ", ".join(prompt_scope)
                     scope_context = (
                         f"This project involves the following work scope: {scope_text}."
                     )
