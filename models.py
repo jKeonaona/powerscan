@@ -206,6 +206,16 @@ class IntelligenceItem(db.Model):
     auto_include_in_search = db.Column(db.Boolean, nullable=False, default=True)
     uploaded_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # Quote extraction fields (null for manually-created entries)
+    pricing_items_json = db.Column(db.Text, nullable=True)
+    conditions_text = db.Column(db.Text, nullable=True)
+    flags_json = db.Column(db.Text, nullable=True)
+    raw_text_excerpt = db.Column(db.Text, nullable=True)
+    extraction_status = db.Column(db.String(20), nullable=True, default="manual")
+    vendor_name = db.Column(db.String(200), nullable=True)
+    vendor_contact = db.Column(db.Text, nullable=True)
+    quote_date = db.Column(db.Date, nullable=True)
+    expiration_date = db.Column(db.Date, nullable=True)
 
     project = db.relationship("Project", backref=db.backref("intelligence_items", cascade="all, delete-orphan"))
     uploader = db.relationship("User", backref="intelligence_items")
@@ -220,6 +230,21 @@ class IntelligenceItem(db.Model):
             return json.loads(self.work_scope_json)
         except Exception:
             return []
+
+
+class QuoteBatch(db.Model):
+    __tablename__ = "quote_batch"
+    id = db.Column(db.Integer, primary_key=True)
+    batch_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    category_tag = db.Column(db.String(100), nullable=True)
+    entries_json = db.Column(db.Text, nullable=True)
+
+    project = db.relationship("Project")
+    user = db.relationship("User")
 
 
 class Report(db.Model):

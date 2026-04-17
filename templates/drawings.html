@@ -28,9 +28,14 @@
                 {% endif %}
             </div>
             {% if current_user.is_admin %}
-            <a href="{{ url_for('edit_project', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary ms-3 flex-shrink-0">
-                <i class="bi bi-pencil"></i> Edit Project
-            </a>
+            <div class="d-flex gap-2 ms-3 flex-shrink-0">
+                <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-card-list"></i> Bulk Quote Intake
+                </a>
+                <a href="{{ url_for('edit_project', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-pencil"></i> Edit Project
+                </a>
+            </div>
             {% endif %}
         </div>
     </div>

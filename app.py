@@ -4,7 +4,7 @@ import json
 import os
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from flask import (
     Flask, render_template, request, redirect, url_for, flash,
@@ -18,7 +18,7 @@ from config import Config
 from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
-    IntelligenceTag, IntelligenceItem,
+    IntelligenceTag, IntelligenceItem, QuoteBatch,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
@@ -108,6 +108,15 @@ def _run_migrations(database):
         ("feedback", "admin_reply", "TEXT"),
         ("project", "work_scope", "TEXT"),
         ("project", "scope_details", "TEXT"),
+        ("intelligence_item", "pricing_items_json", "TEXT"),
+        ("intelligence_item", "conditions_text", "TEXT"),
+        ("intelligence_item", "flags_json", "TEXT"),
+        ("intelligence_item", "raw_text_excerpt", "TEXT"),
+        ("intelligence_item", "extraction_status", "VARCHAR(20) DEFAULT 'manual'"),
+        ("intelligence_item", "vendor_name", "VARCHAR(200)"),
+        ("intelligence_item", "vendor_contact", "TEXT"),
+        ("intelligence_item", "quote_date", "DATE"),
+        ("intelligence_item", "expiration_date", "DATE"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -116,6 +125,137 @@ def _run_migrations(database):
             pass  # Column already exists
     conn.commit()
     conn.close()
+
+
+_QUOTE_EXTRACTION_PROMPT = """You are an expert construction estimating assistant. Extract structured information from this vendor quote document.
+
+Return ONLY a valid JSON object with exactly this structure (no markdown, no explanation, just JSON):
+{
+  "vendor_name": "string or null",
+  "vendor_contact": "string or null — combine name, phone, email into one string",
+  "quote_date": "YYYY-MM-DD or null",
+  "expiration_date": "YYYY-MM-DD or null",
+  "pricing_items": [
+    {"label": "string", "amount": "string", "unit": "string or empty string", "notes": "string or null"}
+  ],
+  "conditions_text": "string or null — verbatim conditions, exclusions, validity period, scope limitations",
+  "flags": ["array of applicable flag strings from the allowed list only"],
+  "suggested_tags": ["array of short descriptive tag strings, lowercase"],
+  "suggested_title": "short title for a library entry, 5-10 words",
+  "suggested_description": "1-2 sentence description of what this quote covers and its scope"
+}
+
+Allowed flag values (use only these exact strings):
+no-pricing-submitted, different-project-referenced, prevailing-wage-required, partial-scope-only, expires-soon, volume-tier-applies, needs-verification, capability-statement-only
+
+Rules:
+- Extract ALL pricing items including hourly rates, daily rates, monthly rates, overtime rates, mobilization, premiums, surcharges, and volume tiers
+- If no pricing is provided, return empty pricing_items array and include "no-pricing-submitted" and/or "capability-statement-only" in flags
+- Set "expires-soon" if the quote expires within 90 days from today or if it appears already expired
+- Set "prevailing-wage-required" if the document mentions prevailing wage, Davis-Bacon, or certified payroll
+- Set "needs-verification" if any data looks ambiguous, unclear, or inconsistent
+- Preserve verbatim conditions, exclusions, and validity periods in conditions_text
+- suggested_tags should reflect the type of work (e.g. "traffic control", "scaffolding", "crane mats")
+"""
+
+_ALLOWED_FLAGS = [
+    "no-pricing-submitted",
+    "different-project-referenced",
+    "prevailing-wage-required",
+    "partial-scope-only",
+    "expires-soon",
+    "volume-tier-applies",
+    "needs-verification",
+    "capability-statement-only",
+]
+
+QUOTE_BATCH_MAX_FILES = 15
+
+
+def _extract_quote_file(api_key, file_path, original_filename):
+    """Extract structured quote data from a PDF or image file using Claude Vision.
+
+    Returns a dict with keys: original_filename, file_path, result (dict) or error (str).
+    """
+    import base64
+    import io as _io
+    import anthropic
+    from PIL import Image
+    from search import CLAUDE_MODEL, MAX_IMAGE_WIDTH
+
+    ext = os.path.splitext(original_filename)[1].lower()
+    is_image = ext in (".png", ".jpg", ".jpeg")
+
+    content = []
+
+    try:
+        if is_image:
+            with Image.open(file_path) as img:
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
+                if img.width > MAX_IMAGE_WIDTH:
+                    new_h = round(img.height * MAX_IMAGE_WIDTH / img.width)
+                    img = img.resize((MAX_IMAGE_WIDTH, new_h), Image.LANCZOS)
+                buf = _io.BytesIO()
+                img.save(buf, format="JPEG", quality=85, optimize=True)
+            data = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
+            content.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg", "data": data},
+            })
+        else:
+            # PDF — convert pages to images (cap at 10 pages)
+            from pdf2image import convert_from_path
+            images = convert_from_path(file_path, dpi=200, first_page=1, last_page=10)
+            for i, img in enumerate(images):
+                if img.width > MAX_IMAGE_WIDTH:
+                    new_h = round(img.height * MAX_IMAGE_WIDTH / img.width)
+                    img = img.resize((MAX_IMAGE_WIDTH, new_h), Image.LANCZOS)
+                buf = _io.BytesIO()
+                img.save(buf, format="JPEG", quality=85, optimize=True)
+                data = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
+                content.append({"type": "text", "text": f"Page {i + 1}:"})
+                content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": data},
+                })
+
+        content.append({"type": "text", "text": _QUOTE_EXTRACTION_PROMPT})
+
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": content}],
+        )
+        raw = message.content[0].text.strip()
+
+        # Strip markdown code fences if Claude wrapped the JSON
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        result = json.loads(raw)
+
+        # Sanitise flags to allowed values only
+        raw_flags = result.get("flags") or []
+        result["flags"] = [f for f in raw_flags if f in _ALLOWED_FLAGS]
+
+        return {
+            "original_filename": original_filename,
+            "file_path": file_path,
+            "result": result,
+            "error": None,
+        }
+    except Exception as exc:
+        return {
+            "original_filename": original_filename,
+            "file_path": file_path,
+            "result": None,
+            "error": str(exc),
+        }
 
 
 def _apply_item_tags(item, raw_tags_str):
@@ -886,6 +1026,246 @@ def create_app():
             as_attachment=True,
             download_name=item.original_filename or item.file_path,
         )
+
+    # ── Bulk Quote Intake ─────────────────────────────────────────────────────
+
+    @app.route("/projects/<int:project_id>/quotes/bulk-intake", methods=["GET"])
+    @login_required
+    @admin_required
+    def bulk_quote_intake(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        return render_template("bulk_quote_intake.html", project=project,
+                               max_files=QUOTE_BATCH_MAX_FILES)
+
+    @app.route("/projects/<int:project_id>/quotes/bulk-intake", methods=["POST"])
+    @login_required
+    @admin_required
+    def bulk_quote_intake_post(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        files = request.files.getlist("quote_files")
+        files = [f for f in files if f and f.filename]
+        if not files:
+            flash("Please select at least one file to upload.", "danger")
+            return redirect(url_for("bulk_quote_intake", project_id=project_id))
+        if len(files) > QUOTE_BATCH_MAX_FILES:
+            flash(
+                f"Please upload {QUOTE_BATCH_MAX_FILES} or fewer files per batch. "
+                "You can do multiple batches.",
+                "danger",
+            )
+            return redirect(url_for("bulk_quote_intake", project_id=project_id))
+
+        category_tag = request.form.get("category_tag", "").strip()
+        batch_id = str(uuid.uuid4())
+        staging_dir = os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", batch_id)
+        os.makedirs(staging_dir, exist_ok=True)
+
+        api_key = app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+
+        entries = []
+        for f in files:
+            ext = os.path.splitext(f.filename)[1].lower()
+            safe_name = uuid.uuid4().hex + ext
+            dest = os.path.join(staging_dir, safe_name)
+            f.save(dest)
+            entry = _extract_quote_file(api_key, dest, f.filename)
+            entry["staged_filename"] = safe_name
+            entries.append(entry)
+
+        batch = QuoteBatch(
+            batch_id=batch_id,
+            project_id=project_id,
+            user_id=current_user.id,
+            status="reviewing",
+            category_tag=category_tag or None,
+            entries_json=json.dumps(entries),
+        )
+        db.session.add(batch)
+        db.session.commit()
+        return redirect(url_for("bulk_quote_review", project_id=project_id, batch_id=batch_id))
+
+    @app.route("/projects/<int:project_id>/quotes/bulk-intake/review/<batch_id>", methods=["GET"])
+    @login_required
+    @admin_required
+    def bulk_quote_review(project_id, batch_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        batch = QuoteBatch.query.filter_by(batch_id=batch_id, project_id=project_id).first() or abort(404)
+        if batch.user_id != current_user.id and not current_user.is_superadmin:
+            abort(403)
+        entries = json.loads(batch.entries_json or "[]")
+        return render_template(
+            "bulk_quote_review.html",
+            project=project,
+            batch=batch,
+            entries=entries,
+            allowed_flags=_ALLOWED_FLAGS,
+            entry_count=len(entries),
+        )
+
+    @app.route("/projects/<int:project_id>/quotes/bulk-intake/review/<batch_id>/save", methods=["POST"])
+    @login_required
+    @admin_required
+    def bulk_quote_save(project_id, batch_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        batch = QuoteBatch.query.filter_by(batch_id=batch_id, project_id=project_id).first() or abort(404)
+        if batch.user_id != current_user.id and not current_user.is_superadmin:
+            abort(403)
+
+        staging_dir = os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", batch_id)
+        entries = json.loads(batch.entries_json or "[]")
+        entry_count = int(request.form.get("entry_count", len(entries)))
+        saved = 0
+
+        for i in range(entry_count):
+            prefix = f"entry_{i}_"
+            if request.form.get(prefix + "remove"):
+                continue
+
+            staged_filename = request.form.get(prefix + "staged_filename", "")
+            original_filename = request.form.get(prefix + "original_filename", staged_filename)
+            title = request.form.get(prefix + "title", "").strip()
+            if not title:
+                continue
+
+            # Move file from staging to main library folder
+            new_file_path = None
+            file_mime = None
+            if staged_filename:
+                src = os.path.join(staging_dir, staged_filename)
+                if os.path.exists(src):
+                    ext = os.path.splitext(staged_filename)[1]
+                    dest_name = uuid.uuid4().hex + ext
+                    dest = os.path.join(app.config["LIBRARY_FOLDER"], dest_name)
+                    os.rename(src, dest)
+                    new_file_path = dest_name
+                    ext_lower = ext.lower()
+                    if ext_lower == ".pdf":
+                        file_mime = "application/pdf"
+                    elif ext_lower in (".png",):
+                        file_mime = "image/png"
+                    elif ext_lower in (".jpg", ".jpeg"):
+                        file_mime = "image/jpeg"
+
+            description = request.form.get(prefix + "description", "").strip() or None
+            vendor_name = request.form.get(prefix + "vendor_name", "").strip() or None
+            vendor_contact = request.form.get(prefix + "vendor_contact", "").strip() or None
+            conditions = request.form.get(prefix + "conditions_text", "").strip() or None
+            extraction_status = request.form.get(prefix + "extraction_status", "auto-extracted")
+
+            def _parse_date(val):
+                val = (val or "").strip()
+                if not val:
+                    return None
+                try:
+                    return date.fromisoformat(val)
+                except ValueError:
+                    return None
+
+            qdate = _parse_date(request.form.get(prefix + "quote_date"))
+            expdate = _parse_date(request.form.get(prefix + "expiration_date"))
+
+            # Pricing items — collect indexed rows
+            pricing_rows = []
+            j = 0
+            while True:
+                lbl = request.form.get(f"{prefix}pricing_{j}_label", "")
+                amt = request.form.get(f"{prefix}pricing_{j}_amount", "")
+                unit = request.form.get(f"{prefix}pricing_{j}_unit", "")
+                notes = request.form.get(f"{prefix}pricing_{j}_notes", "")
+                if not any([lbl, amt, unit, notes]):
+                    break
+                pricing_rows.append({
+                    "label": lbl.strip(),
+                    "amount": amt.strip(),
+                    "unit": unit.strip(),
+                    "notes": notes.strip() or None,
+                })
+                j += 1
+                if j > 100:
+                    break
+
+            selected_flags = request.form.getlist(prefix + "flags")
+            valid_flags = [f for f in selected_flags if f in _ALLOWED_FLAGS]
+
+            item = IntelligenceItem(
+                title=title,
+                description=description,
+                entry_type="file",
+                file_path=new_file_path,
+                original_filename=original_filename,
+                file_mime=file_mime,
+                project_id=project_id,
+                auto_include_in_search=True,
+                uploaded_by=current_user.id,
+                vendor_name=vendor_name,
+                vendor_contact=vendor_contact,
+                quote_date=qdate,
+                expiration_date=expdate,
+                conditions_text=conditions,
+                pricing_items_json=json.dumps(pricing_rows) if pricing_rows else None,
+                flags_json=json.dumps(valid_flags) if valid_flags else None,
+                extraction_status=extraction_status,
+            )
+            db.session.add(item)
+            db.session.flush()
+
+            # Category tag + additional tags
+            all_tags_parts = []
+            if batch.category_tag:
+                category_tag_val = request.form.get(prefix + "category_tag", batch.category_tag).strip()
+                if category_tag_val:
+                    all_tags_parts.append(category_tag_val)
+            extra_tags = request.form.get(prefix + "extra_tags", "").strip()
+            if extra_tags:
+                all_tags_parts.extend([t.strip() for t in extra_tags.split(",") if t.strip()])
+            if all_tags_parts:
+                _apply_item_tags(item, ", ".join(all_tags_parts))
+
+            saved += 1
+
+        batch.status = "saved"
+        db.session.commit()
+
+        # Clean up any leftover staging files
+        import shutil
+        if os.path.isdir(staging_dir):
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+        flash(
+            f"{saved} quote{'s' if saved != 1 else ''} saved to the Intelligence Library.",
+            "success",
+        )
+        return redirect(url_for("intelligence_library") + f"?project_id={project_id}")
+
+    @app.route("/projects/<int:project_id>/quotes/bulk-intake/review/<batch_id>/cancel", methods=["POST"])
+    @login_required
+    @admin_required
+    def bulk_quote_cancel(project_id, batch_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        batch = QuoteBatch.query.filter_by(batch_id=batch_id, project_id=project_id).first() or abort(404)
+        if batch.user_id != current_user.id and not current_user.is_superadmin:
+            abort(403)
+
+        import shutil
+        staging_dir = os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", batch_id)
+        if os.path.isdir(staging_dir):
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+        batch.status = "cancelled"
+        db.session.commit()
+        flash("Batch cancelled.", "info")
+        return redirect(url_for("drawings", project_id=project_id))
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
     @login_required

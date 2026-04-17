@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% block title %}Review Quotes — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('drawings', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item active">Review Extracted Quotes</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-card-list"></i> Review Extracted Quotes</h2>
+            <p class="text-muted mb-0">{{ project.name }} &mdash; {{ entries | length }} file{{ 's' if entries | length != 1 else '' }}</p>
+        </div>
+        <form method="POST"
+              action="{{ url_for('bulk_quote_cancel', project_id=project.id, batch_id=batch.batch_id) }}"
+              onsubmit="return confirm('Cancel this batch? All staged files will be deleted.')">
+            <button type="submit" class="btn btn-outline-danger btn-sm">
+                <i class="bi bi-x-circle"></i> Cancel Batch
+            </button>
+        </form>
+    </div>
+
+    <form method="POST" id="saveForm"
+          action="{{ url_for('bulk_quote_save', project_id=project.id, batch_id=batch.batch_id) }}">
+        <input type="hidden" name="entry_count" value="{{ entry_count }}">
+
+        <div class="accordion mb-4" id="quotesAccordion">
+        {% for entry in entries %}
+        {% set i = loop.index0 %}
+        {% set pfx = "entry_" ~ i ~ "_" %}
+        {% set res = entry.get('result') %}
+        {% set err = entry.get('error') %}
+        {% set fname = entry.get('original_filename', 'Unknown file') %}
+        {% set vendor = res.vendor_name if res and res.vendor_name else '' %}
+        <div class="accordion-item mb-2 shadow-sm" id="card_{{ i }}">
+            <h2 class="accordion-header" id="heading_{{ i }}">
+                <button class="accordion-button {% if not err %}collapsed{% endif %} py-2"
+                        type="button" data-bs-toggle="collapse"
+                        data-bs-target="#collapse_{{ i }}"
+                        aria-expanded="{{ 'true' if err else 'false' }}"
+                        aria-controls="collapse_{{ i }}">
+                    <div class="d-flex align-items-center gap-3 w-100 me-3">
+                        <span class="text-truncate fw-medium" style="max-width:300px;" title="{{ fname }}">
+                            <i class="bi bi-file-earmark-pdf text-danger me-1"></i>{{ fname }}
+                        </span>
+                        {% if vendor %}<span class="text-muted small">{{ vendor }}</span>{% endif %}
+                        <span class="ms-auto badge {% if err %}bg-danger{% else %}bg-success{% endif %} flex-shrink-0">
+                            {{ 'Error' if err else 'Extracted' }}
+                        </span>
+                        <div class="form-check flex-shrink-0 ms-2 mb-0" onclick="event.stopPropagation()">
+                            <input class="form-check-input remove-check" type="checkbox"
+                                   name="{{ pfx }}remove" value="1"
+                                   id="remove_{{ i }}"
+                                   onchange="toggleRemove({{ i }}, this.checked)">
+                            <label class="form-check-label small text-muted" for="remove_{{ i }}">Remove</label>
+                        </div>
+                    </div>
+                </button>
+            </h2>
+
+            <div id="collapse_{{ i }}"
+                 class="accordion-collapse collapse {% if err %}show{% endif %}"
+                 aria-labelledby="heading_{{ i }}">
+                <div class="accordion-body" id="body_{{ i }}">
+
+                    <!-- Source file always visible at top of body -->
+                    <div class="alert alert-light border py-2 mb-3 d-flex align-items-center gap-2">
+                        <i class="bi bi-file-earmark text-muted"></i>
+                        <span class="small"><strong>Source file:</strong> {{ fname }}</span>
+                    </div>
+
+                    <!-- Hidden fields -->
+                    <input type="hidden" name="{{ pfx }}staged_filename" value="{{ entry.get('staged_filename', '') }}">
+                    <input type="hidden" name="{{ pfx }}original_filename" value="{{ fname }}">
+                    <input type="hidden" name="{{ pfx }}extraction_status"
+                           value="{{ 'auto-reviewed' if res else 'manual' }}">
+
+                    {% if err %}
+                    <div class="alert alert-danger mb-3">
+                        <strong>Extraction failed:</strong> {{ err }}
+                        <div class="mt-2">
+                            <a href="{{ url_for('library_add') }}?project_id={{ project.id }}"
+                               class="btn btn-sm btn-outline-secondary">Enter manually</a>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="row g-3">
+                        <!-- Title -->
+                        <div class="col-12">
+                            <label class="form-label fw-medium small mb-1">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm" name="{{ pfx }}title"
+                                   value="{{ res.suggested_title if res and res.suggested_title else '' }}" required>
+                        </div>
+                        <!-- Description -->
+                        <div class="col-12">
+                            <label class="form-label fw-medium small mb-1">Description</label>
+                            <textarea class="form-control form-control-sm" name="{{ pfx }}description"
+                                      rows="2">{{ res.suggested_description if res and res.suggested_description else '' }}</textarea>
+                        </div>
+                        <!-- Vendor name / contact -->
+                        <div class="col-md-6">
+                            <label class="form-label fw-medium small mb-1">Vendor Name</label>
+                            <input type="text" class="form-control form-control-sm" name="{{ pfx }}vendor_name"
+                                   value="{{ res.vendor_name if res and res.vendor_name else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-medium small mb-1">Contact</label>
+                            <input type="text" class="form-control form-control-sm" name="{{ pfx }}vendor_contact"
+                                   value="{{ res.vendor_contact if res and res.vendor_contact else '' }}">
+                        </div>
+                        <!-- Dates -->
+                        <div class="col-md-4">
+                            <label class="form-label fw-medium small mb-1">Quote Date</label>
+                            <input type="date" class="form-control form-control-sm" name="{{ pfx }}quote_date"
+                                   value="{{ res.quote_date if res and res.quote_date else '' }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-medium small mb-1">Expiration Date</label>
+                            <input type="date" class="form-control form-control-sm" name="{{ pfx }}expiration_date"
+                                   value="{{ res.expiration_date if res and res.expiration_date else '' }}">
+                        </div>
+                        <!-- Category + extra tags -->
+                        <div class="col-md-4">
+                            <label class="form-label fw-medium small mb-1">Category Tag</label>
+                            <input type="text" class="form-control form-control-sm" name="{{ pfx }}category_tag"
+                                   value="{{ batch.category_tag or '' }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-medium small mb-1">Additional Tags
+                                <span class="text-muted fw-normal">(comma-separated)</span></label>
+                            <input type="text" class="form-control form-control-sm" name="{{ pfx }}extra_tags"
+                                   value="{{ (res.suggested_tags | join(', ')) if res and res.suggested_tags else '' }}">
+                        </div>
+
+                        <!-- Pricing table -->
+                        <div class="col-12">
+                            <label class="form-label fw-medium small mb-1">Pricing Items</label>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered mb-1" id="pricing_{{ i }}">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="small">Label</th>
+                                            <th class="small">Amount</th>
+                                            <th class="small">Unit</th>
+                                            <th class="small">Notes</th>
+                                            <th style="width:36px;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pricing_body_{{ i }}">
+                                    {% if res and res.pricing_items %}
+                                        {% for pi in res.pricing_items %}
+                                        {% set j = loop.index0 %}
+                                        <tr>
+                                            <td><input type="text" class="form-control form-control-sm border-0 p-1"
+                                                       name="{{ pfx }}pricing_{{ j }}_label"
+                                                       value="{{ pi.label or '' }}"></td>
+                                            <td><input type="text" class="form-control form-control-sm border-0 p-1"
+                                                       name="{{ pfx }}pricing_{{ j }}_amount"
+                                                       value="{{ pi.amount or '' }}"></td>
+                                            <td><input type="text" class="form-control form-control-sm border-0 p-1"
+                                                       name="{{ pfx }}pricing_{{ j }}_unit"
+                                                       value="{{ pi.unit or '' }}"></td>
+                                            <td><input type="text" class="form-control form-control-sm border-0 p-1"
+                                                       name="{{ pfx }}pricing_{{ j }}_notes"
+                                                       value="{{ pi.notes or '' }}"></td>
+                                            <td class="text-center">
+                                                <button type="button" class="btn btn-sm btn-link text-danger p-0"
+                                                        onclick="removeRow(this)">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    {% endif %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                    onclick="addPricingRow({{ i }})">
+                                <i class="bi bi-plus"></i> Add row
+                            </button>
+                        </div>
+
+                        <!-- Conditions text -->
+                        <div class="col-12">
+                            <label class="form-label fw-medium small mb-1">Conditions / Exclusions / Validity</label>
+                            <textarea class="form-control form-control-sm" name="{{ pfx }}conditions_text"
+                                      rows="3">{{ res.conditions_text if res and res.conditions_text else '' }}</textarea>
+                        </div>
+
+                        <!-- Flags -->
+                        <div class="col-12">
+                            <label class="form-label fw-medium small mb-1">Flags</label>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for flag in allowed_flags %}
+                                <div class="form-check form-check-inline mb-0">
+                                    <input class="form-check-input" type="checkbox"
+                                           name="{{ pfx }}flags" value="{{ flag }}"
+                                           id="flag_{{ i }}_{{ loop.index0 }}"
+                                           {% if res and flag in (res.flags or []) %}checked{% endif %}>
+                                    <label class="form-check-label small" for="flag_{{ i }}_{{ loop.index0 }}">
+                                        {{ flag }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                    </div><!-- /row -->
+                </div><!-- /accordion-body -->
+            </div><!-- /accordion-collapse -->
+        </div><!-- /accordion-item -->
+        {% endfor %}
+        </div><!-- /accordion -->
+
+        <div class="d-flex gap-2 pb-4">
+            <button type="submit" class="btn btn-primary btn-lg" id="btnSave">
+                <i class="bi bi-cloud-check"></i> Save All to Library
+            </button>
+            <form method="POST"
+                  action="{{ url_for('bulk_quote_cancel', project_id=project.id, batch_id=batch.batch_id) }}"
+                  class="d-inline"
+                  onsubmit="return confirm('Cancel this batch? All staged files will be deleted.')">
+                <button type="submit" class="btn btn-outline-danger btn-lg">
+                    <i class="bi bi-x-circle"></i> Cancel Batch
+                </button>
+            </form>
+        </div>
+    </form>
+</div>
+
+<script>
+// ── Re-index a pricing table after row removal ────────────────────────────────
+function reindexPricing(entryIdx) {
+    var tbody = document.getElementById('pricing_body_' + entryIdx);
+    if (!tbody) return;
+    var rows = tbody.querySelectorAll('tr');
+    rows.forEach(function (row, j) {
+        var pfx = 'entry_' + entryIdx + '_pricing_' + j + '_';
+        var inputs = row.querySelectorAll('input');
+        var suffixes = ['label', 'amount', 'unit', 'notes'];
+        inputs.forEach(function (inp, k) {
+            inp.name = pfx + suffixes[k];
+        });
+    });
+}
+
+function removeRow(btn) {
+    var row = btn.closest('tr');
+    var tbody = row.closest('tbody');
+    var entryIdx = tbody.id.replace('pricing_body_', '');
+    row.remove();
+    reindexPricing(parseInt(entryIdx));
+}
+
+function addPricingRow(entryIdx) {
+    var tbody = document.getElementById('pricing_body_' + entryIdx);
+    var j = tbody.querySelectorAll('tr').length;
+    var pfx = 'entry_' + entryIdx + '_pricing_' + j + '_';
+    var tr = document.createElement('tr');
+    ['label', 'amount', 'unit', 'notes'].forEach(function (col) {
+        var td = document.createElement('td');
+        var inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'form-control form-control-sm border-0 p-1';
+        inp.name = pfx + col;
+        td.appendChild(inp);
+        tr.appendChild(td);
+    });
+    var tdDel = document.createElement('td');
+    tdDel.className = 'text-center';
+    tdDel.innerHTML = '<button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="removeRow(this)"><i class="bi bi-trash"></i></button>';
+    tr.appendChild(tdDel);
+    tbody.appendChild(tr);
+    tbody.querySelectorAll('tr:last-child input')[0].focus();
+}
+
+// ── Toggle visual "removed" state for a card ─────────────────────────────────
+function toggleRemove(idx, checked) {
+    var body = document.getElementById('body_' + idx);
+    var card = document.getElementById('card_' + idx);
+    if (checked) {
+        card.style.opacity = '0.45';
+        if (body) body.querySelectorAll('input,textarea,button:not(.remove-check~*)').forEach(function (el) {
+            if (!el.classList.contains('remove-check')) el.disabled = true;
+        });
+    } else {
+        card.style.opacity = '';
+        if (body) body.querySelectorAll('input,textarea,button').forEach(function (el) {
+            el.disabled = false;
+        });
+    }
+}
+
+// ── Prevent double-submit ─────────────────────────────────────────────────────
+document.getElementById('saveForm').addEventListener('submit', function () {
+    var btn = document.getElementById('btnSave');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Saving...';
+});
+</script>
+{% endblock %}
