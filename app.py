@@ -1382,19 +1382,71 @@ def create_app():
     @admin_required
     def quote_compare_select(project_id):
         project = _auth_project(project_id)
-        items = IntelligenceItem.query.filter_by(project_id=project_id).all()
-        # Aggregate tags → count in Python
-        from collections import Counter
-        tag_counts = Counter()
-        for item in items:
-            for tag in item.tags:
-                tag_counts[tag.name] += 1
-        # Sort by count desc, then alpha
-        tag_list = sorted(tag_counts.items(), key=lambda x: (-x[1], x[0]))
+
+        # Distinct saved category_tags from QuoteBatch — the clean label the
+        # user chose at intake time, not free-form tags from IntelligenceItem.
+        saved_batches = (
+            QuoteBatch.query
+            .filter_by(project_id=project_id, status="saved")
+            .all()
+        )
+        seen = set()
+        ordered_tags = []
+        for b in saved_batches:
+            tag = (b.category_tag or "").strip()
+            if tag and tag not in seen:
+                seen.add(tag)
+                ordered_tags.append(tag)
+
+        def _headline_price(item):
+            if not item.pricing_items_json:
+                return "no pricing submitted"
+            try:
+                rows = json.loads(item.pricing_items_json)
+            except Exception:
+                return "no pricing submitted"
+            if not rows:
+                return "no pricing submitted"
+            first = rows[0]
+            amt = (first.get("amount") or "").strip().lstrip("$")
+            unit = (first.get("unit") or "").strip()
+            if not amt:
+                return "no pricing submitted"
+            return f"${amt} {unit}".strip() if unit else f"${amt}"
+
+        def _parse_flags(item):
+            if not item.flags_json:
+                return []
+            try:
+                return json.loads(item.flags_json) or []
+            except Exception:
+                return []
+
+        categories = []
+        for tag in ordered_tags:
+            items = _items_for_category(project_id, tag)
+            cat_items = []
+            for it in items:
+                cat_items.append({
+                    "id": it.id,
+                    "vendor": it.vendor_name or it.title,
+                    "headline_price": _headline_price(it),
+                    "flags": _parse_flags(it),
+                    "file_path": it.file_path or None,
+                })
+            categories.append({
+                "name": tag,
+                "count": len(items),
+                "items": cat_items,
+            })
+
+        # Sort: most vendors first, then alpha by name
+        categories.sort(key=lambda c: (-c["count"], c["name"].lower()))
+
         return render_template(
             "quote_compare_select.html",
             project=project,
-            tag_list=tag_list,
+            categories=categories,
         )
 
     @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>")
