@@ -12,7 +12,7 @@
         </ol>
     </nav>
 
-    <div class="d-flex justify-content-between align-items-start mb-4">
+    <div class="d-flex justify-content-between align-items-start mb-3">
         <div>
             <h2 class="mb-1"><i class="bi bi-columns-gap"></i> Compare Quotes</h2>
             <p class="text-muted mb-0">{{ project.name }} — select a category to open the comparison view</p>
@@ -24,6 +24,17 @@
     </div>
 
     {% if categories %}
+    <div class="d-flex justify-content-end gap-2 mb-4">
+        <a href="{{ url_for('quote_export_all_excel', project_id=project.id) }}"
+           class="btn btn-sm btn-outline-success">
+            <i class="bi bi-file-earmark-spreadsheet"></i> Export All — Excel
+        </a>
+        <a href="{{ url_for('quote_export_all_pdf', project_id=project.id) }}"
+           class="btn btn-sm btn-outline-danger">
+            <i class="bi bi-file-earmark-pdf"></i> Export All — PDF
+        </a>
+    </div>
+
     <div class="d-flex flex-column gap-4">
         {% for cat in categories %}
         <div class="card shadow-sm">
@@ -40,10 +51,22 @@
                     </span>
                     {% endif %}
                 </div>
-                <a href="{{ url_for('quote_compare', project_id=project.id, category_tag=cat.name) }}"
-                   class="btn btn-sm btn-primary">
-                    Open comparison &rarr;
-                </a>
+                <div class="d-flex align-items-center gap-2">
+                    <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=cat.name) }}"
+                       class="btn btn-sm btn-outline-success py-0 px-2"
+                       title="Export Excel for {{ cat.name }}">
+                        <i class="bi bi-file-earmark-spreadsheet"></i> Excel
+                    </a>
+                    <a href="{{ url_for('quote_export_pdf', project_id=project.id, category_tag=cat.name) }}"
+                       class="btn btn-sm btn-outline-danger py-0 px-2"
+                       title="Export PDF for {{ cat.name }}">
+                        <i class="bi bi-file-earmark-pdf"></i> PDF
+                    </a>
+                    <a href="{{ url_for('quote_compare', project_id=project.id, category_tag=cat.name) }}"
+                       class="btn btn-sm btn-primary">
+                        Open comparison &rarr;
+                    </a>
+                </div>
             </div>
 
             <div class="card-body p-0">
