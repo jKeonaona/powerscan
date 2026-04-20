@@ -1437,7 +1437,7 @@ def create_app():
             categories.append({
                 "name": tag,
                 "count": len(items),
-                "items": cat_items,
+                "quotes": cat_items,
             })
 
         # Sort: most vendors first, then alpha by name
