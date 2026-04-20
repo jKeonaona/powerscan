@@ -225,7 +225,8 @@ class IntelligenceItem(db.Model):
     shortlisted_scope_option = db.Column(db.String(100), nullable=True)  # reserved for v2
 
     project = db.relationship("Project", backref=db.backref("intelligence_items", cascade="all, delete-orphan"))
-    uploader = db.relationship("User", backref="intelligence_items")
+    uploader = db.relationship("User", foreign_keys=[uploaded_by], backref="intelligence_items")
+    shortlister = db.relationship("User", foreign_keys=[shortlisted_by], backref="shortlisted_items")
     tags = db.relationship("IntelligenceTag", secondary=intelligence_item_tags, backref="items")
 
     @property
