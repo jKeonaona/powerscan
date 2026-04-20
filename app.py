@@ -870,6 +870,16 @@ def create_app():
 
         has_ready_docs = Drawing.query.filter_by(project_id=project.id, status="ready").count() > 0
 
+        reviewing_batches = QuoteBatch.query.filter_by(
+            project_id=project_id, status="reviewing"
+        ).order_by(QuoteBatch.created_at.desc()).all()
+        reviewing_batch_counts = {}
+        for b in reviewing_batches:
+            try:
+                reviewing_batch_counts[b.batch_id] = len(json.loads(b.entries_json)) if b.entries_json else 0
+            except Exception:
+                reviewing_batch_counts[b.batch_id] = 0
+
         return render_template(
             "drawings.html",
             project=project,
@@ -884,6 +894,8 @@ def create_app():
             history_entries=history_entries,
             active_tab=active_tab,
             has_ready_docs=has_ready_docs,
+            reviewing_batches=reviewing_batches,
+            reviewing_batch_counts=reviewing_batch_counts,
         )
 
     @app.route("/notes")

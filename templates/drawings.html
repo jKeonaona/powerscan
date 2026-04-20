@@ -84,6 +84,30 @@
         </li>
     </ul>
 
+    {% if reviewing_batches %}
+    <div class="alert alert-warning mt-3" role="alert">
+        <strong>&#8987; {{ reviewing_batches|length }} batch{{ 'es' if reviewing_batches|length != 1 else '' }} awaiting review</strong>
+        <p class="mb-2 mt-1 small text-body-secondary">
+            These quote batches were uploaded but not yet committed to the Intelligence Library.
+            Click to review and save, or cancel to discard.
+        </p>
+        <ul class="list-unstyled mb-0">
+            {% for batch in reviewing_batches %}
+            <li class="py-2 border-top">
+                <a href="{{ url_for('bulk_quote_review', project_id=project.id, batch_id=batch.batch_id) }}"
+                   class="fw-medium">
+                    {{ batch.category_tag or 'Uncategorized' }}
+                </a>
+                &mdash; {{ reviewing_batch_counts[batch.batch_id] }} file{{ 's' if reviewing_batch_counts[batch.batch_id] != 1 else '' }}
+                <span class="text-body-secondary small">
+                    &middot; uploaded {{ batch.created_at.strftime('%Y-%m-%d %H:%M') }}
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <div class="tab-content">
 
         <!-- ─────────────── DOCUMENTS TAB ─────────────── -->
