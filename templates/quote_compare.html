@@ -1,0 +1,422 @@
+{% extends "base.html" %}
+{% block title %}{{ category_tag }} — Compare Quotes — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3">
+    <div class="container px-0">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+                <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+                <li class="breadcrumb-item"><a href="{{ url_for('drawings', project_id=project.id) }}">{{ project.name }}</a></li>
+                <li class="breadcrumb-item"><a href="{{ url_for('quote_compare_select', project_id=project.id) }}">Compare Quotes</a></li>
+                <li class="breadcrumb-item active">{{ category_tag }}</li>
+            </ol>
+        </nav>
+
+        <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+                <h2 class="mb-1"><i class="bi bi-columns-gap"></i> {{ category_tag }}</h2>
+                <p class="text-muted mb-0">{{ project.name }} &mdash; {{ items | length }} vendor{{ 's' if items | length != 1 else '' }}</p>
+            </div>
+            <!-- Actions bar (top) -->
+            <div class="d-flex gap-2 flex-shrink-0 ms-3">
+                <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=category_tag) }}"
+                   class="btn btn-sm btn-outline-success {% if items | length < 2 %}disabled{% endif %}"
+                   title="{% if items | length < 2 %}Need at least 2 vendors{% endif %}">
+                    <i class="bi bi-file-earmark-excel"></i> Export Excel
+                </a>
+                <span data-bs-toggle="tooltip"
+                      title="{% if shortlisted_count == 0 %}Shortlist at least one vendor first{% endif %}">
+                    <a href="{{ url_for('quote_export_pdf', project_id=project.id, category_tag=category_tag) }}"
+                       class="btn btn-sm btn-outline-danger {% if shortlisted_count == 0 %}disabled{% endif %}"
+                       id="btnPdfExport">
+                        <i class="bi bi-file-earmark-pdf"></i> Export PDF (Shortlist)
+                        {% if shortlisted_count > 0 %}
+                        <span class="badge bg-danger ms-1">{{ shortlisted_count }}</span>
+                        {% endif %}
+                    </a>
+                </span>
+            </div>
+        </div>
+
+        {% if only_one %}
+        <div class="alert alert-info mb-3">
+            <i class="bi bi-info-circle me-2"></i>
+            Only one quote in this category — comparison requires at least 2 vendors.
+            <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="alert-link ms-2">Add more quotes</a>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ── AI Summary ─────────────────────────────────────────────────────── -->
+    <div class="container px-0 mb-4">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fw-medium"><i class="bi bi-cpu text-primary me-1"></i> Estimator Summary</span>
+                    {% if summary_obj and summary_obj.generated_at %}
+                    <span class="text-muted small">
+                        Generated {{ summary_obj.generated_at.strftime('%b %d, %Y') }} at {{ summary_obj.generated_at.strftime('%H:%M UTC') }}
+                    </span>
+                    {% endif %}
+                </div>
+                <form method="POST"
+                      action="{{ url_for('quote_regenerate_summary', project_id=project.id, category_tag=category_tag) }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise"></i> Regenerate
+                    </button>
+                </form>
+            </div>
+            <div class="card-body">
+                {% if summary_obj %}
+                <p class="mb-0" style="white-space:pre-wrap;">{{ summary_obj.summary_text }}</p>
+                {% elif only_one %}
+                <p class="text-muted mb-0 fst-italic">Summary not generated — requires at least 2 vendors.</p>
+                {% else %}
+                <p class="text-muted mb-0 fst-italic">Summary unavailable. Claude API key may not be configured.</p>
+                {% endif %}
+            </div>
+            {% if summary_stale %}
+            <div class="card-footer bg-warning-subtle border-warning py-2">
+                <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
+                <span class="small">A new quote has been added since this summary was generated. Consider regenerating.</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ── Comparison Table ───────────────────────────────────────────────── -->
+    <div class="container px-0 mb-4">
+        <div class="table-responsive" style="overflow-x: auto; max-width: 100%;">
+            <table class="table table-bordered table-sm align-top mb-0" id="compareTable"
+                   style="min-width: {{ (items | length) * 220 + 180 }}px;">
+                <thead>
+                    <tr class="table-dark">
+                        <th class="sticky-col" style="min-width:160px;max-width:160px;"></th>
+                        {% for item in items %}
+                        <th style="min-width:220px;max-width:260px;">
+                            <div class="fw-bold">{{ item.vendor_name or item.title or '—' }}</div>
+                            {% if item.shortlisted %}
+                            <span class="badge bg-success mt-1"><i class="bi bi-star-fill"></i> Shortlisted</span>
+                            {% endif %}
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+
+                    <!-- ── VENDOR INFO section ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted letter-spacing-1" colspan="{{ items | length + 1 }}">
+                            Vendor Info
+                        </td>
+                    </tr>
+
+                    <!-- Source file row -->
+                    <tr>
+                        <td class="sticky-col label-cell">Source File</td>
+                        {% for item in items %}
+                        <td class="small">
+                            {% if item.original_filename %}
+                            <span title="{{ item.original_filename }}" class="text-truncate d-inline-block" style="max-width:200px;">
+                                <i class="bi bi-file-earmark text-muted me-1"></i>{{ item.original_filename }}
+                            </span>
+                            {% else %}—{% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <tr>
+                        <td class="sticky-col label-cell">Quote Date</td>
+                        {% for item in items %}
+                        <td class="small">{{ item.quote_date.strftime('%b %d, %Y') if item.quote_date else '—' }}</td>
+                        {% endfor %}
+                    </tr>
+
+                    <tr>
+                        <td class="sticky-col label-cell">Expiration Date</td>
+                        {% for item in items %}
+                        <td class="small {% if item.expiration_date and item.expiration_date.strftime('%Y-%m-%d') < now_date %}text-danger fw-medium{% endif %}">
+                            {{ item.expiration_date.strftime('%b %d, %Y') if item.expiration_date else '—' }}
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <tr>
+                        <td class="sticky-col label-cell">Contact</td>
+                        {% for item in items %}
+                        <td class="small" style="white-space:pre-wrap;">{{ item.vendor_contact or '—' }}</td>
+                        {% endfor %}
+                    </tr>
+
+                    <!-- ── PRICING section ── -->
+                    {% if all_labels %}
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Pricing Items
+                        </td>
+                    </tr>
+                    {% for lbl in all_labels %}
+                    <tr>
+                        <td class="sticky-col label-cell">{{ lbl }}</td>
+                        {% for item in items %}
+                        {% set pr = per_item_pricing.get(item.id, {}).get(lbl) %}
+                        {% if pr %}
+                        <td>
+                            <div class="small fw-medium">{{ pr.amount or '' }} {{ pr.unit or '' }}</div>
+                            {% if pr.notes %}<div class="text-muted" style="font-size:0.75rem;">{{ pr.notes }}</div>{% endif %}
+                        </td>
+                        {% else %}
+                        <td class="text-muted text-center">—</td>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Pricing Items
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell text-muted fst-italic" colspan="{{ items | length + 1 }}">No pricing items extracted.</td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- ── CONDITIONS section ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Conditions &amp; Exclusions
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell">Conditions</td>
+                        {% for item in items %}
+                        <td class="small">
+                            {% if item.conditions_text %}
+                            {% set cond_id = "cond_" ~ item.id %}
+                            <span id="{{ cond_id }}_short">
+                                {{ item.conditions_text[:150] }}{% if item.conditions_text | length > 150 %}…
+                                <a href="#" class="text-primary" onclick="expandCond('{{ cond_id }}');return false;">show more</a>
+                                {% endif %}
+                            </span>
+                            {% if item.conditions_text | length > 150 %}
+                            <span id="{{ cond_id }}_full" class="d-none" style="white-space:pre-wrap;">
+                                {{ item.conditions_text }}
+                                <a href="#" class="text-primary d-block mt-1" onclick="collapseCond('{{ cond_id }}');return false;">show less</a>
+                            </span>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <!-- ── FLAGS section ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Flags
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell">Flags</td>
+                        {% for item in items %}
+                        <td>
+                            {% set flags = item_flags.get(item.id, []) %}
+                            {% if flags %}
+                            <div class="d-flex flex-wrap gap-1">
+                                {% for flag in flags %}
+                                <span class="badge flag-badge small
+                                    {% if flag in ['no-pricing-submitted','capability-statement-only'] %}bg-flag-warn
+                                    {% elif flag in ['different-project-referenced','needs-verification','prevailing-wage-required'] %}bg-flag-danger
+                                    {% elif flag in ['expires-soon'] %}bg-warning text-dark
+                                    {% else %}bg-flag-default{% endif %}">{{ flag }}</span>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <span class="text-muted small">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <!-- ── SHORTLIST section ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Shortlist
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell">Shortlist this vendor</td>
+                        {% for item in items %}
+                        <td>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input shortlist-chk" type="checkbox"
+                                       id="sl_{{ item.id }}"
+                                       data-item-id="{{ item.id }}"
+                                       {% if item.shortlisted %}checked{% endif %}>
+                                <label class="form-check-label small fw-medium" for="sl_{{ item.id }}">
+                                    Shortlist
+                                </label>
+                            </div>
+                            <textarea class="form-control form-control-sm shortlist-notes"
+                                      id="sln_{{ item.id }}"
+                                      data-item-id="{{ item.id }}"
+                                      rows="2"
+                                      placeholder="Notes on why…"
+                                      style="font-size:0.75rem;">{{ item.shortlist_notes or '' }}</textarea>
+                            <div class="save-indicator text-success small mt-1 d-none" id="saved_{{ item.id }}">
+                                <i class="bi bi-check-circle-fill"></i> Saved
+                            </div>
+                            <div class="save-indicator text-danger small mt-1 d-none" id="err_{{ item.id }}">
+                                <i class="bi bi-exclamation-circle-fill"></i> Save failed
+                            </div>
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ── Actions bar (bottom) ──────────────────────────────────────────── -->
+    <div class="container px-0 pb-4 d-flex gap-2">
+        <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=category_tag) }}"
+           class="btn btn-outline-success {% if items | length < 2 %}disabled{% endif %}">
+            <i class="bi bi-file-earmark-excel"></i> Download Excel (Full)
+        </a>
+        <span data-bs-toggle="tooltip"
+              title="{% if shortlisted_count == 0 %}Shortlist at least one vendor first{% endif %}">
+            <a href="{{ url_for('quote_export_pdf', project_id=project.id, category_tag=category_tag) }}"
+               class="btn btn-outline-danger {% if shortlisted_count == 0 %}disabled{% endif %}"
+               id="btnPdfBottom">
+                <i class="bi bi-file-earmark-pdf"></i> Download PDF (Shortlist)
+                {% if shortlisted_count > 0 %}
+                <span class="badge bg-danger ms-1">{{ shortlisted_count }}</span>
+                {% endif %}
+            </a>
+        </span>
+        <a href="{{ url_for('quote_compare_select', project_id=project.id) }}"
+           class="btn btn-outline-secondary ms-auto">
+            <i class="bi bi-arrow-left"></i> All Categories
+        </a>
+    </div>
+</div>
+
+<style>
+.sticky-col {
+    position: sticky;
+    left: 0;
+    background: #fff;
+    z-index: 2;
+    border-right: 2px solid #dee2e6 !important;
+}
+.table-secondary .sticky-col {
+    background: #e9ecef;
+}
+.label-cell {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #495057;
+    vertical-align: middle;
+    min-width: 160px;
+    max-width: 160px;
+}
+.flag-badge { font-size: 0.7rem; }
+.bg-flag-warn { background-color: #fd7e14 !important; color: #fff !important; }
+.bg-flag-danger { background-color: #dc3545 !important; color: #fff !important; }
+.bg-flag-info { background-color: #0dcaf0 !important; color: #000 !important; }
+.bg-flag-default { background-color: #6c757d !important; color: #fff !important; }
+</style>
+
+<script>
+// ── Conditions expand/collapse ────────────────────────────────────────────────
+function expandCond(id) {
+    document.getElementById(id + '_short').classList.add('d-none');
+    document.getElementById(id + '_full').classList.remove('d-none');
+}
+function collapseCond(id) {
+    document.getElementById(id + '_full').classList.add('d-none');
+    document.getElementById(id + '_short').classList.remove('d-none');
+}
+
+// ── Shortlist AJAX save ───────────────────────────────────────────────────────
+var _saveTimers = {};
+
+function _saveShortlist(itemId) {
+    var chk = document.getElementById('sl_' + itemId);
+    var notes = document.getElementById('sln_' + itemId);
+    var savedEl = document.getElementById('saved_' + itemId);
+    var errEl = document.getElementById('err_' + itemId);
+    if (!chk) return;
+
+    var payload = {
+        items: [{
+            id: parseInt(itemId),
+            shortlisted: chk.checked,
+            notes: notes ? notes.value : '',
+        }]
+    };
+
+    fetch('{{ url_for("quote_shortlist", project_id=project.id, category_tag=category_tag) }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.ok) {
+            savedEl.classList.remove('d-none');
+            errEl.classList.add('d-none');
+            setTimeout(function() { savedEl.classList.add('d-none'); }, 2000);
+            // Update PDF button state
+            _refreshPdfButton();
+        } else {
+            errEl.classList.remove('d-none');
+        }
+    })
+    .catch(function() {
+        errEl.classList.remove('d-none');
+    });
+}
+
+function _refreshPdfButton() {
+    var anyChecked = document.querySelectorAll('.shortlist-chk:checked').length > 0;
+    var btns = [document.getElementById('btnPdfExport'), document.getElementById('btnPdfBottom')];
+    btns.forEach(function(btn) {
+        if (!btn) return;
+        if (anyChecked) {
+            btn.classList.remove('disabled');
+        } else {
+            btn.classList.add('disabled');
+        }
+    });
+}
+
+// Wire up checkboxes — immediate save on change
+document.querySelectorAll('.shortlist-chk').forEach(function(chk) {
+    chk.addEventListener('change', function() {
+        _saveShortlist(this.dataset.itemId);
+    });
+});
+
+// Wire up notes textareas — debounced save on input
+document.querySelectorAll('.shortlist-notes').forEach(function(ta) {
+    ta.addEventListener('input', function() {
+        var itemId = this.dataset.itemId;
+        clearTimeout(_saveTimers[itemId]);
+        _saveTimers[itemId] = setTimeout(function() {
+            _saveShortlist(itemId);
+        }, 800);
+    });
+});
+
+// Bootstrap tooltips
+document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+    new bootstrap.Tooltip(el);
+});
+</script>
+{% endblock %}

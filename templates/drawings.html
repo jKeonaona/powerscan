@@ -32,6 +32,9 @@
                 <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">
                     <i class="bi bi-card-list"></i> Bulk Quote Intake
                 </a>
+                <a href="{{ url_for('quote_compare_select', project_id=project.id) }}" class="btn btn-sm btn-outline-success">
+                    <i class="bi bi-columns-gap"></i> Compare Quotes
+                </a>
                 <a href="{{ url_for('edit_project', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-pencil"></i> Edit Project
                 </a>

@@ -216,6 +216,13 @@ class IntelligenceItem(db.Model):
     vendor_contact = db.Column(db.Text, nullable=True)
     quote_date = db.Column(db.Date, nullable=True)
     expiration_date = db.Column(db.Date, nullable=True)
+    # Shortlist fields (v1: shortlisted within a category; v2 will populate bid_id/scope_option)
+    shortlisted = db.Column(db.Boolean, nullable=False, default=False)
+    shortlist_notes = db.Column(db.Text, nullable=True)
+    shortlisted_at = db.Column(db.DateTime, nullable=True)
+    shortlisted_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    shortlisted_bid_id = db.Column(db.Integer, nullable=True)       # reserved for v2 Bid layer
+    shortlisted_scope_option = db.Column(db.String(100), nullable=True)  # reserved for v2
 
     project = db.relationship("Project", backref=db.backref("intelligence_items", cascade="all, delete-orphan"))
     uploader = db.relationship("User", backref="intelligence_items")
@@ -230,6 +237,38 @@ class IntelligenceItem(db.Model):
             return json.loads(self.work_scope_json)
         except Exception:
             return []
+
+
+class ComparisonSummary(db.Model):
+    __tablename__ = "comparison_summary"
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    category_tag = db.Column(db.String(200), nullable=False)
+    summary_text = db.Column(db.Text, nullable=False)
+    generated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # Reserved for v2 Bid / Scope Option layers
+    bid_id = db.Column(db.Integer, nullable=True)
+    scope_option = db.Column(db.String(100), nullable=True)
+
+    project = db.relationship("Project")
+
+
+class QuoteComparisonExport(db.Model):
+    __tablename__ = "quote_comparison_export"
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    export_type = db.Column(db.String(10), nullable=False)   # "pdf" or "excel"
+    category_tag = db.Column(db.String(200), nullable=True)
+    vendor_count = db.Column(db.Integer, nullable=True)
+    shortlisted_count = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # Reserved for v2 Bid / Scope Option layers
+    bid_id = db.Column(db.Integer, nullable=True)
+    scope_option = db.Column(db.String(100), nullable=True)
+
+    project = db.relationship("Project")
+    user = db.relationship("User")
 
 
 class QuoteBatch(db.Model):

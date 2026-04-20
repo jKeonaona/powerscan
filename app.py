@@ -19,6 +19,7 @@ from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     IntelligenceTag, IntelligenceItem, QuoteBatch,
+    ComparisonSummary, QuoteComparisonExport,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
@@ -117,6 +118,12 @@ def _run_migrations(database):
         ("intelligence_item", "vendor_contact", "TEXT"),
         ("intelligence_item", "quote_date", "DATE"),
         ("intelligence_item", "expiration_date", "DATE"),
+        ("intelligence_item", "shortlisted", "BOOLEAN DEFAULT 0 NOT NULL"),
+        ("intelligence_item", "shortlist_notes", "TEXT"),
+        ("intelligence_item", "shortlisted_at", "DATETIME"),
+        ("intelligence_item", "shortlisted_by", "INTEGER"),
+        ("intelligence_item", "shortlisted_bid_id", "INTEGER"),
+        ("intelligence_item", "shortlisted_scope_option", "VARCHAR(100)"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -170,6 +177,63 @@ _ALLOWED_FLAGS = [
 ]
 
 QUOTE_BATCH_MAX_FILES = 15
+
+
+def _generate_comparison_summary(api_key, project_name, category_tag, quotes):
+    """Call Claude to generate a 200-300 word narrative comparison of quotes in a category.
+
+    `quotes` is a list of dicts with keys: vendor_name, quote_date, expiration_date,
+    flags, pricing_items, conditions_text, title.
+    Returns the summary string.
+    """
+    import anthropic
+    from search import CLAUDE_MODEL
+
+    lines = []
+    for i, q in enumerate(quotes, start=1):
+        vendor = q.get("vendor_name") or q.get("title") or f"Vendor {i}"
+        lines.append(f"\n--- Quote {i}: {vendor} ---")
+        if q.get("quote_date"):
+            lines.append(f"Quote date: {q['quote_date']}")
+        if q.get("expiration_date"):
+            lines.append(f"Expiration: {q['expiration_date']}")
+        pricing = q.get("pricing_items") or []
+        if pricing:
+            lines.append("Pricing:")
+            for p in pricing:
+                row = f"  • {p.get('label','')}: {p.get('amount','')} {p.get('unit','')}".rstrip()
+                if p.get("notes"):
+                    row += f" ({p['notes']})"
+                lines.append(row)
+        else:
+            lines.append("Pricing: (none submitted)")
+        flags = q.get("flags") or []
+        if flags:
+            lines.append(f"Flags: {', '.join(flags)}")
+        if q.get("conditions_text"):
+            lines.append(f"Conditions: {q['conditions_text'][:500]}")
+
+    quote_data = "\n".join(lines)
+    prompt = (
+        f"You're helping an estimator compare vendor quotes for '{category_tag}' "
+        f"on the project '{project_name}'. Here is the structured data for each quote:\n"
+        f"{quote_data}\n\n"
+        "Write a 200-300 word summary that:\n"
+        "1. Identifies the lowest-cost option at face value\n"
+        "2. Highlights vendors that appear to be missing pricing or have concerning flags\n"
+        "3. Flags significant differences in scope or conditions between quotes\n"
+        "4. Identifies which vendors appear most competitive 'all things considered'\n"
+        "Do not pick a winner — just surface the considerations an estimator should weigh. "
+        "Write in plain prose, no bullet points, no headers."
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text.strip()
 
 
 def _extract_quote_file(api_key, file_path, original_filename):
@@ -1266,6 +1330,550 @@ def create_app():
         db.session.commit()
         flash("Batch cancelled.", "info")
         return redirect(url_for("drawings", project_id=project_id))
+
+    # ── Quote Comparison ──────────────────────────────────────────────────────
+
+    def _auth_project(project_id):
+        """Return project or abort. Enforce company scope for non-superadmin."""
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        return project
+
+    def _items_for_category(project_id, category_tag):
+        """Return IntelligenceItems for this project that have the given tag."""
+        return (
+            IntelligenceItem.query
+            .filter_by(project_id=project_id)
+            .join(IntelligenceItem.tags)
+            .filter(IntelligenceTag.name == category_tag)
+            .all()
+        )
+
+    def _build_pricing_matrix(items):
+        """Return (all_labels, per_item_pricing) for the comparison table.
+
+        all_labels  — ordered list of every unique pricing label across all items
+        per_item_pricing — dict mapping item.id → dict(label → {amount,unit,notes})
+        """
+        label_order = []
+        seen_labels = set()
+        per_item = {}
+        for item in items:
+            rows = []
+            if item.pricing_items_json:
+                try:
+                    rows = json.loads(item.pricing_items_json)
+                except Exception:
+                    rows = []
+            per_item[item.id] = {}
+            for r in rows:
+                lbl = (r.get("label") or "").strip()
+                if not lbl:
+                    continue
+                per_item[item.id][lbl] = r
+                if lbl not in seen_labels:
+                    seen_labels.add(lbl)
+                    label_order.append(lbl)
+        return label_order, per_item
+
+    @app.route("/projects/<int:project_id>/quotes/compare")
+    @login_required
+    @admin_required
+    def quote_compare_select(project_id):
+        project = _auth_project(project_id)
+        items = IntelligenceItem.query.filter_by(project_id=project_id).all()
+        # Aggregate tags → count in Python
+        from collections import Counter
+        tag_counts = Counter()
+        for item in items:
+            for tag in item.tags:
+                tag_counts[tag.name] += 1
+        # Sort by count desc, then alpha
+        tag_list = sorted(tag_counts.items(), key=lambda x: (-x[1], x[0]))
+        return render_template(
+            "quote_compare_select.html",
+            project=project,
+            tag_list=tag_list,
+        )
+
+    @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>")
+    @login_required
+    @admin_required
+    def quote_compare(project_id, category_tag):
+        project = _auth_project(project_id)
+        items = _items_for_category(project_id, category_tag)
+
+        if not items:
+            flash(f"No quotes found for category '{category_tag}'.", "warning")
+            return redirect(url_for("quote_compare_select", project_id=project_id))
+
+        only_one = len(items) == 1
+
+        # Fetch or generate AI summary
+        cached = ComparisonSummary.query.filter_by(
+            project_id=project_id, category_tag=category_tag
+        ).first()
+
+        summary_obj = cached
+        if not cached:
+            api_key = app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+            if api_key and not only_one:
+                quote_dicts = []
+                for item in items:
+                    pricing = []
+                    if item.pricing_items_json:
+                        try:
+                            pricing = json.loads(item.pricing_items_json)
+                        except Exception:
+                            pricing = []
+                    flags = []
+                    if item.flags_json:
+                        try:
+                            flags = json.loads(item.flags_json)
+                        except Exception:
+                            flags = []
+                    quote_dicts.append({
+                        "vendor_name": item.vendor_name,
+                        "title": item.title,
+                        "quote_date": str(item.quote_date) if item.quote_date else None,
+                        "expiration_date": str(item.expiration_date) if item.expiration_date else None,
+                        "flags": flags,
+                        "pricing_items": pricing,
+                        "conditions_text": item.conditions_text,
+                    })
+                try:
+                    summary_text = _generate_comparison_summary(
+                        api_key, project.name, category_tag, quote_dicts
+                    )
+                except Exception as exc:
+                    summary_text = f"(Summary generation failed: {exc})"
+                summary_obj = ComparisonSummary(
+                    project_id=project_id,
+                    category_tag=category_tag,
+                    summary_text=summary_text,
+                )
+                db.session.add(summary_obj)
+                db.session.commit()
+
+        # Freshness warning: newest item vs summary generated_at
+        most_recent_item_at = max((it.created_at for it in items), default=None)
+        summary_stale = (
+            summary_obj
+            and most_recent_item_at
+            and summary_obj.generated_at
+            and most_recent_item_at > summary_obj.generated_at
+        )
+
+        all_labels, per_item_pricing = _build_pricing_matrix(items)
+        shortlisted_count = sum(1 for it in items if it.shortlisted)
+
+        # Pre-parse flags per item so the template needs no custom filters
+        item_flags = {}
+        for it in items:
+            try:
+                item_flags[it.id] = json.loads(it.flags_json) if it.flags_json else []
+            except Exception:
+                item_flags[it.id] = []
+
+        now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        return render_template(
+            "quote_compare.html",
+            project=project,
+            category_tag=category_tag,
+            items=items,
+            only_one=only_one,
+            summary_obj=summary_obj,
+            summary_stale=summary_stale,
+            all_labels=all_labels,
+            per_item_pricing=per_item_pricing,
+            shortlisted_count=shortlisted_count,
+            item_flags=item_flags,
+            now_date=now_date,
+        )
+
+    @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/regenerate-summary",
+               methods=["POST"])
+    @login_required
+    @admin_required
+    def quote_regenerate_summary(project_id, category_tag):
+        _auth_project(project_id)
+        existing = ComparisonSummary.query.filter_by(
+            project_id=project_id, category_tag=category_tag
+        ).first()
+        if existing:
+            db.session.delete(existing)
+            db.session.commit()
+        return redirect(url_for("quote_compare", project_id=project_id, category_tag=category_tag))
+
+    @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/shortlist",
+               methods=["POST"])
+    @login_required
+    @admin_required
+    def quote_shortlist(project_id, category_tag):
+        _auth_project(project_id)
+        data = request.get_json(force=True, silent=True) or {}
+        updates = data.get("items", [])
+        for entry in updates:
+            item_id = entry.get("id")
+            if not item_id:
+                continue
+            item = db.session.get(IntelligenceItem, item_id)
+            if not item or item.project_id != project_id:
+                continue
+            item.shortlisted = bool(entry.get("shortlisted", False))
+            item.shortlist_notes = entry.get("notes") or None
+            if item.shortlisted:
+                item.shortlisted_at = datetime.now(timezone.utc)
+                item.shortlisted_by = current_user.id
+            else:
+                item.shortlisted_at = None
+                item.shortlisted_by = None
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/export/excel")
+    @login_required
+    @admin_required
+    def quote_export_excel(project_id, category_tag):
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
+        project = _auth_project(project_id)
+        items = _items_for_category(project_id, category_tag)
+        if not items:
+            flash("No quotes to export.", "warning")
+            return redirect(url_for("quote_compare_select", project_id=project_id))
+
+        summary_obj = ComparisonSummary.query.filter_by(
+            project_id=project_id, category_tag=category_tag
+        ).first()
+        all_labels, per_item_pricing = _build_pricing_matrix(items)
+
+        ts = datetime.now(timezone.utc).strftime("%B %d, %Y %H:%M UTC")
+        snapshot_note = f"Snapshot as of {ts} — For reference only. Verify against current quotes before using."
+
+        HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
+        HEADER_FONT = Font(bold=True, color="FFFFFF", size=11)
+        SUBHEADER_FILL = PatternFill("solid", fgColor="D6E4F0")
+        SUBHEADER_FONT = Font(bold=True, size=10)
+        WARN_FONT = Font(italic=True, color="CC0000", size=9)
+
+        wb = openpyxl.Workbook()
+
+        # ── Sheet 1: Summary ──────────────────────────────────────────────────
+        ws1 = wb.active
+        ws1.title = "Summary"
+        ws1.column_dimensions["A"].width = 100
+        ws1["A1"] = f"Quote Comparison — {category_tag}"
+        ws1["A1"].font = Font(bold=True, size=14, color="1F4E79")
+        ws1["A2"] = f"Project: {project.name}"
+        ws1["A3"] = snapshot_note
+        ws1["A3"].font = WARN_FONT
+        ws1["A4"] = ""
+        if summary_obj:
+            ws1["A5"] = "AI Narrative Summary"
+            ws1["A5"].font = SUBHEADER_FONT
+            ws1["A6"] = summary_obj.summary_text
+            ws1["A6"].alignment = Alignment(wrap_text=True)
+            gen_ts = summary_obj.generated_at.strftime("%b %d, %Y %H:%M UTC") \
+                if summary_obj.generated_at else ""
+            ws1["A7"] = f"Summary generated: {gen_ts}"
+            ws1["A7"].font = Font(italic=True, size=9)
+        ws1.row_dimensions[6].height = 120
+
+        # ── Sheet 2: Full Comparison ──────────────────────────────────────────
+        ws2 = wb.create_sheet("Full Comparison")
+        headers = [
+            "Vendor Name", "Contact", "Quote Date", "Expiration Date",
+            "Source File", "Shortlisted", "Flags", "Conditions/Exclusions",
+        ] + [f"Pricing: {lbl}" for lbl in all_labels]
+
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws2.cell(row=1, column=col_idx, value=header)
+            cell.font = HEADER_FONT
+            cell.fill = HEADER_FILL
+            cell.alignment = Alignment(wrap_text=True)
+            ws2.column_dimensions[get_column_letter(col_idx)].width = 20
+
+        ws2["A2"] = snapshot_note
+        ws2["A2"].font = WARN_FONT
+        ws2.merge_cells(start_row=2, start_column=1, end_row=2, end_column=min(len(headers), 10))
+
+        for row_idx, item in enumerate(items, start=3):
+            flags = []
+            if item.flags_json:
+                try:
+                    flags = json.loads(item.flags_json)
+                except Exception:
+                    flags = []
+            row_data = [
+                item.vendor_name or "",
+                item.vendor_contact or "",
+                str(item.quote_date) if item.quote_date else "",
+                str(item.expiration_date) if item.expiration_date else "",
+                item.original_filename or "",
+                "Yes" if item.shortlisted else "No",
+                ", ".join(flags),
+                item.conditions_text or "",
+            ]
+            for lbl in all_labels:
+                pr = per_item_pricing.get(item.id, {}).get(lbl)
+                if pr:
+                    row_data.append(f"{pr.get('amount','')} {pr.get('unit','')}".strip())
+                else:
+                    row_data.append("—")
+            for col_idx, val in enumerate(row_data, start=1):
+                cell = ws2.cell(row=row_idx, column=col_idx, value=val)
+                cell.alignment = Alignment(wrap_text=True)
+
+        # ── Sheet 3: Audit Info ───────────────────────────────────────────────
+        ws3 = wb.create_sheet("Audit Info")
+        ws3.column_dimensions["A"].width = 30
+        ws3.column_dimensions["B"].width = 60
+        audit_rows = [
+            ("Generated by", current_user.username),
+            ("Generated at", ts),
+            ("Project", project.name),
+            ("Category", category_tag),
+            ("Vendor count", len(items)),
+            ("Shortlisted count", sum(1 for it in items if it.shortlisted)),
+            ("Note", snapshot_note),
+        ]
+        for r, (k, v) in enumerate(audit_rows, start=1):
+            ws3.cell(row=r, column=1, value=k).font = Font(bold=True)
+            ws3.cell(row=r, column=2, value=str(v))
+
+        # Log export
+        log = QuoteComparisonExport(
+            project_id=project_id,
+            user_id=current_user.id,
+            export_type="excel",
+            category_tag=category_tag,
+            vendor_count=len(items),
+            shortlisted_count=sum(1 for it in items if it.shortlisted),
+        )
+        db.session.add(log)
+        db.session.commit()
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        safe_cat = "".join(c if c.isalnum() or c in "-_ " else "_" for c in category_tag)[:40]
+        fname = f"QuoteComparison_{safe_cat}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=fname,
+        )
+
+    @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/export/pdf")
+    @login_required
+    @admin_required
+    def quote_export_pdf(project_id, category_tag):
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib import colors
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+        )
+
+        project = _auth_project(project_id)
+        items = _items_for_category(project_id, category_tag)
+        shortlisted = [it for it in items if it.shortlisted]
+
+        if not shortlisted:
+            flash("Shortlist at least one vendor before downloading the PDF.", "warning")
+            return redirect(url_for("quote_compare", project_id=project_id, category_tag=category_tag))
+
+        summary_obj = ComparisonSummary.query.filter_by(
+            project_id=project_id, category_tag=category_tag
+        ).first()
+        all_labels, per_item_pricing = _build_pricing_matrix(shortlisted)
+
+        ts = datetime.now(timezone.utc).strftime("%B %d, %Y %H:%M UTC")
+        snapshot_note = f"Snapshot as of {ts} — For reference only."
+
+        buf = io.BytesIO()
+        styles = getSampleStyleSheet()
+        BRAND_BLUE = colors.HexColor("#1F4E79")
+
+        header_style = ParagraphStyle(
+            "Header", parent=styles["Normal"],
+            fontSize=9, textColor=colors.red, fontName="Helvetica-Bold",
+            spaceAfter=4,
+        )
+        title_style = ParagraphStyle(
+            "Title", parent=styles["Normal"],
+            fontSize=18, textColor=BRAND_BLUE, fontName="Helvetica-Bold",
+            spaceAfter=6,
+        )
+        h2_style = ParagraphStyle(
+            "H2", parent=styles["Normal"],
+            fontSize=13, textColor=BRAND_BLUE, fontName="Helvetica-Bold",
+            spaceBefore=12, spaceAfter=4,
+        )
+        body_style = styles["BodyText"]
+        small_style = ParagraphStyle(
+            "Small", parent=styles["Normal"],
+            fontSize=8, textColor=colors.grey,
+        )
+
+        def _footer(canvas, doc):
+            canvas.saveState()
+            canvas.setFont("Helvetica", 7)
+            canvas.setFillColor(colors.grey)
+            canvas.drawString(0.75 * inch, 0.4 * inch,
+                              f"Internal Use Only — {ts}   |   Page {doc.page}")
+            canvas.restoreState()
+
+        doc = SimpleDocTemplate(
+            buf, pagesize=letter,
+            leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+            topMargin=0.75 * inch, bottomMargin=0.6 * inch,
+        )
+
+        story = []
+
+        # Cover page
+        story.append(Paragraph("INTERNAL USE ONLY — DRAFT COMPARISON", header_style))
+        story.append(Spacer(1, 0.3 * inch))
+        story.append(Paragraph(f"Quote Comparison", title_style))
+        story.append(Paragraph(f"Category: {category_tag}", styles["Heading2"]))
+        story.append(Paragraph(f"Project: {project.name}", styles["Heading3"]))
+        story.append(Spacer(1, 0.15 * inch))
+        story.append(Paragraph(snapshot_note, small_style))
+        story.append(Paragraph(
+            f"Shortlisted vendors: {len(shortlisted)} of {len(items)}",
+            body_style,
+        ))
+        story.append(PageBreak())
+
+        # AI Summary
+        story.append(Paragraph("INTERNAL USE ONLY — DRAFT COMPARISON", header_style))
+        story.append(Paragraph("Estimator Summary", h2_style))
+        if summary_obj:
+            story.append(Paragraph(summary_obj.summary_text, body_style))
+            gen_ts = summary_obj.generated_at.strftime("%b %d, %Y %H:%M UTC") \
+                if summary_obj.generated_at else ""
+            story.append(Paragraph(f"Summary generated: {gen_ts}", small_style))
+        else:
+            story.append(Paragraph("(No summary available)", body_style))
+        story.append(Spacer(1, 0.2 * inch))
+
+        # Shortlisted comparison table
+        story.append(Paragraph("Shortlisted Vendor Comparison", h2_style))
+
+        # Build table data: header row + one row per attribute group
+        col_width = (letter[0] - 1.5 * inch) / (len(shortlisted) + 1)
+        label_col_width = 1.4 * inch
+        vendor_col_width = (letter[0] - 1.5 * inch - label_col_width) / max(len(shortlisted), 1)
+
+        def _cell(text, bold=False, wrap=True):
+            style_name = "Helvetica-Bold" if bold else "Helvetica"
+            return Paragraph(
+                str(text or ""),
+                ParagraphStyle("c", fontName=style_name, fontSize=8,
+                               leading=10, wordWrap="CJK" if wrap else None),
+            )
+
+        hdr_row = [_cell("", bold=True)] + [
+            _cell(it.vendor_name or it.title or "—", bold=True) for it in shortlisted
+        ]
+        table_data = [hdr_row]
+
+        # Vendor info rows
+        info_fields = [
+            ("Quote Date", lambda it: str(it.quote_date) if it.quote_date else "—"),
+            ("Expiration", lambda it: str(it.expiration_date) if it.expiration_date else "—"),
+            ("Contact", lambda it: (it.vendor_contact or "—")[:60]),
+            ("Source File", lambda it: (it.original_filename or "—")[:40]),
+        ]
+        for label, getter in info_fields:
+            table_data.append(
+                [_cell(label, bold=True)] + [_cell(getter(it)) for it in shortlisted]
+            )
+
+        # Pricing rows
+        if all_labels:
+            table_data.append([_cell("— Pricing —", bold=True)] + [_cell("") for _ in shortlisted])
+            for lbl in all_labels:
+                row = [_cell(lbl, bold=True)]
+                for it in shortlisted:
+                    pr = per_item_pricing.get(it.id, {}).get(lbl)
+                    if pr:
+                        val = f"{pr.get('amount','')} {pr.get('unit','')}".strip()
+                        if pr.get("notes"):
+                            val += f"\n({pr['notes']})"
+                    else:
+                        val = "—"
+                    row.append(_cell(val))
+                table_data.append(row)
+
+        # Conditions
+        table_data.append([_cell("— Conditions —", bold=True)] + [_cell("") for _ in shortlisted])
+        table_data.append(
+            [_cell("Conditions /\nExclusions", bold=True)] +
+            [_cell((it.conditions_text or "—")[:300]) for it in shortlisted]
+        )
+
+        # Flags
+        table_data.append([_cell("— Flags —", bold=True)] + [_cell("") for _ in shortlisted])
+        for it in shortlisted:
+            flags = []
+            if it.flags_json:
+                try:
+                    flags = json.loads(it.flags_json)
+                except Exception:
+                    flags = []
+            pass
+        flag_row = [_cell("Flags", bold=True)]
+        for it in shortlisted:
+            flags = []
+            if it.flags_json:
+                try:
+                    flags = json.loads(it.flags_json)
+                except Exception:
+                    flags = []
+            flag_row.append(_cell(", ".join(flags) if flags else "—"))
+        table_data.append(flag_row)
+
+        col_widths = [label_col_width] + [vendor_col_width] * len(shortlisted)
+        tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E79")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+            ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#EEF4FA")),
+            ("ROWBACKGROUNDS", (1, 1), (-1, -1), [colors.white, colors.HexColor("#F8FBFF")]),
+        ]))
+        story.append(tbl)
+
+        doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+        buf.seek(0)
+
+        # Log export
+        log = QuoteComparisonExport(
+            project_id=project_id,
+            user_id=current_user.id,
+            export_type="pdf",
+            category_tag=category_tag,
+            vendor_count=len(items),
+            shortlisted_count=len(shortlisted),
+        )
+        db.session.add(log)
+        db.session.commit()
+
+        safe_cat = "".join(c if c.isalnum() or c in "-_ " else "_" for c in category_tag)[:40]
+        fname = f"QuoteComparison_Shortlist_{safe_cat}_{datetime.now().strftime('%Y%m%d')}.pdf"
+        return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=fname)
 
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
     @login_required
