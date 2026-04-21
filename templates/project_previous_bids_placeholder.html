@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Previous Bids — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item active">Previous Bids</li>
+        </ol>
+    </nav>
+
+    <h2 class="mb-4"><i class="bi bi-clock-history"></i> Previous Bids</h2>
+
+    <div class="row justify-content-center">
+        <div class="col-md-7">
+            <div class="card shadow-sm text-center p-5">
+                <i class="bi bi-clock-history fs-1 text-muted mb-3"></i>
+                <h5 class="text-muted">Bid versioning is coming in a future update</h5>
+                <p class="text-muted mb-4">
+                    Once active, this page will list all bid versions (original, rebids, requotes, alternates)
+                    for this project with quick access to each one's quotes, estimate, and proposal.
+                </p>
+                <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Project Hub
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

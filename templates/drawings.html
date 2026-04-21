@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ project.name }} - Project Hub - PowerScan{% endblock %}
+{% block title %}{{ project.name }} — Documents - PowerScan{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -7,7 +7,8 @@
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
             <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
-            <li class="breadcrumb-item active">{{ project.name }}</li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item active">Documents</li>
         </ol>
     </nav>
 
@@ -15,7 +16,7 @@
         <div class="d-flex justify-content-between align-items-start">
             <div>
                 <h2 class="mb-1">{{ project.name }}</h2>
-                <p class="text-muted mb-1"><i class="bi bi-building"></i> {{ project.company.name }} &middot; Project Hub</p>
+                <p class="text-muted mb-1"><i class="bi bi-building"></i> {{ project.company.name }} &middot; Documents</p>
                 {% if project.work_scope_list %}
                 <div class="d-flex flex-wrap gap-1 mb-1">
                     {% for item in project.work_scope_list %}
@@ -29,12 +30,6 @@
             </div>
             {% if current_user.is_admin %}
             <div class="d-flex gap-2 ms-3 flex-shrink-0">
-                <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-card-list"></i> Bulk Quote Intake
-                </a>
-                <a href="{{ url_for('quote_compare_select', project_id=project.id) }}" class="btn btn-sm btn-outline-success">
-                    <i class="bi bi-columns-gap"></i> Compare Quotes
-                </a>
                 <a href="{{ url_for('edit_project', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-pencil"></i> Edit Project
                 </a>

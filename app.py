@@ -745,6 +745,52 @@ def create_app():
         flash(f"Project '{project.name}' deleted.", "success")
         return redirect(url_for("projects", company_id=company_id))
 
+    # ── Project Hub ─────────────────────────────────────────────
+
+    @app.route("/projects/<int:project_id>")
+    @login_required
+    def project_hub(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        doc_count = Drawing.query.filter_by(project_id=project_id).count()
+        intel_count = IntelligenceItem.query.filter_by(project_id=project_id).count()
+        saved_categories = (
+            db.session.query(QuoteBatch.category_tag)
+            .filter_by(project_id=project_id, status="saved")
+            .distinct()
+            .count()
+        )
+        reviewing_batches = QuoteBatch.query.filter_by(
+            project_id=project_id, status="reviewing"
+        ).count()
+        report_count = Report.query.filter_by(project_id=project_id).count()
+        previous_bids_count = 0
+        bid_date = None
+        days_to_bid = None
+
+        return render_template(
+            "project_hub.html",
+            project=project,
+            doc_count=doc_count,
+            intel_count=intel_count,
+            saved_categories=saved_categories,
+            reviewing_batches=reviewing_batches,
+            report_count=report_count,
+            previous_bids_count=previous_bids_count,
+            bid_date=bid_date,
+            days_to_bid=days_to_bid,
+        )
+
+    @app.route("/projects/<int:project_id>/previous-bids")
+    @login_required
+    def project_previous_bids(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        return render_template("project_previous_bids_placeholder.html", project=project)
+
     # ── Drawing Routes ──────────────────────────────────────────
 
     @app.route("/projects/<int:project_id>/drawings", methods=["GET", "POST"])

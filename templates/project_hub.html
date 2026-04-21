@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — Project Hub - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item active">{{ project.name }}</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h2 class="mb-1">{{ project.name }}</h2>
+            <p class="text-muted mb-2"><i class="bi bi-building"></i> {{ project.company.name }}
+                <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-2">Active</span>
+            </p>
+            {% if project.work_scope_list %}
+            <div class="d-flex flex-wrap gap-1 mb-2">
+                {% for item in project.work_scope_list %}
+                <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">{{ item }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if project.scope_details %}
+            <p class="text-muted small mb-0">{{ project.scope_details }}</p>
+            {% endif %}
+            {% if days_to_bid is not none %}
+            <div class="alert alert-warning py-1 px-3 mt-2 mb-0 d-inline-block small">
+                <i class="bi bi-calendar-event"></i>
+                Bid due {{ bid_date.strftime('%b %d, %Y') }}
+                &mdash; {{ days_to_bid }} day{{ 's' if days_to_bid != 1 else '' }} out
+            </div>
+            {% endif %}
+        </div>
+        {% if current_user.is_admin %}
+        <a href="{{ url_for('edit_project', project_id=project.id) }}"
+           class="btn btn-sm btn-outline-secondary flex-shrink-0 ms-3">
+            <i class="bi bi-pencil"></i> Edit Project
+        </a>
+        {% endif %}
+    </div>
+
+    <div class="row g-3 mt-1">
+
+        <!-- Bulk Upload Quotes -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}"
+               class="card hub-card h-100 text-decoration-none">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-cloud-upload fs-2 text-primary mb-2"></i>
+                    <div class="fw-semibold">Bulk Upload Quotes</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Drop in vendor quotes — PowerScan extracts the details</div>
+                    {% if reviewing_batches > 0 %}
+                    <span class="badge bg-warning text-dark mt-2">{{ reviewing_batches }} awaiting review</span>
+                    {% endif %}
+                </div>
+            </a>
+        </div>
+
+        <!-- Compare Quotes -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <a href="{{ url_for('quote_compare_select', project_id=project.id) }}"
+               class="card hub-card h-100 text-decoration-none">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-columns-gap fs-2 text-success mb-2"></i>
+                    <div class="fw-semibold">Compare Quotes</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Side-by-side vendor comparison with AI summary</div>
+                    {% if saved_categories > 0 %}
+                    <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle mt-2">
+                        {{ saved_categories }} categor{{ 'ies' if saved_categories != 1 else 'y' }}
+                    </span>
+                    {% endif %}
+                </div>
+            </a>
+        </div>
+
+        <!-- Documents -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <a href="{{ url_for('drawings', project_id=project.id) }}"
+               class="card hub-card h-100 text-decoration-none">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-folder2-open fs-2 text-warning mb-2"></i>
+                    <div class="fw-semibold">Documents</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Drawings, specs, insurance, as-builts — searchable</div>
+                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle mt-2">
+                        {{ doc_count }} document{{ 's' if doc_count != 1 else '' }}
+                    </span>
+                </div>
+            </a>
+        </div>
+
+        <!-- Intelligence Library -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <a href="{{ url_for('intelligence_library') }}"
+               class="card hub-card h-100 text-decoration-none">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-journal-bookmark fs-2 text-info mb-2"></i>
+                    <div class="fw-semibold">Intelligence Library</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Saved quotes, clauses, reference docs</div>
+                    {% if intel_count > 0 %}
+                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle mt-2">
+                        {{ intel_count }} entr{{ 'ies' if intel_count != 1 else 'y' }}
+                    </span>
+                    {% endif %}
+                </div>
+            </a>
+        </div>
+
+        <!-- Reports -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <a href="{{ url_for('drawings', project_id=project.id, tab='reports') }}"
+               class="card hub-card h-100 text-decoration-none">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-file-earmark-bar-graph fs-2 text-danger mb-2"></i>
+                    <div class="fw-semibold">Reports</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Generated reports and exports</div>
+                    {% if report_count > 0 %}
+                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle mt-2">
+                        {{ report_count }} report{{ 's' if report_count != 1 else '' }}
+                    </span>
+                    {% endif %}
+                </div>
+            </a>
+        </div>
+
+        <!-- Previous Bids -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <a href="{{ url_for('project_previous_bids', project_id=project.id) }}"
+               class="card hub-card h-100 text-decoration-none">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-clock-history fs-2 text-secondary mb-2"></i>
+                    <div class="fw-semibold">Previous Bids</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Bid versions and history for this project</div>
+                    {% if previous_bids_count > 0 %}
+                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle mt-2">
+                        {{ previous_bids_count }} bid{{ 's' if previous_bids_count != 1 else '' }}
+                    </span>
+                    {% else %}
+                    <span class="text-muted small mt-2 fst-italic">No bids yet</span>
+                    {% endif %}
+                </div>
+            </a>
+        </div>
+
+        <!-- Proposal Generator (coming soon) -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card hub-card hub-card--coming-soon h-100">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-file-earmark-text fs-2 text-muted mb-2"></i>
+                    <div class="fw-semibold text-muted">Proposal Generator</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Coming soon — assemble customer proposals from bid data</div>
+                    <span class="badge bg-light text-muted border mt-2">Coming soon</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- MYAG Submission (coming soon) -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card hub-card hub-card--coming-soon h-100">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-clipboard-check fs-2 text-muted mb-2"></i>
+                    <div class="fw-semibold text-muted">MYAG Submission</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Coming soon — Muehlhan approval package for large bids</div>
+                    <span class="badge bg-light text-muted border mt-2">Coming soon</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<style>
+.hub-card {
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+    color: inherit;
+}
+a.hub-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    transform: translateY(-2px);
+    border-color: #adb5bd;
+}
+.hub-card--coming-soon {
+    opacity: 0.5;
+    background-color: #f8f9fa;
+    cursor: default;
+}
+</style>
+{% endblock %}

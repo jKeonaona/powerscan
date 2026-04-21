@@ -7,7 +7,7 @@
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
             <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
-            <li class="breadcrumb-item"><a href="{{ url_for('drawings', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
             <li class="breadcrumb-item active">Compare Quotes</li>
         </ol>
     </nav>
