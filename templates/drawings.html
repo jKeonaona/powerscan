@@ -28,13 +28,6 @@
                 <p class="text-muted small mb-0">{{ project.scope_details }}</p>
                 {% endif %}
             </div>
-            {% if current_user.is_admin %}
-            <div class="d-flex gap-2 ms-3 flex-shrink-0">
-                <a href="{{ url_for('edit_project', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary">
-                    <i class="bi bi-pencil"></i> Edit Project
-                </a>
-            </div>
-            {% endif %}
         </div>
     </div>
 

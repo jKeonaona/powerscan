@@ -729,7 +729,7 @@ def create_app():
                 project.scope_details = scope_details or None
                 db.session.commit()
                 flash("Project updated.", "success")
-                return redirect(url_for("drawings", project_id=project.id))
+                return redirect(url_for("project_hub", project_id=project.id))
         return render_template("project_form.html", company=company, project=project,
                                scope_options=WORK_SCOPE_OPTIONS,
                                current_scope=project.work_scope_list)
@@ -1460,7 +1460,7 @@ def create_app():
         batch.status = "cancelled"
         db.session.commit()
         flash("Batch cancelled.", "info")
-        return redirect(url_for("drawings", project_id=project_id))
+        return redirect(url_for("project_hub", project_id=project_id))
 
     # ── Quote Comparison ──────────────────────────────────────────────────────
 
