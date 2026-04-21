@@ -25,11 +25,19 @@
                             <i class="bi bi-speedometer2"></i> Dashboard
                         </a>
                     </li>
+                    {% if current_user.is_superadmin %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('companies') }}">
                             <i class="bi bi-building"></i> Companies
                         </a>
                     </li>
+                    {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('projects', company_id=current_user.company_id) }}">
+                            <i class="bi bi-folder"></i> Projects
+                        </a>
+                    </li>
+                    {% endif %}
                     {% if current_user.is_superadmin %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('search') }}">
