@@ -6,7 +6,9 @@
     <div class="container px-0">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
+                {% if current_user.role == 'superadmin' %}
                 <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+                {% endif %}
                 <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
                 <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
                 <li class="breadcrumb-item"><a href="{{ url_for('quote_compare_select', project_id=project.id) }}">Compare Quotes</a></li>
