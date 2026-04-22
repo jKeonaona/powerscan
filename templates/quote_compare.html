@@ -3,7 +3,7 @@
 
 {% block content %}
 <style>
-/* ── existing table styles ───────────────────────────────────────────────── */
+/* ── table styles ────────────────────────────────────────────────────────── */
 .sticky-col {
     position: sticky;
     left: 0;
@@ -36,11 +36,37 @@
 .price-summary-row .sticky-col { background: #f8f9fa; }
 .ps-winner-cell { background: #fffbea !important; }
 
-/* ── skippy card ─────────────────────────────────────────────────────────── */
-#skippyCard .card-header { cursor: pointer; user-select: none; }
-#skippyCard .card-header:hover { background: rgba(13, 110, 253, .04); }
-#skippyChevron { transition: transform .2s ease; flex-shrink: 0; }
-.skippy-can-icon { color: #0d6efd; flex-shrink: 0; }
+/* ── Magnificent Skippy banner ───────────────────────────────────────────── */
+.skippy-banner {
+    background: #fdf8f0;
+    border: 1px solid #e8dcc8;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    overflow: hidden;
+}
+.skippy-banner-header {
+    cursor: pointer;
+    user-select: none;
+    padding: 0.75rem 1.25rem;
+    transition: background .15s ease;
+}
+.skippy-banner-header:hover { background: rgba(140,100,20,.04); }
+.skippy-banner-title {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 1.65rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #2c1a00;
+}
+#skippyBannerChevron { transition: transform .2s ease; font-size: 1.2rem; }
+.skippy-section-heading {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: #6c757d;
+    margin-bottom: 0.4rem;
+}
 </style>
 
 <div class="container-fluid px-3">
@@ -130,269 +156,236 @@
         </div>
     </div>
 
-    <!-- ── Two-column layout: Skippy card + Comparison table ─────────────── -->
-    <div class="container px-0 mb-4">
-        <div class="row g-3 align-items-start">
-
-            <!-- ── Skippy sidebar ─────────────────────────────────────────── -->
-            <div class="col-lg-3 col-md-4">
-                <div class="card shadow-sm" id="skippyCard">
-                    <div class="card-header d-flex align-items-center py-3"
-                         data-bs-toggle="collapse" data-bs-target="#skippyBody"
-                         aria-expanded="false" aria-controls="skippyBody">
-                        <div class="flex-grow-1 d-flex align-items-center gap-2">
-                            <!-- Beer can: monochrome line-art, accent color -->
-                            <svg width="44" height="44" viewBox="0 0 44 44" fill="none"
-                                 stroke="currentColor" stroke-width="1.8"
-                                 stroke-linecap="round" stroke-linejoin="round"
-                                 class="skippy-can-icon" aria-hidden="true">
-                                <!-- Pull-ring -->
-                                <ellipse cx="22" cy="9.5" rx="5" ry="2"/>
-                                <line x1="22" y1="11.5" x2="22" y2="14"/>
-                                <!-- Top lid -->
-                                <ellipse cx="22" cy="14" rx="9.5" ry="3"/>
-                                <!-- Rim band -->
-                                <line x1="12.5" y1="17.5" x2="31.5" y2="17.5"/>
-                                <!-- Body sides -->
-                                <line x1="12.5" y1="14" x2="12.5" y2="37"/>
-                                <line x1="31.5" y1="14" x2="31.5" y2="37"/>
-                                <!-- Bottom lid -->
-                                <ellipse cx="22" cy="37" rx="9.5" ry="3"/>
-                            </svg>
-                            <div>
-                                <div class="fw-semibold lh-sm" style="font-size:0.95rem;">The Omnipotent Skippy</div>
-                                <div class="text-muted" style="font-size:0.72rem; letter-spacing:.03em;">AI Pick</div>
-                            </div>
-                        </div>
-                        <button type="button" class="btn btn-link p-0 me-2 text-muted"
-                                id="skippyRefreshBtn" title="Refresh Skippy's recommendation"
-                                style="font-size:0.85rem; line-height:1;">
-                            <i class="bi bi-arrow-clockwise"></i>
-                        </button>
-                        <i class="bi bi-chevron-down text-muted small" id="skippyChevron"></i>
-                    </div>
-                    <div class="collapse" id="skippyBody">
-                        <div class="card-body p-3" id="skippyContent" style="min-height:280px;">
-                            <div class="d-flex align-items-center justify-content-center text-muted py-4" id="skippyLoading">
-                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                                Asking Skippy…
-                            </div>
-                        </div>
+    <!-- ── Magnificent Skippy Banner ──────────────────────────────────────── -->
+    <div class="mb-3">
+        <div class="skippy-banner" id="skippyBanner">
+            <div class="skippy-banner-header d-flex align-items-center gap-3"
+                 data-bs-toggle="collapse" data-bs-target="#skippyBannerBody"
+                 aria-expanded="false" aria-controls="skippyBannerBody">
+                <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+                     alt="The Magnificent Skippy" style="height:120px; width:auto; flex-shrink:0;">
+                <span class="skippy-banner-title">The Magnificent Skippy</span>
+                <i class="bi bi-chevron-down ms-auto text-muted" id="skippyBannerChevron"></i>
+            </div>
+            <div class="collapse" id="skippyBannerBody">
+                <div class="px-4 pb-4 pt-2" id="skippyBannerContent">
+                    <div class="d-flex align-items-center text-muted py-3" id="skippyBannerLoading">
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        The Magnificent Skippy is deliberating…
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
 
-            <!-- ── Comparison table (right column) ────────────────────────── -->
-            <div class="col-lg-9 col-md-8">
-                <div class="table-responsive" style="overflow-x: auto; max-width: 100%;">
-                    <table class="table table-bordered table-sm align-top mb-0" id="compareTable"
-                           style="min-width: {{ (items | length) * 220 + 180 }}px;">
-                        <thead>
-                            <tr class="table-dark">
-                                <th class="sticky-col" style="min-width:160px;max-width:160px;"></th>
-                                {% for item in items %}
-                                <th style="min-width:220px;max-width:260px;">
-                                    <div class="fw-bold">{{ item.vendor_name or item.title or '—' }}</div>
-                                    {% if item.shortlisted %}
-                                    <span class="badge bg-success mt-1"><i class="bi bi-star-fill"></i> Shortlisted</span>
-                                    {% endif %}
-                                </th>
-                                {% endfor %}
-                            </tr>
-                        </thead>
-                        <tbody>
-
-                            <!-- ── CONDENSED PRICE SUMMARY (top of table) ── -->
-                            <tr class="price-summary-row" id="priceSummaryRow">
-                                <td class="sticky-col" style="min-width:160px;max-width:160px;">
-                                    <div class="fw-semibold text-muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.06em;">Total Bid</div>
-                                </td>
-                                {% for item in items %}
-                                <td class="text-center" id="psCell_{{ item.id }}" style="min-width:220px;">
-                                    <div class="fw-bold" id="psTotal_{{ item.id }}"
-                                         style="font-size:1.4rem;line-height:1.2;">—</div>
-                                    <div class="text-muted" id="psNote_{{ item.id }}"
-                                         style="font-size:0.7rem;"></div>
-                                </td>
-                                {% endfor %}
-                            </tr>
-
-                            <!-- ── VENDOR INFO ── -->
-                            <tr class="table-secondary">
-                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                                    Vendor Info
-                                </td>
-                            </tr>
-
-                            <tr>
-                                <td class="sticky-col label-cell">Source File</td>
-                                {% for item in items %}
-                                <td class="small">
-                                    {% if item.original_filename %}
-                                    <span title="{{ item.original_filename }}" class="text-truncate d-inline-block" style="max-width:200px;">
-                                        <i class="bi bi-file-earmark text-muted me-1"></i>{{ item.original_filename }}
-                                    </span>
-                                    {% else %}—{% endif %}
-                                </td>
-                                {% endfor %}
-                            </tr>
-
-                            <tr>
-                                <td class="sticky-col label-cell">Quote Date</td>
-                                {% for item in items %}
-                                <td class="small">{{ item.quote_date.strftime('%b %d, %Y') if item.quote_date else '—' }}</td>
-                                {% endfor %}
-                            </tr>
-
-                            <tr>
-                                <td class="sticky-col label-cell">Expiration Date</td>
-                                {% for item in items %}
-                                <td class="small {% if item.expiration_date and item.expiration_date.strftime('%Y-%m-%d') < now_date %}text-danger fw-medium{% endif %}">
-                                    {{ item.expiration_date.strftime('%b %d, %Y') if item.expiration_date else '—' }}
-                                </td>
-                                {% endfor %}
-                            </tr>
-
-                            <tr>
-                                <td class="sticky-col label-cell">Contact</td>
-                                {% for item in items %}
-                                <td class="small" style="white-space:pre-wrap;">{{ item.vendor_contact or '—' }}</td>
-                                {% endfor %}
-                            </tr>
-
-                            <!-- ── PRICING ── -->
-                            {% if all_labels %}
-                            <tr class="table-secondary">
-                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                                    Pricing Items
-                                </td>
-                            </tr>
-                            {% for lbl in all_labels %}
-                            <tr>
-                                <td class="sticky-col label-cell">{{ lbl }}</td>
-                                {% for item in items %}
-                                {% set pr = per_item_pricing.get(item.id, {}).get(lbl) %}
-                                {% if pr %}
-                                <td>
-                                    <div class="small fw-medium">{{ pr.amount or '' }} {{ pr.unit or '' }}</div>
-                                    {% if pr.notes %}<div class="text-muted" style="font-size:0.75rem;">{{ pr.notes }}</div>{% endif %}
-                                </td>
-                                {% else %}
-                                <td class="text-muted text-center">—</td>
-                                {% endif %}
-                                {% endfor %}
-                            </tr>
-                            {% endfor %}
-                            {% else %}
-                            <tr class="table-secondary">
-                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                                    Pricing Items
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="sticky-col label-cell text-muted fst-italic" colspan="{{ items | length + 1 }}">No pricing items extracted.</td>
-                            </tr>
+    <!-- ── Comparison table (full width) ─────────────────────────────────── -->
+    <div class="mb-4">
+        <div class="table-responsive" style="overflow-x: auto; max-width: 100%;">
+            <table class="table table-bordered table-sm align-top mb-0" id="compareTable"
+                   style="min-width: {{ (items | length) * 220 + 180 }}px;">
+                <thead>
+                    <tr class="table-dark">
+                        <th class="sticky-col" style="min-width:160px;max-width:160px;"></th>
+                        {% for item in items %}
+                        <th style="min-width:220px;max-width:260px;">
+                            <div class="fw-bold">{{ item.vendor_name or item.title or '—' }}</div>
+                            {% if item.shortlisted %}
+                            <span class="badge bg-success mt-1"><i class="bi bi-star-fill"></i> Shortlisted</span>
                             {% endif %}
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
 
-                            <!-- ── CONDITIONS ── -->
-                            <tr class="table-secondary">
-                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                                    Conditions &amp; Exclusions
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="sticky-col label-cell">Conditions</td>
-                                {% for item in items %}
-                                <td class="small">
-                                    {% if item.conditions_text %}
-                                    {% set cond_id = "cond_" ~ item.id %}
-                                    <span id="{{ cond_id }}_short">
-                                        {{ item.conditions_text[:150] }}{% if item.conditions_text | length > 150 %}…
-                                        <a href="#" class="text-primary" onclick="expandCond('{{ cond_id }}');return false;">show more</a>
-                                        {% endif %}
-                                    </span>
-                                    {% if item.conditions_text | length > 150 %}
-                                    <span id="{{ cond_id }}_full" class="d-none" style="white-space:pre-wrap;">
-                                        {{ item.conditions_text }}
-                                        <a href="#" class="text-primary d-block mt-1" onclick="collapseCond('{{ cond_id }}');return false;">show less</a>
-                                    </span>
-                                    {% endif %}
-                                    {% else %}
-                                    <span class="text-muted">—</span>
-                                    {% endif %}
-                                </td>
+                    <!-- ── CONDENSED PRICE SUMMARY (top of table) ── -->
+                    <tr class="price-summary-row" id="priceSummaryRow">
+                        <td class="sticky-col" style="min-width:160px;max-width:160px;">
+                            <div class="fw-semibold text-muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.06em;">Total Bid</div>
+                        </td>
+                        {% for item in items %}
+                        <td class="text-center" id="psCell_{{ item.id }}" style="min-width:220px;">
+                            <div class="fw-bold" id="psTotal_{{ item.id }}"
+                                 style="font-size:1.4rem;line-height:1.2;">—</div>
+                            <div class="text-muted" id="psNote_{{ item.id }}"
+                                 style="font-size:0.7rem;"></div>
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <!-- ── VENDOR INFO ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Vendor Info
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td class="sticky-col label-cell">Source File</td>
+                        {% for item in items %}
+                        <td class="small">
+                            {% if item.original_filename %}
+                            <span title="{{ item.original_filename }}" class="text-truncate d-inline-block" style="max-width:200px;">
+                                <i class="bi bi-file-earmark text-muted me-1"></i>{{ item.original_filename }}
+                            </span>
+                            {% else %}—{% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <tr>
+                        <td class="sticky-col label-cell">Quote Date</td>
+                        {% for item in items %}
+                        <td class="small">{{ item.quote_date.strftime('%b %d, %Y') if item.quote_date else '—' }}</td>
+                        {% endfor %}
+                    </tr>
+
+                    <tr>
+                        <td class="sticky-col label-cell">Expiration Date</td>
+                        {% for item in items %}
+                        <td class="small {% if item.expiration_date and item.expiration_date.strftime('%Y-%m-%d') < now_date %}text-danger fw-medium{% endif %}">
+                            {{ item.expiration_date.strftime('%b %d, %Y') if item.expiration_date else '—' }}
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <tr>
+                        <td class="sticky-col label-cell">Contact</td>
+                        {% for item in items %}
+                        <td class="small" style="white-space:pre-wrap;">{{ item.vendor_contact or '—' }}</td>
+                        {% endfor %}
+                    </tr>
+
+                    <!-- ── PRICING ── -->
+                    {% if all_labels %}
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Pricing Items
+                        </td>
+                    </tr>
+                    {% for lbl in all_labels %}
+                    <tr>
+                        <td class="sticky-col label-cell">{{ lbl }}</td>
+                        {% for item in items %}
+                        {% set pr = per_item_pricing.get(item.id, {}).get(lbl) %}
+                        {% if pr %}
+                        <td>
+                            <div class="small fw-medium">{{ pr.amount or '' }} {{ pr.unit or '' }}</div>
+                            {% if pr.notes %}<div class="text-muted" style="font-size:0.75rem;">{{ pr.notes }}</div>{% endif %}
+                        </td>
+                        {% else %}
+                        <td class="text-muted text-center">—</td>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Pricing Items
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell text-muted fst-italic" colspan="{{ items | length + 1 }}">No pricing items extracted.</td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- ── CONDITIONS ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Conditions &amp; Exclusions
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell">Conditions</td>
+                        {% for item in items %}
+                        <td class="small">
+                            {% if item.conditions_text %}
+                            {% set cond_id = "cond_" ~ item.id %}
+                            <span id="{{ cond_id }}_short">
+                                {{ item.conditions_text[:150] }}{% if item.conditions_text | length > 150 %}…
+                                <a href="#" class="text-primary" onclick="expandCond('{{ cond_id }}');return false;">show more</a>
+                                {% endif %}
+                            </span>
+                            {% if item.conditions_text | length > 150 %}
+                            <span id="{{ cond_id }}_full" class="d-none" style="white-space:pre-wrap;">
+                                {{ item.conditions_text }}
+                                <a href="#" class="text-primary d-block mt-1" onclick="collapseCond('{{ cond_id }}');return false;">show less</a>
+                            </span>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <!-- ── FLAGS ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Flags
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell">Flags</td>
+                        {% for item in items %}
+                        <td>
+                            {% set flags = item_flags.get(item.id, []) %}
+                            {% if flags %}
+                            <div class="d-flex flex-wrap gap-1">
+                                {% for flag in flags %}
+                                <span class="badge flag-badge small
+                                    {% if flag in ['no-pricing-submitted','capability-statement-only'] %}bg-flag-warn
+                                    {% elif flag in ['different-project-referenced','needs-verification','prevailing-wage-required'] %}bg-flag-danger
+                                    {% elif flag in ['expires-soon'] %}bg-warning text-dark
+                                    {% else %}bg-flag-default{% endif %}">{{ flag }}</span>
                                 {% endfor %}
-                            </tr>
+                            </div>
+                            {% else %}
+                            <span class="text-muted small">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
 
-                            <!-- ── FLAGS ── -->
-                            <tr class="table-secondary">
-                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                                    Flags
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="sticky-col label-cell">Flags</td>
-                                {% for item in items %}
-                                <td>
-                                    {% set flags = item_flags.get(item.id, []) %}
-                                    {% if flags %}
-                                    <div class="d-flex flex-wrap gap-1">
-                                        {% for flag in flags %}
-                                        <span class="badge flag-badge small
-                                            {% if flag in ['no-pricing-submitted','capability-statement-only'] %}bg-flag-warn
-                                            {% elif flag in ['different-project-referenced','needs-verification','prevailing-wage-required'] %}bg-flag-danger
-                                            {% elif flag in ['expires-soon'] %}bg-warning text-dark
-                                            {% else %}bg-flag-default{% endif %}">{{ flag }}</span>
-                                        {% endfor %}
-                                    </div>
-                                    {% else %}
-                                    <span class="text-muted small">—</span>
-                                    {% endif %}
-                                </td>
-                                {% endfor %}
-                            </tr>
-
-                            <!-- ── SHORTLIST ── -->
-                            <tr class="table-secondary">
-                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                    <!-- ── SHORTLIST ── -->
+                    <tr class="table-secondary">
+                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                            Shortlist
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="sticky-col label-cell">Shortlist this vendor</td>
+                        {% for item in items %}
+                        <td>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input shortlist-chk" type="checkbox"
+                                       id="sl_{{ item.id }}"
+                                       data-item-id="{{ item.id }}"
+                                       {% if item.shortlisted %}checked{% endif %}>
+                                <label class="form-check-label small fw-medium" for="sl_{{ item.id }}">
                                     Shortlist
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="sticky-col label-cell">Shortlist this vendor</td>
-                                {% for item in items %}
-                                <td>
-                                    <div class="form-check mb-2">
-                                        <input class="form-check-input shortlist-chk" type="checkbox"
-                                               id="sl_{{ item.id }}"
-                                               data-item-id="{{ item.id }}"
-                                               {% if item.shortlisted %}checked{% endif %}>
-                                        <label class="form-check-label small fw-medium" for="sl_{{ item.id }}">
-                                            Shortlist
-                                        </label>
-                                    </div>
-                                    <textarea class="form-control form-control-sm shortlist-notes"
-                                              id="sln_{{ item.id }}"
-                                              data-item-id="{{ item.id }}"
-                                              rows="2"
-                                              placeholder="Notes on why…"
-                                              style="font-size:0.75rem;">{{ item.shortlist_notes or '' }}</textarea>
-                                    <div class="save-indicator text-success small mt-1 d-none" id="saved_{{ item.id }}">
-                                        <i class="bi bi-check-circle-fill"></i> Saved
-                                    </div>
-                                    <div class="save-indicator text-danger small mt-1 d-none" id="err_{{ item.id }}">
-                                        <i class="bi bi-exclamation-circle-fill"></i> Save failed
-                                    </div>
-                                </td>
-                                {% endfor %}
-                            </tr>
+                                </label>
+                            </div>
+                            <textarea class="form-control form-control-sm shortlist-notes"
+                                      id="sln_{{ item.id }}"
+                                      data-item-id="{{ item.id }}"
+                                      rows="2"
+                                      placeholder="Notes on why…"
+                                      style="font-size:0.75rem;">{{ item.shortlist_notes or '' }}</textarea>
+                            <div class="save-indicator text-success small mt-1 d-none" id="saved_{{ item.id }}">
+                                <i class="bi bi-check-circle-fill"></i> Saved
+                            </div>
+                            <div class="save-indicator text-danger small mt-1 d-none" id="err_{{ item.id }}">
+                                <i class="bi bi-exclamation-circle-fill"></i> Save failed
+                            </div>
+                        </td>
+                        {% endfor %}
+                    </tr>
 
-                        </tbody>
-                    </table>
-                </div>
-            </div><!-- /col-lg-9 -->
-
-        </div><!-- /row -->
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <!-- ── Actions bar (bottom) ──────────────────────────────────────────── -->
@@ -483,7 +476,6 @@ function applyCrown(pick) {
             best = v.id; bestLen = name.length;
         }
     });
-    // Remove any existing crowns
     document.querySelectorAll('.skippy-crown').forEach(function(el) { el.remove(); });
     VENDOR_DATA.forEach(function(v) {
         var cell = document.getElementById('psCell_' + v.id);
@@ -494,7 +486,7 @@ function applyCrown(pick) {
     if (totalEl) {
         var crown = document.createElement('i');
         crown.className = 'bi bi-crown-fill text-warning me-1 skippy-crown';
-        crown.title = "Skippy’s pick";
+        crown.title = "Skippy's pick";
         totalEl.prepend(crown);
     }
 }
@@ -511,8 +503,8 @@ document.addEventListener('DOMContentLoaded', function() {
 var _saveTimers = {};
 
 function _saveShortlist(itemId) {
-    var chk    = document.getElementById('sl_'    + itemId);
-    var notes  = document.getElementById('sln_'   + itemId);
+    var chk     = document.getElementById('sl_'    + itemId);
+    var notes   = document.getElementById('sln_'   + itemId);
     var savedEl = document.getElementById('saved_' + itemId);
     var errEl   = document.getElementById('err_'   + itemId);
     if (!chk) return;
@@ -557,21 +549,17 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
     new bootstrap.Tooltip(el);
 });
 
-// ── Skippy's Two Cents ────────────────────────────────────────────────────────
-(function() {
-    var SKIPPY_URL = '{{ url_for("quote_skippy", project_id=project.id, category_tag=category_tag) }}';
-    var loaded = false;
-    var _skipNextFetch = false;
+// ── Magnificent Skippy ────────────────────────────────────────────────────────
+(function () {
+    var SKIPPY_URL   = '{{ url_for("quote_skippy", project_id=project.id, category_tag=category_tag) }}';
+    var loaded       = false;
+    var bannerBodyEl = document.getElementById('skippyBannerBody');
+    var contentEl    = document.getElementById('skippyBannerContent');
+    var loadingEl    = document.getElementById('skippyBannerLoading');
+    var chevronEl    = document.getElementById('skippyBannerChevron');
 
-    var bodyEl     = document.getElementById('skippyBody');
-    var contentEl  = document.getElementById('skippyContent');
-    var loadingEl  = document.getElementById('skippyLoading');
-    var chevronEl  = document.getElementById('skippyChevron');
-    var refreshBtn = document.getElementById('skippyRefreshBtn');
-
-    bodyEl.addEventListener('show.bs.collapse', function() {
+    bannerBodyEl.addEventListener('show.bs.collapse', function () {
         chevronEl.style.transform = 'rotate(180deg)';
-        if (_skipNextFetch) { _skipNextFetch = false; return; }
         if (loaded) return;
         if (SKIPPY_CACHED) {
             loadingEl.classList.add('d-none');
@@ -581,90 +569,107 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
             fetchSkippy(false);
         }
     });
-    bodyEl.addEventListener('hide.bs.collapse', function() {
-        chevronEl.style.transform = '';
-    });
 
-    refreshBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        loaded = false;
-        var isOpen = bodyEl.classList.contains('show');
-        if (!isOpen) {
-            _skipNextFetch = true;
-            bootstrap.Collapse.getOrCreateInstance(bodyEl).show();
-        }
-        fetchSkippy(true);
+    bannerBodyEl.addEventListener('hide.bs.collapse', function () {
+        chevronEl.style.transform = '';
     });
 
     function fetchSkippy(force) {
         loadingEl.classList.remove('d-none');
-        var existing = contentEl.querySelector('#skippyLayer1');
-        if (existing) existing.remove();
+        var old = contentEl.querySelector('#skippyLayer1');
+        if (old) old.remove();
         fetch(SKIPPY_URL, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({force: force}),
         })
-        .then(function(r) { return r.json(); })
-        .then(function(resp) {
+        .then(function (r) { return r.json(); })
+        .then(function (resp) {
             loadingEl.classList.add('d-none');
             if (!resp.ok) {
-                contentEl.insertAdjacentHTML('afterbegin',
-                    '<div id="skippyLayer1" class="alert alert-warning mb-0 small"><i class="bi bi-exclamation-triangle me-2"></i>' +
+                contentEl.insertAdjacentHTML('beforeend',
+                    '<div id="skippyLayer1" class="alert alert-warning small mb-0">' +
+                    '<i class="bi bi-exclamation-triangle me-2"></i>' +
                     esc(resp.error || 'Skippy had nothing to say.') + '</div>');
                 return;
             }
             loaded = true;
             SKIPPY_CACHED = resp.data;
             renderSkippy(resp.data);
-            try { applyCrown(resp.data.pick); } catch(e) {}
+            try { applyCrown(resp.data.pick); } catch (e) {}
         })
-        .catch(function() {
+        .catch(function () {
             loadingEl.classList.add('d-none');
-            contentEl.insertAdjacentHTML('afterbegin',
-                '<div id="skippyLayer1" class="alert alert-danger mb-0 small"><i class="bi bi-wifi-off me-2"></i>Network error — could not reach Skippy.</div>');
+            contentEl.insertAdjacentHTML('beforeend',
+                '<div id="skippyLayer1" class="alert alert-danger small mb-0">' +
+                '<i class="bi bi-wifi-off me-2"></i>Network error — could not reach Skippy.</div>');
         });
     }
 
     function esc(str) {
         if (!str) return '';
-        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     function renderSkippy(d) {
-        var watchOuts    = (d.watch_outs || []).map(function(w) { return '<li class="mb-1">' + esc(w) + '</li>'; }).join('');
-        var confirmItems = (d.confirm_before_signing || []).map(function(c) { return '<li class="mb-1">' + esc(c) + '</li>'; }).join('');
+        var watchOuts = (d.watch_outs || []).map(function (w) {
+            return '<li class="mb-1">' + esc(w) + '</li>';
+        }).join('');
+        var confirmItems = (d.confirm_before_signing || []).map(function (c) {
+            return '<li class="mb-1">' + esc(c) + '</li>';
+        }).join('');
 
-        var layer2 = '';
-        if (d.why_pick || d.why_not_runner_up || d.why_others_lower || confirmItems) {
-            layer2 =
-                '<div class="collapse border-top mt-3 pt-3" id="skippyLayer2">' +
-                (d.why_pick        ? '<p class="small mb-2"><strong>Why this pick:</strong><br>'          + esc(d.why_pick)           + '</p>' : '') +
-                (d.why_not_runner_up ? '<p class="small mb-2"><strong>Why not the runner-up:</strong><br>' + esc(d.why_not_runner_up)  + '</p>' : '') +
-                (d.why_others_lower  ? '<p class="small mb-2"><strong>Why others ranked lower:</strong><br>'+ esc(d.why_others_lower)   + '</p>' : '') +
-                (confirmItems ? '<p class="small fw-semibold mb-1">What to confirm before signing:</p><ul class="small mb-0 ps-3">' + confirmItems + '</ul>' : '') +
-                '</div>';
-        }
+        var layer2 =
+            '<div class="collapse mt-4 pt-3 border-top" id="skippyLayer2">' +
+            (d.why_pick
+                ? '<h5 class="skippy-section-heading">Why the top pick</h5>' +
+                  '<p class="mb-4">' + esc(d.why_pick) + '</p>'
+                : '') +
+            (d.why_not_runner_up
+                ? '<h5 class="skippy-section-heading">Why not the runner-up</h5>' +
+                  '<p class="mb-4">' + esc(d.why_not_runner_up) + '</p>'
+                : '') +
+            (d.why_others_lower
+                ? '<h5 class="skippy-section-heading">Why others ranked lower</h5>' +
+                  '<p class="mb-4">' + esc(d.why_others_lower) + '</p>'
+                : '') +
+            (confirmItems
+                ? '<h5 class="skippy-section-heading">What to confirm before signing</h5>' +
+                  '<ul class="mb-0 ps-4">' + confirmItems + '</ul>'
+                : '') +
+            '</div>';
 
         var html =
             '<div id="skippyLayer1">' +
-            '<p class="fw-bold mb-2" style="font-size:0.95rem; line-height:1.4;">' +
-                '<i class="bi bi-trophy-fill text-warning me-1"></i>' + esc(d.pick) +
-            '</p>' +
+            '<div class="d-flex justify-content-end mb-3">' +
+            '<button type="button" class="btn btn-sm btn-link text-muted p-0" id="skippyRefreshBtn"' +
+            ' title="Refresh Skippy\'s recommendation">' +
+            '<i class="bi bi-arrow-clockwise"></i> Refresh</button></div>' +
+            '<h5 class="skippy-section-heading">The Pick</h5>' +
+            '<p class="mb-4">' + esc(d.pick) + '</p>' +
             (watchOuts
-                ? '<p class="small fw-semibold mb-1 text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Watch-outs:</p>' +
-                  '<ul class="small mb-2 ps-3">' + watchOuts + '</ul>'
+                ? '<h5 class="skippy-section-heading">Watch-outs</h5>' +
+                  '<ul class="mb-4 ps-4">' + watchOuts + '</ul>'
                 : '') +
             (d.runner_up
-                ? '<p class="small mb-2"><span class="fw-medium text-secondary">Runner-up:</span> ' + esc(d.runner_up) + '</p>'
+                ? '<h5 class="skippy-section-heading">Runner-up</h5>' +
+                  '<p class="mb-4">' + esc(d.runner_up) + '</p>'
                 : '') +
-            (layer2
-                ? '<a href="#skippyLayer2" class="small text-primary d-inline-block mt-1" data-bs-toggle="collapse">Show me the why &rarr;</a>'
-                : '') +
+            '<a href="#skippyLayer2" class="text-primary" data-bs-toggle="collapse">' +
+            'Show me the why &rarr;</a>' +
             layer2 +
             '</div>';
 
-        contentEl.insertAdjacentHTML('afterbegin', html);
+        contentEl.insertAdjacentHTML('beforeend', html);
+
+        var refreshBtn = document.getElementById('skippyRefreshBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                loaded = false;
+                fetchSkippy(true);
+            });
+        }
     }
 })();
 </script>
