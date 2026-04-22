@@ -114,7 +114,7 @@
                             {% if current_user.is_admin %}
                             <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
                                   class="d-inline"
-                                  onsubmit="return confirm('Delete {{ project.name | replace(&quot;'&quot;, &quot;\\'&quot;) }} and all its documents?')">
+                                  onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
                                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
                                     <i class="bi bi-trash"></i>
                                 </button>
@@ -189,7 +189,7 @@
                             {% if current_user.is_admin %}
                             <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
                                   class="d-inline"
-                                  onsubmit="return confirm('Delete {{ project.name | replace(&quot;'&quot;, &quot;\\'&quot;) }} and all its documents?')">
+                                  onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
                                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
                                     <i class="bi bi-trash"></i>
                                 </button>
