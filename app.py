@@ -209,25 +209,22 @@ _SKIPPY_SYSTEM_PROMPT = (
 )
 
 
-def _generate_comparison_summary(api_key, project_name, category_tag, quotes):
-    """Call Claude to generate a 200-300 word narrative comparison of quotes in a category.
-
-    `quotes` is a list of dicts with keys: vendor_name, quote_date, expiration_date,
-    flags, pricing_items, conditions_text, title.
-    Returns the summary string.
-    """
+def _generate_skippy_recommendation(api_key, project, items, category_tag):
+    """Call Claude with _SKIPPY_SYSTEM_PROMPT and return parsed JSON dict, or None on failure."""
     import anthropic
-    from search import CLAUDE_MODEL
 
     lines = []
-    for i, q in enumerate(quotes, start=1):
-        vendor = q.get("vendor_name") or q.get("title") or f"Vendor {i}"
+    for i, item in enumerate(items, start=1):
+        vendor = item.vendor_name or item.title or f"Vendor {i}"
         lines.append(f"\n--- Quote {i}: {vendor} ---")
-        if q.get("quote_date"):
-            lines.append(f"Quote date: {q['quote_date']}")
-        if q.get("expiration_date"):
-            lines.append(f"Expiration: {q['expiration_date']}")
-        pricing = q.get("pricing_items") or []
+        if item.quote_date:
+            lines.append(f"Quote date: {item.quote_date}")
+        if item.expiration_date:
+            lines.append(f"Expiration: {item.expiration_date}")
+        try:
+            pricing = json.loads(item.pricing_items_json) if item.pricing_items_json else []
+        except Exception:
+            pricing = []
         if pricing:
             lines.append("Pricing:")
             for p in pricing:
@@ -237,33 +234,37 @@ def _generate_comparison_summary(api_key, project_name, category_tag, quotes):
                 lines.append(row)
         else:
             lines.append("Pricing: (none submitted)")
-        flags = q.get("flags") or []
+        try:
+            flags = json.loads(item.flags_json) if item.flags_json else []
+        except Exception:
+            flags = []
         if flags:
             lines.append(f"Flags: {', '.join(flags)}")
-        if q.get("conditions_text"):
-            lines.append(f"Conditions: {q['conditions_text'][:500]}")
+        if item.conditions_text:
+            lines.append(f"Conditions: {item.conditions_text[:500]}")
+        if item.shortlisted:
+            lines.append("Status: SHORTLISTED")
 
     quote_data = "\n".join(lines)
-    prompt = (
-        f"You're helping an estimator compare vendor quotes for '{category_tag}' "
-        f"on the project '{project_name}'. Here is the structured data for each quote:\n"
-        f"{quote_data}\n\n"
-        "Write a 200-300 word summary that:\n"
-        "1. Identifies the lowest-cost option at face value\n"
-        "2. Highlights vendors that appear to be missing pricing or have concerning flags\n"
-        "3. Flags significant differences in scope or conditions between quotes\n"
-        "4. Identifies which vendors appear most competitive 'all things considered'\n"
-        "Do not pick a winner — just surface the considerations an estimator should weigh. "
-        "Write in plain prose, no bullet points, no headers."
+    user_prompt = (
+        f"Category: {category_tag}\n"
+        f"Project: {project.name}\n\n"
+        f"Here are the vendor quotes:\n{quote_data}\n\n"
+        "Give me your recommendation."
     )
 
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text.strip()
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=1024,
+            system=_SKIPPY_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw = message.content[0].text.strip()
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
 def _extract_quote_file(api_key, file_path, original_filename):
@@ -1776,65 +1777,36 @@ def create_app():
 
         only_one = len(items) == 1
 
-        # Fetch or generate AI summary
-        cached = ComparisonSummary.query.filter_by(
+        # Fetch or generate Skippy recommendation (synchronous on first load)
+        summary_obj = ComparisonSummary.query.filter_by(
             project_id=project_id, category_tag=category_tag
         ).first()
 
-        summary_obj = cached
-        if not cached:
-            api_key = app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
-            if api_key and not only_one:
-                quote_dicts = []
-                for item in items:
-                    pricing = []
-                    if item.pricing_items_json:
-                        try:
-                            pricing = json.loads(item.pricing_items_json)
-                        except Exception:
-                            pricing = []
-                    flags = []
-                    if item.flags_json:
-                        try:
-                            flags = json.loads(item.flags_json)
-                        except Exception:
-                            flags = []
-                    quote_dicts.append({
-                        "vendor_name": item.vendor_name,
-                        "title": item.title,
-                        "quote_date": str(item.quote_date) if item.quote_date else None,
-                        "expiration_date": str(item.expiration_date) if item.expiration_date else None,
-                        "flags": flags,
-                        "pricing_items": pricing,
-                        "conditions_text": item.conditions_text,
-                    })
-                try:
-                    summary_text = _generate_comparison_summary(
-                        api_key, project.name, category_tag, quote_dicts
-                    )
-                except Exception as exc:
-                    summary_text = f"(Summary generation failed: {exc})"
-                summary_obj = ComparisonSummary(
-                    project_id=project_id,
-                    category_tag=category_tag,
-                    summary_text=summary_text,
-                )
-                db.session.add(summary_obj)
-                db.session.commit()
+        skippy_data = None
+        if summary_obj and summary_obj.skippy_recommendation:
+            try:
+                skippy_data = json.loads(summary_obj.skippy_recommendation)
+            except Exception:
+                skippy_data = None
 
-        # Freshness warning: newest item vs summary generated_at
-        most_recent_item_at = max((it.created_at for it in items), default=None)
-        summary_stale = (
-            summary_obj
-            and most_recent_item_at
-            and summary_obj.generated_at
-            and most_recent_item_at > summary_obj.generated_at
-        )
+        if skippy_data is None and not only_one:
+            api_key = app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+            if api_key:
+                skippy_data = _generate_skippy_recommendation(api_key, project, items, category_tag)
+                if skippy_data is not None:
+                    if not summary_obj:
+                        summary_obj = ComparisonSummary(
+                            project_id=project_id,
+                            category_tag=category_tag,
+                            summary_text="",
+                        )
+                        db.session.add(summary_obj)
+                    summary_obj.skippy_recommendation = json.dumps(skippy_data)
+                    db.session.commit()
 
         all_labels, per_item_pricing = _build_pricing_matrix(items)
         shortlisted_count = sum(1 for it in items if it.shortlisted)
 
-        # Pre-parse flags per item so the template needs no custom filters
         item_flags = {}
         for it in items:
             try:
@@ -1850,8 +1822,7 @@ def create_app():
             category_tag=category_tag,
             items=items,
             only_one=only_one,
-            summary_obj=summary_obj,
-            summary_stale=summary_stale,
+            skippy_data=skippy_data,
             all_labels=all_labels,
             per_item_pricing=per_item_pricing,
             shortlisted_count=shortlisted_count,
@@ -1859,27 +1830,11 @@ def create_app():
             now_date=now_date,
         )
 
-    @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/regenerate-summary",
-               methods=["POST"])
-    @login_required
-    @admin_required
-    def quote_regenerate_summary(project_id, category_tag):
-        _auth_project(project_id)
-        existing = ComparisonSummary.query.filter_by(
-            project_id=project_id, category_tag=category_tag
-        ).first()
-        if existing:
-            db.session.delete(existing)
-            db.session.commit()
-        return redirect(url_for("quote_compare", project_id=project_id, category_tag=category_tag))
-
     @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/skippy",
                methods=["POST"])
     @login_required
     @admin_required
     def quote_skippy(project_id, category_tag):
-        import anthropic
-
         _auth_project(project_id)
         force = (request.get_json(force=True, silent=True) or {}).get("force", False)
 
@@ -1891,7 +1846,7 @@ def create_app():
             try:
                 return jsonify({"ok": True, "data": json.loads(summary_obj.skippy_recommendation)})
             except Exception:
-                pass  # Corrupted cache — fall through to regenerate
+                pass
 
         api_key = current_app.config.get("ANTHROPIC_API_KEY")
         if not api_key:
@@ -1902,61 +1857,9 @@ def create_app():
             return jsonify({"ok": False, "error": "No quotes found for this category."}), 404
 
         project = db.session.get(Project, project_id)
-
-        lines = []
-        for i, item in enumerate(items, start=1):
-            vendor = item.vendor_name or item.title or f"Vendor {i}"
-            lines.append(f"\n--- Quote {i}: {vendor} ---")
-            if item.quote_date:
-                lines.append(f"Quote date: {item.quote_date}")
-            if item.expiration_date:
-                lines.append(f"Expiration: {item.expiration_date}")
-            try:
-                pricing = json.loads(item.pricing_items_json) if item.pricing_items_json else []
-            except Exception:
-                pricing = []
-            if pricing:
-                lines.append("Pricing:")
-                for p in pricing:
-                    row = f"  • {p.get('label','')}: {p.get('amount','')} {p.get('unit','')}".rstrip()
-                    if p.get("notes"):
-                        row += f" ({p['notes']})"
-                    lines.append(row)
-            else:
-                lines.append("Pricing: (none submitted)")
-            try:
-                flags = json.loads(item.flags_json) if item.flags_json else []
-            except Exception:
-                flags = []
-            if flags:
-                lines.append(f"Flags: {', '.join(flags)}")
-            if item.conditions_text:
-                lines.append(f"Conditions: {item.conditions_text[:500]}")
-            if item.shortlisted:
-                lines.append("Status: SHORTLISTED")
-
-        quote_data = "\n".join(lines)
-        user_prompt = (
-            f"Category: {category_tag}\n"
-            f"Project: {project.name}\n\n"
-            f"Here are the vendor quotes:\n{quote_data}\n\n"
-            "Give me your recommendation."
-        )
-
-        try:
-            client = anthropic.Anthropic(api_key=api_key)
-            message = client.messages.create(
-                model="claude-opus-4-7",
-                max_tokens=1024,
-                system=_SKIPPY_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-            raw = message.content[0].text.strip()
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return jsonify({"ok": False, "error": "Claude returned non-JSON output."}), 500
-        except Exception as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 500
+        data = _generate_skippy_recommendation(api_key, project, items, category_tag)
+        if data is None:
+            return jsonify({"ok": False, "error": "Failed to generate recommendation."}), 500
 
         if not summary_obj:
             summary_obj = ComparisonSummary(

@@ -35,8 +35,15 @@
 }
 .price-summary-row .sticky-col { background: #f8f9fa; }
 .ps-winner-cell { background: #fffbea !important; }
+.shortlist-top-row td {
+    padding: 0.4rem 0.5rem;
+    background: #f8f9fa;
+    border-bottom: 2px solid #ced4da !important;
+    vertical-align: middle;
+}
+.shortlist-top-row .sticky-col { background: #f8f9fa; }
 
-/* ── Magnificent Skippy banner ───────────────────────────────────────────── */
+/* ── Skippy's Two Cents banner ───────────────────────────────────────────── */
 .skippy-banner {
     background: #fdf8f0;
     border: 1px solid #e8dcc8;
@@ -47,132 +54,149 @@
 .skippy-banner-header {
     cursor: pointer;
     user-select: none;
-    padding: 0.75rem 1.25rem;
+    padding: 0.6rem 1.25rem;
     transition: background .15s ease;
 }
 .skippy-banner-header:hover { background: rgba(140,100,20,.04); }
 .skippy-banner-title {
     font-family: Georgia, 'Times New Roman', serif;
-    font-size: 1.65rem;
+    font-size: 1.4rem;
     font-weight: 700;
     letter-spacing: -0.01em;
     color: #2c1a00;
+    line-height: 1.15;
 }
-#skippyBannerChevron { transition: transform .2s ease; font-size: 1.2rem; }
+.skippy-banner-subtitle {
+    font-size: 0.75rem;
+    color: #9a8060;
+    letter-spacing: .03em;
+}
+#skippyBannerChevron { transition: transform .2s ease; font-size: 1.1rem; }
 .skippy-section-heading {
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .07em;
     color: #6c757d;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.35rem;
 }
 </style>
 
 <div class="container-fluid px-3">
 
     <!-- ── Breadcrumb + title ─────────────────────────────────────────────── -->
-    <div class="container px-0">
-        <nav aria-label="breadcrumb">
-            <ol class="breadcrumb">
-                {% if current_user.role == 'superadmin' %}
-                <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
-                {% endif %}
-                <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
-                <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
-                <li class="breadcrumb-item"><a href="{{ url_for('quote_compare_select', project_id=project.id) }}">Compare Quotes</a></li>
-                <li class="breadcrumb-item active">{{ category_tag }}</li>
-            </ol>
-        </nav>
-
-        <div class="d-flex justify-content-between align-items-start mb-3">
-            <div>
-                <h2 class="mb-1"><i class="bi bi-columns-gap"></i> {{ category_tag }}</h2>
-                <p class="text-muted mb-0">{{ project.name }} &mdash; {{ items | length }} vendor{{ 's' if items | length != 1 else '' }}</p>
-            </div>
-            <div class="d-flex gap-2 flex-shrink-0 ms-3">
-                <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=category_tag) }}"
-                   class="btn btn-sm btn-outline-success {% if items | length < 2 %}disabled{% endif %}"
-                   title="{% if items | length < 2 %}Need at least 2 vendors{% endif %}">
-                    <i class="bi bi-file-earmark-excel"></i> Export Excel
-                </a>
-                <span data-bs-toggle="tooltip"
-                      title="{% if shortlisted_count == 0 %}Shortlist at least one vendor first{% endif %}">
-                    <a href="{{ url_for('quote_export_pdf', project_id=project.id, category_tag=category_tag) }}"
-                       class="btn btn-sm btn-outline-danger {% if shortlisted_count == 0 %}disabled{% endif %}"
-                       id="btnPdfExport">
-                        <i class="bi bi-file-earmark-pdf"></i> Export PDF (Shortlist)
-                        {% if shortlisted_count > 0 %}
-                        <span class="badge bg-danger ms-1">{{ shortlisted_count }}</span>
-                        {% endif %}
-                    </a>
-                </span>
-            </div>
-        </div>
-
-        {% if only_one %}
-        <div class="alert alert-info mb-3">
-            <i class="bi bi-info-circle me-2"></i>
-            Only one quote in this category — comparison requires at least 2 vendors.
-            <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="alert-link ms-2">Add more quotes</a>
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- ── AI Summary ─────────────────────────────────────────────────────── -->
-    <div class="container px-0 mb-4">
-        <div class="card shadow-sm">
-            <div class="card-header d-flex justify-content-between align-items-center py-2">
-                <div class="d-flex align-items-center gap-2">
-                    <span class="fw-medium"><i class="bi bi-cpu text-primary me-1"></i> Estimator Summary</span>
-                    {% if summary_obj and summary_obj.generated_at %}
-                    <span class="text-muted small">
-                        Generated {{ summary_obj.generated_at.strftime('%b %d, %Y') }} at {{ summary_obj.generated_at.strftime('%H:%M UTC') }}
-                    </span>
-                    {% endif %}
-                </div>
-                <form method="POST"
-                      action="{{ url_for('quote_regenerate_summary', project_id=project.id, category_tag=category_tag) }}">
-                    <button type="submit" class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-arrow-clockwise"></i> Regenerate
-                    </button>
-                </form>
-            </div>
-            <div class="card-body">
-                {% if summary_obj %}
-                <p class="mb-0" style="white-space:pre-wrap;">{{ summary_obj.summary_text }}</p>
-                {% elif only_one %}
-                <p class="text-muted mb-0 fst-italic">Summary not generated — requires at least 2 vendors.</p>
-                {% else %}
-                <p class="text-muted mb-0 fst-italic">Summary unavailable. Claude API key may not be configured.</p>
-                {% endif %}
-            </div>
-            {% if summary_stale %}
-            <div class="card-footer bg-warning-subtle border-warning py-2">
-                <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
-                <span class="small">A new quote has been added since this summary was generated. Consider regenerating.</span>
-            </div>
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
             {% endif %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('quote_compare_select', project_id=project.id) }}">Compare Quotes</a></li>
+            <li class="breadcrumb-item active">{{ category_tag }}</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-columns-gap"></i> {{ category_tag }}</h2>
+            <p class="text-muted mb-0">{{ project.name }} &mdash; {{ items | length }} vendor{{ 's' if items | length != 1 else '' }}</p>
+        </div>
+        <div class="d-flex gap-2 flex-shrink-0 ms-3">
+            <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=category_tag) }}"
+               class="btn btn-sm btn-outline-success {% if items | length < 2 %}disabled{% endif %}"
+               title="{% if items | length < 2 %}Need at least 2 vendors{% endif %}">
+                <i class="bi bi-file-earmark-excel"></i> Export Excel
+            </a>
+            <span data-bs-toggle="tooltip"
+                  title="{% if shortlisted_count == 0 %}Shortlist at least one vendor first{% endif %}">
+                <a href="{{ url_for('quote_export_pdf', project_id=project.id, category_tag=category_tag) }}"
+                   class="btn btn-sm btn-outline-danger {% if shortlisted_count == 0 %}disabled{% endif %}"
+                   id="btnPdfExport">
+                    <i class="bi bi-file-earmark-pdf"></i> Export PDF (Shortlist)
+                    {% if shortlisted_count > 0 %}
+                    <span class="badge bg-danger ms-1">{{ shortlisted_count }}</span>
+                    {% endif %}
+                </a>
+            </span>
         </div>
     </div>
 
-    <!-- ── Magnificent Skippy Banner ──────────────────────────────────────── -->
+    {% if only_one %}
+    <div class="alert alert-info mb-3">
+        <i class="bi bi-info-circle me-2"></i>
+        Only one quote in this category — comparison requires at least 2 vendors.
+        <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="alert-link ms-2">Add more quotes</a>
+    </div>
+    {% endif %}
+
+    <!-- ── Skippy's Two Cents Banner ──────────────────────────────────────── -->
     <div class="mb-3">
-        <div class="skippy-banner" id="skippyBanner">
+        <div class="skippy-banner">
             <div class="skippy-banner-header d-flex align-items-center gap-3"
                  data-bs-toggle="collapse" data-bs-target="#skippyBannerBody"
                  aria-expanded="false" aria-controls="skippyBannerBody">
                 <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
-                     alt="The Magnificent Skippy" style="height:120px; width:auto; flex-shrink:0;">
-                <span class="skippy-banner-title">The Magnificent Skippy</span>
+                     alt="Skippy" style="height:85px; width:auto; flex-shrink:0;">
+                <div>
+                    <div class="skippy-banner-title">Skippy's Two Cents</div>
+                    <div class="skippy-banner-subtitle">AI-driven bid recommendation</div>
+                </div>
                 <i class="bi bi-chevron-down ms-auto text-muted" id="skippyBannerChevron"></i>
             </div>
             <div class="collapse" id="skippyBannerBody">
                 <div class="px-4 pb-4 pt-2" id="skippyBannerContent">
-                    <div class="d-flex align-items-center text-muted py-3" id="skippyBannerLoading">
-                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                        The Magnificent Skippy is deliberating…
+                    {% if skippy_data %}
+                    <div id="skippyLayer1">
+                        <div class="d-flex justify-content-end mb-3">
+                            <button type="button" class="btn btn-sm btn-link text-muted p-0"
+                                    id="skippyRefreshBtn" title="Refresh Skippy's recommendation">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <h5 class="skippy-section-heading">The Pick</h5>
+                        <p class="mb-4">{{ skippy_data.pick }}</p>
+                        {% if skippy_data.watch_outs %}
+                        <h5 class="skippy-section-heading">Watch-outs</h5>
+                        <ul class="mb-4 ps-4">
+                            {% for w in skippy_data.watch_outs %}<li class="mb-1">{{ w }}</li>{% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if skippy_data.runner_up %}
+                        <h5 class="skippy-section-heading">Runner-up</h5>
+                        <p class="mb-4">{{ skippy_data.runner_up }}</p>
+                        {% endif %}
+                        <a href="#skippyLayer2" class="text-primary" data-bs-toggle="collapse">Show me the why &rarr;</a>
+                        <div class="collapse mt-4 pt-3 border-top" id="skippyLayer2">
+                            {% if skippy_data.why_pick %}
+                            <h5 class="skippy-section-heading">Why the top pick</h5>
+                            <p class="mb-4">{{ skippy_data.why_pick }}</p>
+                            {% endif %}
+                            {% if skippy_data.why_not_runner_up %}
+                            <h5 class="skippy-section-heading">Why not the runner-up</h5>
+                            <p class="mb-4">{{ skippy_data.why_not_runner_up }}</p>
+                            {% endif %}
+                            {% if skippy_data.why_others_lower %}
+                            <h5 class="skippy-section-heading">Why others ranked lower</h5>
+                            <p class="mb-4">{{ skippy_data.why_others_lower }}</p>
+                            {% endif %}
+                            {% if skippy_data.confirm_before_signing %}
+                            <h5 class="skippy-section-heading">What to confirm before signing</h5>
+                            <ul class="mb-0 ps-4">
+                                {% for c in skippy_data.confirm_before_signing %}<li class="mb-1">{{ c }}</li>{% endfor %}
+                            </ul>
+                            {% endif %}
+                        </div>
                     </div>
+                    {% else %}
+                    <div class="text-muted py-3 small fst-italic" id="skippyNoData">
+                        {% if only_one %}
+                        Skippy needs at least 2 vendors to make a recommendation.
+                        {% else %}
+                        Skippy could not generate a recommendation — check the API key configuration.
+                        {% endif %}
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -198,7 +222,7 @@
                 </thead>
                 <tbody>
 
-                    <!-- ── CONDENSED PRICE SUMMARY (top of table) ── -->
+                    <!-- ── CONDENSED PRICE SUMMARY ── -->
                     <tr class="price-summary-row" id="priceSummaryRow">
                         <td class="sticky-col" style="min-width:160px;max-width:160px;">
                             <div class="fw-semibold text-muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.06em;">Total Bid</div>
@@ -209,6 +233,20 @@
                                  style="font-size:1.4rem;line-height:1.2;">—</div>
                             <div class="text-muted" id="psNote_{{ item.id }}"
                                  style="font-size:0.7rem;"></div>
+                        </td>
+                        {% endfor %}
+                    </tr>
+
+                    <!-- ── TOP SHORTLIST MIRROR ── -->
+                    <tr class="shortlist-top-row">
+                        <td class="sticky-col label-cell">Shortlist</td>
+                        {% for item in items %}
+                        <td class="text-center" style="min-width:220px;">
+                            <input class="form-check-input shortlist-chk-top" type="checkbox"
+                                   id="sl_top_{{ item.id }}"
+                                   data-item-id="{{ item.id }}"
+                                   title="Shortlist {{ item.vendor_name or item.title or 'vendor' }}"
+                                   {% if item.shortlisted %}checked{% endif %}>
                         </td>
                         {% endfor %}
                     </tr>
@@ -389,7 +427,7 @@
     </div>
 
     <!-- ── Actions bar (bottom) ──────────────────────────────────────────── -->
-    <div class="container px-0 pb-4 d-flex gap-2">
+    <div class="pb-4 d-flex gap-2">
         <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=category_tag) }}"
            class="btn btn-outline-success {% if items | length < 2 %}disabled{% endif %}">
             <i class="bi bi-file-earmark-excel"></i> Download Excel (Full)
@@ -414,19 +452,12 @@
 </div><!-- /container-fluid -->
 
 <script>
-// ── Vendor pricing data (embedded server-side) ────────────────────────────────
+// ── Vendor pricing data ───────────────────────────────────────────────────────
 var VENDOR_DATA = [
 {% for item in items %}
   {id: {{ item.id }}, vendor: {{ (item.vendor_name or item.title or '') | tojson }}, amounts: [{% for lbl in all_labels %}{% set pr = per_item_pricing.get(item.id, {}).get(lbl) %}{% if pr and pr.amount %}{{ pr.amount | tojson }},{% endif %}{% endfor %}]}{% if not loop.last %},{% endif %}
 {% endfor %}
 ];
-
-// Cached Skippy JSON (null if not yet generated)
-{% if summary_obj and summary_obj.skippy_recommendation %}
-var SKIPPY_CACHED = {{ summary_obj.skippy_recommendation | safe }};
-{% else %}
-var SKIPPY_CACHED = null;
-{% endif %}
 
 // ── Conditions expand/collapse ────────────────────────────────────────────────
 function expandCond(id) {
@@ -494,9 +525,9 @@ function applyCrown(pick) {
 // On page load
 document.addEventListener('DOMContentLoaded', function() {
     renderPriceSummary();
-    if (SKIPPY_CACHED) {
-        try { applyCrown(SKIPPY_CACHED.pick); } catch(e) {}
-    }
+    {% if skippy_data %}
+    try { applyCrown({{ skippy_data.pick | tojson }}); } catch(e) {}
+    {% endif %}
 });
 
 // ── Shortlist AJAX save ───────────────────────────────────────────────────────
@@ -533,8 +564,14 @@ function _refreshPdfButton() {
     });
 }
 
+// Bottom checkboxes (with notes textarea + save indicator)
 document.querySelectorAll('.shortlist-chk').forEach(function(chk) {
-    chk.addEventListener('change', function() { _saveShortlist(this.dataset.itemId); });
+    chk.addEventListener('change', function() {
+        var id = this.dataset.itemId;
+        var topChk = document.getElementById('sl_top_' + id);
+        if (topChk) topChk.checked = this.checked;
+        _saveShortlist(id);
+    });
 });
 document.querySelectorAll('.shortlist-notes').forEach(function(ta) {
     ta.addEventListener('input', function() {
@@ -544,40 +581,57 @@ document.querySelectorAll('.shortlist-notes').forEach(function(ta) {
     });
 });
 
+// Top shortlist mirror — syncs to bottom checkbox and triggers save
+document.querySelectorAll('.shortlist-chk-top').forEach(function(topChk) {
+    topChk.addEventListener('change', function() {
+        var id = this.dataset.itemId;
+        var bottomChk = document.getElementById('sl_' + id);
+        if (bottomChk) bottomChk.checked = this.checked;
+        _saveShortlist(id);
+    });
+});
+
 // Bootstrap tooltips
 document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
     new bootstrap.Tooltip(el);
 });
 
-// ── Magnificent Skippy ────────────────────────────────────────────────────────
+// ── Skippy's Two Cents ────────────────────────────────────────────────────────
 (function () {
     var SKIPPY_URL   = '{{ url_for("quote_skippy", project_id=project.id, category_tag=category_tag) }}';
-    var loaded       = false;
     var bannerBodyEl = document.getElementById('skippyBannerBody');
     var contentEl    = document.getElementById('skippyBannerContent');
-    var loadingEl    = document.getElementById('skippyBannerLoading');
     var chevronEl    = document.getElementById('skippyBannerChevron');
 
+    // Chevron animation only — content already in DOM
     bannerBodyEl.addEventListener('show.bs.collapse', function () {
         chevronEl.style.transform = 'rotate(180deg)';
-        if (loaded) return;
-        if (SKIPPY_CACHED) {
-            loadingEl.classList.add('d-none');
-            renderSkippy(SKIPPY_CACHED);
-            loaded = true;
-        } else {
-            fetchSkippy(false);
-        }
     });
-
     bannerBodyEl.addEventListener('hide.bs.collapse', function () {
         chevronEl.style.transform = '';
     });
 
+    // Refresh button (in pre-rendered DOM)
+    var refreshBtn = document.getElementById('skippyRefreshBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            fetchSkippy(true);
+        });
+    }
+
     function fetchSkippy(force) {
-        loadingEl.classList.remove('d-none');
-        var old = contentEl.querySelector('#skippyLayer1');
-        if (old) old.remove();
+        var layer1  = contentEl.querySelector('#skippyLayer1');
+        var noData  = contentEl.querySelector('#skippyNoData');
+
+        // Show inline spinner while Skippy thinks
+        var spinnerHtml =
+            '<div id="skippySpinner" class="d-flex align-items-center text-muted py-2 small">' +
+            '<span class="spinner-border spinner-border-sm me-2" role="status"></span>' +
+            'Skippy is rethinking…</div>';
+        if (layer1) { layer1.style.opacity = '0.35'; layer1.style.pointerEvents = 'none'; }
+        contentEl.insertAdjacentHTML('afterbegin', spinnerHtml);
+
         fetch(SKIPPY_URL, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -585,7 +639,11 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
         })
         .then(function (r) { return r.json(); })
         .then(function (resp) {
-            loadingEl.classList.add('d-none');
+            var spinner = document.getElementById('skippySpinner');
+            if (spinner) spinner.remove();
+            if (layer1) layer1.remove();
+            if (noData) noData.remove();
+
             if (!resp.ok) {
                 contentEl.insertAdjacentHTML('beforeend',
                     '<div id="skippyLayer1" class="alert alert-warning small mb-0">' +
@@ -593,15 +651,15 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
                     esc(resp.error || 'Skippy had nothing to say.') + '</div>');
                 return;
             }
-            loaded = true;
-            SKIPPY_CACHED = resp.data;
             renderSkippy(resp.data);
             try { applyCrown(resp.data.pick); } catch (e) {}
         })
         .catch(function () {
-            loadingEl.classList.add('d-none');
+            var spinner = document.getElementById('skippySpinner');
+            if (spinner) spinner.remove();
+            if (layer1) { layer1.style.opacity = ''; layer1.style.pointerEvents = ''; }
             contentEl.insertAdjacentHTML('beforeend',
-                '<div id="skippyLayer1" class="alert alert-danger small mb-0">' +
+                '<div class="alert alert-danger small mb-0 mt-2">' +
                 '<i class="bi bi-wifi-off me-2"></i>Network error — could not reach Skippy.</div>');
         });
     }
@@ -622,20 +680,16 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
         var layer2 =
             '<div class="collapse mt-4 pt-3 border-top" id="skippyLayer2">' +
             (d.why_pick
-                ? '<h5 class="skippy-section-heading">Why the top pick</h5>' +
-                  '<p class="mb-4">' + esc(d.why_pick) + '</p>'
+                ? '<h5 class="skippy-section-heading">Why the top pick</h5><p class="mb-4">' + esc(d.why_pick) + '</p>'
                 : '') +
             (d.why_not_runner_up
-                ? '<h5 class="skippy-section-heading">Why not the runner-up</h5>' +
-                  '<p class="mb-4">' + esc(d.why_not_runner_up) + '</p>'
+                ? '<h5 class="skippy-section-heading">Why not the runner-up</h5><p class="mb-4">' + esc(d.why_not_runner_up) + '</p>'
                 : '') +
             (d.why_others_lower
-                ? '<h5 class="skippy-section-heading">Why others ranked lower</h5>' +
-                  '<p class="mb-4">' + esc(d.why_others_lower) + '</p>'
+                ? '<h5 class="skippy-section-heading">Why others ranked lower</h5><p class="mb-4">' + esc(d.why_others_lower) + '</p>'
                 : '') +
             (confirmItems
-                ? '<h5 class="skippy-section-heading">What to confirm before signing</h5>' +
-                  '<ul class="mb-0 ps-4">' + confirmItems + '</ul>'
+                ? '<h5 class="skippy-section-heading">What to confirm before signing</h5><ul class="mb-0 ps-4">' + confirmItems + '</ul>'
                 : '') +
             '</div>';
 
@@ -643,30 +697,25 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
             '<div id="skippyLayer1">' +
             '<div class="d-flex justify-content-end mb-3">' +
             '<button type="button" class="btn btn-sm btn-link text-muted p-0" id="skippyRefreshBtn"' +
-            ' title="Refresh Skippy\'s recommendation">' +
-            '<i class="bi bi-arrow-clockwise"></i> Refresh</button></div>' +
-            '<h5 class="skippy-section-heading">The Pick</h5>' +
-            '<p class="mb-4">' + esc(d.pick) + '</p>' +
+            ' title="Refresh Skippy\'s recommendation"><i class="bi bi-arrow-clockwise"></i> Refresh</button></div>' +
+            '<h5 class="skippy-section-heading">The Pick</h5><p class="mb-4">' + esc(d.pick) + '</p>' +
             (watchOuts
-                ? '<h5 class="skippy-section-heading">Watch-outs</h5>' +
-                  '<ul class="mb-4 ps-4">' + watchOuts + '</ul>'
+                ? '<h5 class="skippy-section-heading">Watch-outs</h5><ul class="mb-4 ps-4">' + watchOuts + '</ul>'
                 : '') +
             (d.runner_up
-                ? '<h5 class="skippy-section-heading">Runner-up</h5>' +
-                  '<p class="mb-4">' + esc(d.runner_up) + '</p>'
+                ? '<h5 class="skippy-section-heading">Runner-up</h5><p class="mb-4">' + esc(d.runner_up) + '</p>'
                 : '') +
-            '<a href="#skippyLayer2" class="text-primary" data-bs-toggle="collapse">' +
-            'Show me the why &rarr;</a>' +
+            '<a href="#skippyLayer2" class="text-primary" data-bs-toggle="collapse">Show me the why &rarr;</a>' +
             layer2 +
             '</div>';
 
         contentEl.insertAdjacentHTML('beforeend', html);
 
-        var refreshBtn = document.getElementById('skippyRefreshBtn');
-        if (refreshBtn) {
-            refreshBtn.addEventListener('click', function (e) {
+        // Re-bind refresh button after DOM insert
+        var newBtn = document.getElementById('skippyRefreshBtn');
+        if (newBtn) {
+            newBtn.addEventListener('click', function (e) {
                 e.stopPropagation();
-                loaded = false;
                 fetchSkippy(true);
             });
         }
