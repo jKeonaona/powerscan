@@ -66,6 +66,7 @@ class Project(db.Model):
     scope_details = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(32), nullable=False, default="Active")
     archived_at = db.Column(db.DateTime, nullable=True)
+    bid_date = db.Column(db.Date, nullable=True)
 
     drawings = db.relationship("Drawing", backref="project", cascade="all, delete-orphan")
 

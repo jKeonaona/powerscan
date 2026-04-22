@@ -14,24 +14,24 @@
 
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2 class="mb-0">{{ company.name }} &mdash; Projects</h2>
-        {% if current_user.is_admin %}
-        <a href="{{ url_for('new_project', company_id=company.id) }}" class="btn btn-primary">
-            <i class="bi bi-plus-lg"></i> New Project
-        </a>
-        {% endif %}
+        <div class="d-flex gap-2 align-items-center">
+            {% if current_user.is_admin %}
+            <form method="POST" action="{{ url_for('project_archive_sweep', company_id=company.id) }}"
+                  onsubmit="return confirm('Run the archive sweep now? Projects 90+ days past their bid date will be archived.')">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Archive projects 90+ days past bid date">
+                    <i class="bi bi-archive"></i> Run Archive Sweep
+                </button>
+            </form>
+            <a href="{{ url_for('new_project', company_id=company.id) }}" class="btn btn-primary">
+                <i class="bi bi-plus-lg"></i> New Project
+            </a>
+            {% endif %}
+        </div>
     </div>
 
     <!-- ── Filter bar ──────────────────────────────────────────────────────── -->
     <form method="get" action="{{ url_for('projects', company_id=company.id) }}"
           class="row g-2 align-items-center mb-3" id="filterForm">
-        <div class="col-auto">
-            <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
-                <option value="All"      {% if status_filter == 'All'      %}selected{% endif %}>All Statuses</option>
-                <option value="Active"   {% if status_filter == 'Active'   %}selected{% endif %}>Active</option>
-                <option value="On Hold"  {% if status_filter == 'On Hold'  %}selected{% endif %}>On Hold</option>
-                <option value="Complete" {% if status_filter == 'Complete' %}selected{% endif %}>Complete</option>
-            </select>
-        </div>
         {% if years %}
         <div class="col-auto">
             <select name="year" class="form-select form-select-sm" onchange="this.form.submit()">
@@ -50,7 +50,7 @@
             <button type="submit" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-funnel"></i> Filter
             </button>
-            {% if status_filter != 'Active' or year_filter or search or show_archived %}
+            {% if year_filter or search or show_archived %}
             <a href="{{ url_for('projects', company_id=company.id) }}"
                class="btn btn-sm btn-link text-muted p-0 ms-1">Reset</a>
             {% endif %}
@@ -67,144 +67,288 @@
         </div>
     </form>
 
-    <!-- ── Active / filtered projects table ───────────────────────────────── -->
-    {% if projects %}
-    <div class="table-responsive">
-        <table class="table table-hover align-middle" id="projectsTable">
-            <thead class="table-light">
-                <tr>
-                    <th class="sort-col" data-col="0" style="cursor:pointer;">
-                        Name <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
-                    </th>
-                    <th class="sort-col" data-col="1" style="cursor:pointer;">
-                        Status <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
-                    </th>
-                    <th class="sort-col" data-col="2" style="cursor:pointer; width:80px;">
-                        Year <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
-                    </th>
-                    <th class="sort-col text-end" data-col="3" style="cursor:pointer; width:110px;">
-                        Documents <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
-                    </th>
-                    <th style="width:140px;"></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for project in projects %}
-                <tr>
-                    <td>
-                        <a href="{{ url_for('project_hub', project_id=project.id) }}"
-                           class="fw-medium text-decoration-none">
-                            <i class="bi bi-folder text-primary me-1"></i>{{ project.name }}
-                        </a>
-                        {% if project.description %}
-                        <div class="text-muted small text-truncate" style="max-width:340px;">{{ project.description }}</div>
-                        {% endif %}
-                    </td>
-                    <td data-sort="{{ project.status }}">
-                        <span class="badge status-badge-{{ project.status | lower | replace(' ', '-') }}">
-                            {{ project.status }}
-                        </span>
-                    </td>
-                    <td>{{ project.created_at.year if project.created_at else '—' }}</td>
-                    <td class="text-end">{{ project.drawings | length }}</td>
-                    <td class="text-end">
-                        <div class="d-flex gap-1 justify-content-end">
-                            <a href="{{ url_for('project_hub', project_id=project.id) }}"
-                               class="btn btn-sm btn-outline-primary">Open</a>
-                            {% if current_user.is_admin %}
-                            <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                                  class="d-inline"
-                                  onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </form>
-                            {% endif %}
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    <p class="text-muted small">{{ projects | length }} project{{ 's' if projects | length != 1 else '' }}</p>
-
-    {% else %}
-    <div class="text-center py-5 text-muted">
-        <i class="bi bi-folder fs-1"></i>
-        <p class="mt-2 mb-1">
-            {% if status_filter != 'All' or year_filter or search %}
-            No projects match the current filters.
+    <!-- ── Active ─────────────────────────────────────────────────────────── -->
+    {% set active_list = active_projects %}
+    <div class="mb-3">
+        <button class="btn btn-link text-decoration-none p-0 fw-semibold text-dark d-flex align-items-center gap-2 group-toggle"
+                type="button" data-bs-toggle="collapse" data-bs-target="#groupActive" aria-expanded="true">
+            <i class="bi bi-chevron-down toggle-icon"></i>
+            <span class="badge status-badge-active me-1">Active</span>
+            <span class="text-muted small fw-normal">{{ active_list | length }} project{{ 's' if active_list | length != 1 else '' }}</span>
+        </button>
+        <div class="collapse show mt-2" id="groupActive">
+            {% if active_list %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle" id="tableActive">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="sort-col" data-col="0" style="cursor:pointer;">Name <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col" data-col="1" style="cursor:pointer; width:120px;">Bid Date <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col" data-col="2" style="cursor:pointer; width:80px;">Year <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col text-end" data-col="3" style="cursor:pointer; width:110px;">Docs <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th style="width:100px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for project in active_list %}
+                        <tr>
+                            <td>
+                                <a href="{{ url_for('project_hub', project_id=project.id) }}" class="fw-medium text-decoration-none">
+                                    <i class="bi bi-folder text-primary me-1"></i>{{ project.name }}
+                                </a>
+                                {% if project.description %}
+                                <div class="text-muted small text-truncate" style="max-width:320px;">{{ project.description }}</div>
+                                {% endif %}
+                            </td>
+                            <td data-sort="{{ project.bid_date.isoformat() if project.bid_date else 'zzzz' }}">
+                                {% if project.bid_date %}
+                                    {% set days_diff = (project.bid_date - today).days %}
+                                    {% if days_diff < 0 %}
+                                    <span class="text-danger fw-medium">{{ project.bid_date.strftime('%b %d, %Y') }}</span>
+                                    {% elif days_diff <= 14 %}
+                                    <span class="text-warning fw-medium">{{ project.bid_date.strftime('%b %d, %Y') }}</span>
+                                    {% else %}
+                                    {{ project.bid_date.strftime('%b %d, %Y') }}
+                                    {% endif %}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>{{ project.created_at.year if project.created_at else '—' }}</td>
+                            <td class="text-end">{{ project.drawings | length }}</td>
+                            <td class="text-end">
+                                <div class="d-flex gap-1 justify-content-end">
+                                    <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
+                                    {% if current_user.is_admin %}
+                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
+                                          class="d-inline"
+                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
             {% else %}
-            No projects yet.
+            <div class="text-center py-4 text-muted border rounded">
+                <i class="bi bi-folder fs-2"></i>
+                <p class="mt-2 mb-1">
+                    {% if year_filter or search %}No active projects match the current filters.
+                    {% else %}No active projects.{% endif %}
+                </p>
+                {% if not year_filter and not search and current_user.is_admin %}
+                <a href="{{ url_for('new_project', company_id=company.id) }}" class="btn btn-sm btn-primary mt-1">
+                    <i class="bi bi-plus-lg"></i> Create first project
+                </a>
+                {% endif %}
+            </div>
             {% endif %}
-        </p>
-        {% if status_filter != 'All' or year_filter or search %}
-        <a href="{{ url_for('projects', company_id=company.id) }}" class="btn btn-sm btn-outline-secondary mt-1">Clear filters</a>
-        {% elif current_user.is_admin %}
-        <a href="{{ url_for('new_project', company_id=company.id) }}" class="btn btn-sm btn-primary mt-1">
-            <i class="bi bi-plus-lg"></i> Create first project
-        </a>
-        {% endif %}
+        </div>
     </div>
-    {% endif %}
 
-    <!-- ── Archived projects section ──────────────────────────────────────── -->
-    {% if show_archived and archived_projects %}
-    <hr class="my-4">
-    <h5 class="text-muted mb-3"><i class="bi bi-archive me-1"></i> Archived Projects
-        <span class="badge bg-secondary ms-1" style="font-size:.75rem;">{{ archived_projects | length }}</span>
-    </h5>
-    <div class="table-responsive">
-        <table class="table table-hover align-middle" id="archivedTable">
-            <thead class="table-light">
-                <tr>
-                    <th>Name</th>
-                    <th style="width:100px;">Year</th>
-                    <th style="width:110px;" class="text-end">Documents</th>
-                    <th style="width:170px;">Archived</th>
-                    <th style="width:140px;"></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for project in archived_projects %}
-                <tr class="text-muted">
-                    <td>
-                        <span class="fw-medium"><i class="bi bi-folder me-1"></i>{{ project.name }}</span>
-                        {% if project.description %}
-                        <div class="small text-truncate" style="max-width:340px;">{{ project.description }}</div>
-                        {% endif %}
-                    </td>
-                    <td>{{ project.created_at.year if project.created_at else '—' }}</td>
-                    <td class="text-end">{{ project.drawings | length }}</td>
-                    <td class="small">
-                        {% if project.archived_at %}
-                        {{ project.archived_at.strftime('%b %d, %Y') }}
-                        {% else %}—{% endif %}
-                    </td>
-                    <td class="text-end">
-                        <div class="d-flex gap-1 justify-content-end">
-                            <a href="{{ url_for('project_hub', project_id=project.id) }}"
-                               class="btn btn-sm btn-outline-secondary">Open</a>
-                            {% if current_user.is_admin %}
-                            <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                                  class="d-inline"
-                                  onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </form>
-                            {% endif %}
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <!-- ── On Hold ────────────────────────────────────────────────────────── -->
+    {% set on_hold_list = on_hold_projects %}
+    <div class="mb-3">
+        <button class="btn btn-link text-decoration-none p-0 fw-semibold text-dark d-flex align-items-center gap-2 group-toggle"
+                type="button" data-bs-toggle="collapse" data-bs-target="#groupOnHold"
+                aria-expanded="{{ 'true' if on_hold_list else 'false' }}">
+            <i class="bi bi-chevron-{{ 'down' if on_hold_list else 'right' }} toggle-icon"></i>
+            <span class="badge status-badge-on-hold me-1">On Hold</span>
+            <span class="text-muted small fw-normal">{{ on_hold_list | length }} project{{ 's' if on_hold_list | length != 1 else '' }}</span>
+        </button>
+        <div class="collapse {{ 'show' if on_hold_list else '' }} mt-2" id="groupOnHold">
+            {% if on_hold_list %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle" id="tableOnHold">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="sort-col" data-col="0" style="cursor:pointer;">Name <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col" data-col="1" style="cursor:pointer; width:120px;">Bid Date <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col" data-col="2" style="cursor:pointer; width:80px;">Year <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col text-end" data-col="3" style="cursor:pointer; width:110px;">Docs <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th style="width:100px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for project in on_hold_list %}
+                        <tr>
+                            <td>
+                                <a href="{{ url_for('project_hub', project_id=project.id) }}" class="fw-medium text-decoration-none">
+                                    <i class="bi bi-folder text-secondary me-1"></i>{{ project.name }}
+                                </a>
+                                {% if project.description %}
+                                <div class="text-muted small text-truncate" style="max-width:320px;">{{ project.description }}</div>
+                                {% endif %}
+                            </td>
+                            <td data-sort="{{ project.bid_date.isoformat() if project.bid_date else 'zzzz' }}">
+                                {% if project.bid_date %}
+                                    {% set days_diff = (project.bid_date - today).days %}
+                                    {% if days_diff < 0 %}
+                                    <span class="text-muted">{{ project.bid_date.strftime('%b %d, %Y') }}</span>
+                                    {% elif days_diff <= 14 %}
+                                    <span class="text-warning fw-medium">{{ project.bid_date.strftime('%b %d, %Y') }}</span>
+                                    {% else %}
+                                    {{ project.bid_date.strftime('%b %d, %Y') }}
+                                    {% endif %}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>{{ project.created_at.year if project.created_at else '—' }}</td>
+                            <td class="text-end">{{ project.drawings | length }}</td>
+                            <td class="text-end">
+                                <div class="d-flex gap-1 justify-content-end">
+                                    <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
+                                    {% if current_user.is_admin %}
+                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
+                                          class="d-inline"
+                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted small ps-1 mb-0">No on-hold projects.</p>
+            {% endif %}
+        </div>
     </div>
-    {% elif show_archived %}
+
+    <!-- ── Complete ───────────────────────────────────────────────────────── -->
+    {% set complete_list = complete_projects %}
+    <div class="mb-3">
+        <button class="btn btn-link text-decoration-none p-0 fw-semibold text-dark d-flex align-items-center gap-2 group-toggle"
+                type="button" data-bs-toggle="collapse" data-bs-target="#groupComplete"
+                aria-expanded="{{ 'true' if complete_list else 'false' }}">
+            <i class="bi bi-chevron-{{ 'down' if complete_list else 'right' }} toggle-icon"></i>
+            <span class="badge status-badge-complete me-1">Complete</span>
+            <span class="text-muted small fw-normal">{{ complete_list | length }} project{{ 's' if complete_list | length != 1 else '' }}</span>
+        </button>
+        <div class="collapse {{ 'show' if complete_list else '' }} mt-2" id="groupComplete">
+            {% if complete_list %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle" id="tableComplete">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="sort-col" data-col="0" style="cursor:pointer;">Name <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col" data-col="1" style="cursor:pointer; width:120px;">Bid Date <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col" data-col="2" style="cursor:pointer; width:80px;">Year <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th class="sort-col text-end" data-col="3" style="cursor:pointer; width:110px;">Docs <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i></th>
+                            <th style="width:100px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for project in complete_list %}
+                        <tr>
+                            <td>
+                                <a href="{{ url_for('project_hub', project_id=project.id) }}" class="fw-medium text-decoration-none">
+                                    <i class="bi bi-folder-check text-primary me-1"></i>{{ project.name }}
+                                </a>
+                                {% if project.description %}
+                                <div class="text-muted small text-truncate" style="max-width:320px;">{{ project.description }}</div>
+                                {% endif %}
+                            </td>
+                            <td data-sort="{{ project.bid_date.isoformat() if project.bid_date else 'zzzz' }}">
+                                {% if project.bid_date %}
+                                    <span class="text-muted">{{ project.bid_date.strftime('%b %d, %Y') }}</span>
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>{{ project.created_at.year if project.created_at else '—' }}</td>
+                            <td class="text-end">{{ project.drawings | length }}</td>
+                            <td class="text-end">
+                                <div class="d-flex gap-1 justify-content-end">
+                                    <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
+                                    {% if current_user.is_admin %}
+                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
+                                          class="d-inline"
+                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted small ps-1 mb-0">No complete projects.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ── Archived ───────────────────────────────────────────────────────── -->
+    {% if show_archived %}
     <hr class="my-4">
-    <p class="text-muted small"><i class="bi bi-archive me-1"></i> No archived projects.</p>
+    <div class="mb-3">
+        <button class="btn btn-link text-decoration-none p-0 fw-semibold text-muted d-flex align-items-center gap-2 group-toggle"
+                type="button" data-bs-toggle="collapse" data-bs-target="#groupArchived"
+                aria-expanded="{{ 'true' if archived_projects else 'false' }}">
+            <i class="bi bi-chevron-{{ 'down' if archived_projects else 'right' }} toggle-icon"></i>
+            <span class="badge status-badge-archived me-1">Archived</span>
+            <span class="text-muted small fw-normal">{{ archived_projects | length }} project{{ 's' if archived_projects | length != 1 else '' }}</span>
+        </button>
+        <div class="collapse {{ 'show' if archived_projects else '' }} mt-2" id="groupArchived">
+            {% if archived_projects %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle" id="tableArchived">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th style="width:120px;">Bid Date</th>
+                            <th style="width:80px;">Year</th>
+                            <th style="width:110px;" class="text-end">Docs</th>
+                            <th style="width:130px;">Archived</th>
+                            <th style="width:100px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for project in archived_projects %}
+                        <tr class="text-muted">
+                            <td>
+                                <span class="fw-medium"><i class="bi bi-folder me-1"></i>{{ project.name }}</span>
+                                {% if project.description %}
+                                <div class="small text-truncate" style="max-width:320px;">{{ project.description }}</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if project.bid_date %}
+                                <span class="text-muted">{{ project.bid_date.strftime('%b %d, %Y') }}</span>
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>{{ project.created_at.year if project.created_at else '—' }}</td>
+                            <td class="text-end">{{ project.drawings | length }}</td>
+                            <td class="small">
+                                {% if project.archived_at %}{{ project.archived_at.strftime('%b %d, %Y') }}{% else %}—{% endif %}
+                            </td>
+                            <td class="text-end">
+                                <div class="d-flex gap-1 justify-content-end">
+                                    <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary">Open</a>
+                                    {% if current_user.is_admin %}
+                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
+                                          class="d-inline"
+                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted small ps-1 mb-0"><i class="bi bi-archive me-1"></i> No archived projects.</p>
+            {% endif %}
+        </div>
+    </div>
     {% endif %}
 
 </div>
@@ -214,43 +358,64 @@
 .status-badge-on-hold  { background-color: #ffc107; color: #000; }
 .status-badge-complete { background-color: #0d6efd; color: #fff; }
 .status-badge-archived { background-color: #6c757d; color: #fff; }
+.group-toggle:hover { opacity: .8; }
 .sort-col:hover { background: rgba(0,0,0,.04); }
 </style>
 
 <script>
-(function() {
-    var sortCol = -1, sortAsc = true;
-
-    document.querySelectorAll('#projectsTable .sort-col').forEach(function(th) {
-        th.addEventListener('click', function() {
-            var col = parseInt(this.dataset.col);
-            if (sortCol === col) sortAsc = !sortAsc;
-            else { sortCol = col; sortAsc = true; }
-
-            var tbody = document.querySelector('#projectsTable tbody');
-            var rows = Array.from(tbody.querySelectorAll('tr'));
-            rows.sort(function(a, b) {
-                var aVal = a.cells[col].dataset.sort || a.cells[col].textContent.trim();
-                var bVal = b.cells[col].dataset.sort || b.cells[col].textContent.trim();
-                var aNum = parseFloat(aVal.replace(/[^0-9.\-]/g, ''));
-                var bNum = parseFloat(bVal.replace(/[^0-9.\-]/g, ''));
-                var cmp = (!isNaN(aNum) && !isNaN(bNum))
-                    ? aNum - bNum
-                    : aVal.localeCompare(bVal, undefined, {sensitivity: 'base'});
-                return sortAsc ? cmp : -cmp;
+(function () {
+    function makeTableSorter(tableId) {
+        var sortCol = -1, sortAsc = true;
+        var table = document.getElementById(tableId);
+        if (!table) return;
+        table.querySelectorAll('.sort-col').forEach(function (th) {
+            th.addEventListener('click', function () {
+                var col = parseInt(this.dataset.col);
+                if (sortCol === col) sortAsc = !sortAsc;
+                else { sortCol = col; sortAsc = true; }
+                var tbody = table.querySelector('tbody');
+                var rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.sort(function (a, b) {
+                    var aVal = a.cells[col].dataset.sort || a.cells[col].textContent.trim();
+                    var bVal = b.cells[col].dataset.sort || b.cells[col].textContent.trim();
+                    var aNum = parseFloat(aVal.replace(/[^0-9.\-]/g, ''));
+                    var bNum = parseFloat(bVal.replace(/[^0-9.\-]/g, ''));
+                    var cmp = (!isNaN(aNum) && !isNaN(bNum))
+                        ? aNum - bNum
+                        : aVal.localeCompare(bVal, undefined, { sensitivity: 'base' });
+                    return sortAsc ? cmp : -cmp;
+                });
+                rows.forEach(function (r) { tbody.appendChild(r); });
+                table.querySelectorAll('.sort-icon').forEach(function (ic) {
+                    ic.className = 'bi bi-arrow-down-up text-muted sort-icon';
+                    ic.style.fontSize = '.75rem';
+                });
+                var ic = th.querySelector('.sort-icon');
+                if (ic) {
+                    ic.className = 'bi bi-arrow-' + (sortAsc ? 'up' : 'down') + ' text-primary sort-icon';
+                    ic.style.fontSize = '.75rem';
+                }
             });
-            rows.forEach(function(r) { tbody.appendChild(r); });
+        });
+    }
 
-            // Update indicators
-            document.querySelectorAll('#projectsTable .sort-icon').forEach(function(ic) {
-                ic.className = 'bi bi-arrow-down-up text-muted sort-icon';
-                ic.style.fontSize = '.75rem';
-            });
-            var ic = th.querySelector('.sort-icon');
-            if (ic) {
-                ic.className = 'bi bi-arrow-' + (sortAsc ? 'up' : 'down') + ' text-primary sort-icon';
-                ic.style.fontSize = '.75rem';
-            }
+    makeTableSorter('tableActive');
+    makeTableSorter('tableOnHold');
+    makeTableSorter('tableComplete');
+    makeTableSorter('tableArchived');
+
+    // Update chevron direction when Bootstrap collapse toggles
+    document.querySelectorAll('.group-toggle').forEach(function (btn) {
+        var targetId = btn.dataset.bsTarget;
+        var target = document.querySelector(targetId);
+        if (!target) return;
+        target.addEventListener('show.bs.collapse', function () {
+            var ic = btn.querySelector('.toggle-icon');
+            if (ic) { ic.className = ic.className.replace('bi-chevron-right', 'bi-chevron-down'); }
+        });
+        target.addEventListener('hide.bs.collapse', function () {
+            var ic = btn.querySelector('.toggle-icon');
+            if (ic) { ic.className = ic.className.replace('bi-chevron-down', 'bi-chevron-right'); }
         });
     });
 })();

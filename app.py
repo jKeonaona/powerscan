@@ -28,6 +28,7 @@ from models import (
 from email_notify import (
     send_feedback_email_async, send_reply_email_async, send_password_reset_email_async,
 )
+from apscheduler.schedulers.background import BackgroundScheduler
 from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
@@ -128,6 +129,7 @@ def _run_migrations(database):
         ("comparison_summary", "skippy_recommendation", "TEXT"),
         ("project", "status", "VARCHAR(32) NOT NULL DEFAULT 'Active'"),
         ("project", "archived_at", "DATETIME"),
+        ("project", "bid_date", "DATE"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -455,6 +457,39 @@ def _decrement_removed_tags(old_tags, current_tags):
     pass
 
 
+_scheduler_started = False
+
+
+def _do_archive_sweep(app=None):
+    """Archive projects whose bid_date is 90+ days in the past and status != Archived.
+
+    May be called inside a request context (app=None) or from the scheduler
+    (pass app so we can push an app context).
+    """
+    from datetime import timedelta
+
+    def _run():
+        cutoff = date.today() - timedelta(days=90)
+        projects = Project.query.filter(
+            Project.bid_date != None,  # noqa: E711
+            Project.bid_date < cutoff,
+            Project.status != "Archived",
+        ).all()
+        count = 0
+        for p in projects:
+            p.status = "Archived"
+            p.archived_at = datetime.now(timezone.utc)
+            count += 1
+        if count:
+            db.session.commit()
+        return count
+
+    if app is not None:
+        with app.app_context():
+            return _run()
+    return _run()
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -498,6 +533,18 @@ def create_app():
     # Start background conversion worker thread
     start_worker(app)
     start_report_worker(app)
+
+    # Start archive-sweep scheduler (daily at 00:05 UTC)
+    global _scheduler_started
+    if not _scheduler_started:
+        _scheduler_started = True
+        _sched = BackgroundScheduler(timezone="UTC")
+        _sched.add_job(
+            lambda: _do_archive_sweep(app),
+            "cron", hour=0, minute=5,
+            id="archive_sweep", replace_existing=True,
+        )
+        _sched.start()
 
     # ── Decorators ──────────────────────────────────────────────
 
@@ -705,7 +752,6 @@ def create_app():
         if not current_user.is_superadmin and current_user.company_id != company_id:
             abort(403)
 
-        status_filter  = request.args.get("status",        "Active")
         year_filter    = request.args.get("year",           "")
         search         = request.args.get("search",         "").strip()
         show_archived  = request.args.get("show_archived",  "0") == "1"
@@ -736,12 +782,17 @@ def create_app():
             except ValueError:
                 return True
 
-        filtered = [
+        active_projects = [
             p for p in all_projects
-            if p.status != "Archived"
-            and (status_filter == "All" or p.status == status_filter)
-            and _matches_year(p)
-            and _matches_search(p)
+            if p.status == "Active" and _matches_year(p) and _matches_search(p)
+        ]
+        on_hold_projects = [
+            p for p in all_projects
+            if p.status == "On Hold" and _matches_year(p) and _matches_search(p)
+        ]
+        complete_projects = [
+            p for p in all_projects
+            if p.status == "Complete" and _matches_year(p) and _matches_search(p)
         ]
 
         archived = []
@@ -756,13 +807,15 @@ def create_app():
         return render_template(
             "projects.html",
             company=company,
-            projects=filtered,
+            active_projects=active_projects,
+            on_hold_projects=on_hold_projects,
+            complete_projects=complete_projects,
             archived_projects=archived,
             years=years,
-            status_filter=status_filter,
             year_filter=year_filter,
             search=search,
             show_archived=show_archived,
+            today=date.today(),
         )
 
     @app.route("/companies/<int:company_id>/projects/new", methods=["GET", "POST"])
@@ -778,6 +831,13 @@ def create_app():
             status = request.form.get("status", "Active")
             if status not in PROJECT_STATUSES:
                 status = "Active"
+            bid_date_str = request.form.get("bid_date", "").strip()
+            bid_date_val = None
+            if bid_date_str:
+                try:
+                    bid_date_val = date.fromisoformat(bid_date_str)
+                except ValueError:
+                    pass
             if not name:
                 flash("Project name is required.", "danger")
             else:
@@ -788,6 +848,7 @@ def create_app():
                     work_scope=json.dumps(scope_items) if scope_items else None,
                     scope_details=scope_details or None,
                     status=status,
+                    bid_date=bid_date_val,
                 )
                 db.session.add(project)
                 db.session.commit()
@@ -813,6 +874,13 @@ def create_app():
             new_status = request.form.get("status", "Active")
             if new_status not in PROJECT_STATUSES:
                 new_status = "Active"
+            bid_date_str = request.form.get("bid_date", "").strip()
+            bid_date_val = None
+            if bid_date_str:
+                try:
+                    bid_date_val = date.fromisoformat(bid_date_str)
+                except ValueError:
+                    pass
             if not name:
                 flash("Project name is required.", "danger")
             else:
@@ -822,6 +890,7 @@ def create_app():
                 project.work_scope = json.dumps(scope_items) if scope_items else None
                 project.scope_details = scope_details or None
                 project.status = new_status
+                project.bid_date = bid_date_val
                 if new_status == "Archived" and old_status != "Archived":
                     project.archived_at = datetime.now(timezone.utc)
                 elif new_status != "Archived":
@@ -833,6 +902,20 @@ def create_app():
                                scope_options=WORK_SCOPE_OPTIONS,
                                current_scope=project.work_scope_list,
                                project_statuses=PROJECT_STATUSES)
+
+    @app.route("/companies/<int:company_id>/projects/archive-sweep", methods=["POST"])
+    @login_required
+    @admin_required
+    def project_archive_sweep(company_id):
+        company = db.session.get(Company, company_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != company_id:
+            abort(403)
+        count = _do_archive_sweep()
+        if count:
+            flash(f"Archive sweep complete — {count} project{'s' if count != 1 else ''} archived.", "success")
+        else:
+            flash("Archive sweep complete — no projects needed archiving.", "info")
+        return redirect(url_for("projects", company_id=company_id))
 
     @app.route("/projects/<int:project_id>/delete", methods=["POST"])
     @login_required
