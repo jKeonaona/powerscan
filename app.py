@@ -639,19 +639,19 @@ def create_app():
     @login_required
     def dashboard():
         if current_user.is_superadmin:
-            companies = Company.query.all()
-        elif current_user.company_id:
-            companies = [current_user.company]
+            companies = Company.query.order_by(Company.name).all()
+            stats = {
+                "companies": Company.query.count(),
+                "projects": sum(len(c.projects) for c in companies),
+                "drawings": sum(len(p.drawings) for c in companies for p in c.projects),
+            }
         else:
-            companies = []
-
-        stats = {
-            "companies": Company.query.count() if current_user.is_superadmin else len(companies),
-            "projects": sum(len(c.projects) for c in companies),
-            "drawings": sum(
-                len(p.drawings) for c in companies for p in c.projects
-            ),
-        }
+            companies = []  # not passed to template — prevents data leakage
+            uc = current_user.company if current_user.company_id else None
+            stats = {
+                "projects": len(uc.projects) if uc else 0,
+                "drawings": sum(len(p.drawings) for p in uc.projects) if uc else 0,
+            }
         return render_template("dashboard.html", companies=companies, stats=stats)
 
     # ── Company Routes ──────────────────────────────────────────
