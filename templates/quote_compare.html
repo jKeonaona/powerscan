@@ -2,7 +2,50 @@
 {% block title %}{{ category_tag }} — Compare Quotes — {{ project.name }} - PowerScan{% endblock %}
 
 {% block content %}
+<style>
+/* ── existing table styles ───────────────────────────────────────────────── */
+.sticky-col {
+    position: sticky;
+    left: 0;
+    background: #fff;
+    z-index: 2;
+    border-right: 2px solid #dee2e6 !important;
+}
+.table-secondary .sticky-col { background: #e9ecef; }
+.label-cell {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #495057;
+    vertical-align: middle;
+    min-width: 160px;
+    max-width: 160px;
+}
+.flag-badge { font-size: 0.7rem; }
+.bg-flag-warn    { background-color: #fd7e14 !important; color: #fff !important; }
+.bg-flag-danger  { background-color: #dc3545 !important; color: #fff !important; }
+.bg-flag-info    { background-color: #0dcaf0 !important; color: #000 !important; }
+.bg-flag-default { background-color: #6c757d !important; color: #fff !important; }
+
+/* ── price summary row ───────────────────────────────────────────────────── */
+.price-summary-row td {
+    padding: 0.65rem 0.5rem;
+    background: #f8f9fa;
+    border-bottom: 3px solid #ced4da !important;
+    vertical-align: middle;
+}
+.price-summary-row .sticky-col { background: #f8f9fa; }
+.ps-winner-cell { background: #fffbea !important; }
+
+/* ── skippy card ─────────────────────────────────────────────────────────── */
+#skippyCard .card-header { cursor: pointer; user-select: none; }
+#skippyCard .card-header:hover { background: rgba(13, 110, 253, .04); }
+#skippyChevron { transition: transform .2s ease; flex-shrink: 0; }
+.skippy-can-icon { color: #0d6efd; flex-shrink: 0; }
+</style>
+
 <div class="container-fluid px-3">
+
+    <!-- ── Breadcrumb + title ─────────────────────────────────────────────── -->
     <div class="container px-0">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
@@ -21,7 +64,6 @@
                 <h2 class="mb-1"><i class="bi bi-columns-gap"></i> {{ category_tag }}</h2>
                 <p class="text-muted mb-0">{{ project.name }} &mdash; {{ items | length }} vendor{{ 's' if items | length != 1 else '' }}</p>
             </div>
-            <!-- Actions bar (top) -->
             <div class="d-flex gap-2 flex-shrink-0 ms-3">
                 <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=category_tag) }}"
                    class="btn btn-sm btn-outline-success {% if items | length < 2 %}disabled{% endif %}"
@@ -88,246 +130,269 @@
         </div>
     </div>
 
-    <!-- ── Comparison Table ───────────────────────────────────────────────── -->
+    <!-- ── Two-column layout: Skippy card + Comparison table ─────────────── -->
     <div class="container px-0 mb-4">
-        <div class="table-responsive" style="overflow-x: auto; max-width: 100%;">
-            <table class="table table-bordered table-sm align-top mb-0" id="compareTable"
-                   style="min-width: {{ (items | length) * 220 + 180 }}px;">
-                <thead>
-                    <tr class="table-dark">
-                        <th class="sticky-col" style="min-width:160px;max-width:160px;"></th>
-                        {% for item in items %}
-                        <th style="min-width:220px;max-width:260px;">
-                            <div class="fw-bold">{{ item.vendor_name or item.title or '—' }}</div>
-                            {% if item.shortlisted %}
-                            <span class="badge bg-success mt-1"><i class="bi bi-star-fill"></i> Shortlisted</span>
-                            {% endif %}
-                        </th>
-                        {% endfor %}
-                    </tr>
-                </thead>
-                <tbody>
+        <div class="row g-3 align-items-start">
 
-                    <!-- ── VENDOR INFO section ── -->
-                    <tr class="table-secondary">
-                        <td class="sticky-col fw-semibold small text-uppercase text-muted letter-spacing-1" colspan="{{ items | length + 1 }}">
-                            Vendor Info
-                        </td>
-                    </tr>
-
-                    <!-- Source file row -->
-                    <tr>
-                        <td class="sticky-col label-cell">Source File</td>
-                        {% for item in items %}
-                        <td class="small">
-                            {% if item.original_filename %}
-                            <span title="{{ item.original_filename }}" class="text-truncate d-inline-block" style="max-width:200px;">
-                                <i class="bi bi-file-earmark text-muted me-1"></i>{{ item.original_filename }}
-                            </span>
-                            {% else %}—{% endif %}
-                        </td>
-                        {% endfor %}
-                    </tr>
-
-                    <tr>
-                        <td class="sticky-col label-cell">Quote Date</td>
-                        {% for item in items %}
-                        <td class="small">{{ item.quote_date.strftime('%b %d, %Y') if item.quote_date else '—' }}</td>
-                        {% endfor %}
-                    </tr>
-
-                    <tr>
-                        <td class="sticky-col label-cell">Expiration Date</td>
-                        {% for item in items %}
-                        <td class="small {% if item.expiration_date and item.expiration_date.strftime('%Y-%m-%d') < now_date %}text-danger fw-medium{% endif %}">
-                            {{ item.expiration_date.strftime('%b %d, %Y') if item.expiration_date else '—' }}
-                        </td>
-                        {% endfor %}
-                    </tr>
-
-                    <tr>
-                        <td class="sticky-col label-cell">Contact</td>
-                        {% for item in items %}
-                        <td class="small" style="white-space:pre-wrap;">{{ item.vendor_contact or '—' }}</td>
-                        {% endfor %}
-                    </tr>
-
-                    <!-- ── PRICING section ── -->
-                    {% if all_labels %}
-                    <tr class="table-secondary">
-                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                            Pricing Items
-                        </td>
-                    </tr>
-                    {% for lbl in all_labels %}
-                    <tr>
-                        <td class="sticky-col label-cell">{{ lbl }}</td>
-                        {% for item in items %}
-                        {% set pr = per_item_pricing.get(item.id, {}).get(lbl) %}
-                        {% if pr %}
-                        <td>
-                            <div class="small fw-medium">{{ pr.amount or '' }} {{ pr.unit or '' }}</div>
-                            {% if pr.notes %}<div class="text-muted" style="font-size:0.75rem;">{{ pr.notes }}</div>{% endif %}
-                        </td>
-                        {% else %}
-                        <td class="text-muted text-center">—</td>
-                        {% endif %}
-                        {% endfor %}
-                    </tr>
-                    {% endfor %}
-                    {% else %}
-                    <tr class="table-secondary">
-                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                            Pricing Items
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="sticky-col label-cell text-muted fst-italic" colspan="{{ items | length + 1 }}">No pricing items extracted.</td>
-                    </tr>
-                    {% endif %}
-
-                    <!-- ── CONDITIONS section ── -->
-                    <tr class="table-secondary">
-                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                            Conditions &amp; Exclusions
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="sticky-col label-cell">Conditions</td>
-                        {% for item in items %}
-                        <td class="small">
-                            {% if item.conditions_text %}
-                            {% set cond_id = "cond_" ~ item.id %}
-                            <span id="{{ cond_id }}_short">
-                                {{ item.conditions_text[:150] }}{% if item.conditions_text | length > 150 %}…
-                                <a href="#" class="text-primary" onclick="expandCond('{{ cond_id }}');return false;">show more</a>
-                                {% endif %}
-                            </span>
-                            {% if item.conditions_text | length > 150 %}
-                            <span id="{{ cond_id }}_full" class="d-none" style="white-space:pre-wrap;">
-                                {{ item.conditions_text }}
-                                <a href="#" class="text-primary d-block mt-1" onclick="collapseCond('{{ cond_id }}');return false;">show less</a>
-                            </span>
-                            {% endif %}
-                            {% else %}
-                            <span class="text-muted">—</span>
-                            {% endif %}
-                        </td>
-                        {% endfor %}
-                    </tr>
-
-                    <!-- ── FLAGS section ── -->
-                    <tr class="table-secondary">
-                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                            Flags
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="sticky-col label-cell">Flags</td>
-                        {% for item in items %}
-                        <td>
-                            {% set flags = item_flags.get(item.id, []) %}
-                            {% if flags %}
-                            <div class="d-flex flex-wrap gap-1">
-                                {% for flag in flags %}
-                                <span class="badge flag-badge small
-                                    {% if flag in ['no-pricing-submitted','capability-statement-only'] %}bg-flag-warn
-                                    {% elif flag in ['different-project-referenced','needs-verification','prevailing-wage-required'] %}bg-flag-danger
-                                    {% elif flag in ['expires-soon'] %}bg-warning text-dark
-                                    {% else %}bg-flag-default{% endif %}">{{ flag }}</span>
-                                {% endfor %}
+            <!-- ── Skippy sidebar ─────────────────────────────────────────── -->
+            <div class="col-lg-3 col-md-4">
+                <div class="card shadow-sm" id="skippyCard">
+                    <div class="card-header d-flex align-items-center py-3"
+                         data-bs-toggle="collapse" data-bs-target="#skippyBody"
+                         aria-expanded="false" aria-controls="skippyBody">
+                        <div class="flex-grow-1 d-flex align-items-center gap-2">
+                            <!-- Beer can: monochrome line-art, accent color -->
+                            <svg width="44" height="44" viewBox="0 0 44 44" fill="none"
+                                 stroke="currentColor" stroke-width="1.8"
+                                 stroke-linecap="round" stroke-linejoin="round"
+                                 class="skippy-can-icon" aria-hidden="true">
+                                <!-- Pull-ring -->
+                                <ellipse cx="22" cy="9.5" rx="5" ry="2"/>
+                                <line x1="22" y1="11.5" x2="22" y2="14"/>
+                                <!-- Top lid -->
+                                <ellipse cx="22" cy="14" rx="9.5" ry="3"/>
+                                <!-- Rim band -->
+                                <line x1="12.5" y1="17.5" x2="31.5" y2="17.5"/>
+                                <!-- Body sides -->
+                                <line x1="12.5" y1="14" x2="12.5" y2="37"/>
+                                <line x1="31.5" y1="14" x2="31.5" y2="37"/>
+                                <!-- Bottom lid -->
+                                <ellipse cx="22" cy="37" rx="9.5" ry="3"/>
+                            </svg>
+                            <div>
+                                <div class="fw-semibold lh-sm" style="font-size:0.95rem;">The Omnipotent Skippy</div>
+                                <div class="text-muted" style="font-size:0.72rem; letter-spacing:.03em;">AI Pick</div>
                             </div>
-                            {% else %}
-                            <span class="text-muted small">—</span>
-                            {% endif %}
-                        </td>
-                        {% endfor %}
-                    </tr>
-
-                    <!-- ── SHORTLIST section ── -->
-                    <tr class="table-secondary">
-                        <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
-                            Shortlist
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="sticky-col label-cell">Shortlist this vendor</td>
-                        {% for item in items %}
-                        <td>
-                            <div class="form-check mb-2">
-                                <input class="form-check-input shortlist-chk" type="checkbox"
-                                       id="sl_{{ item.id }}"
-                                       data-item-id="{{ item.id }}"
-                                       {% if item.shortlisted %}checked{% endif %}>
-                                <label class="form-check-label small fw-medium" for="sl_{{ item.id }}">
-                                    Shortlist
-                                </label>
+                        </div>
+                        <button type="button" class="btn btn-link p-0 me-2 text-muted"
+                                id="skippyRefreshBtn" title="Refresh Skippy's recommendation"
+                                style="font-size:0.85rem; line-height:1;">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <i class="bi bi-chevron-down text-muted small" id="skippyChevron"></i>
+                    </div>
+                    <div class="collapse" id="skippyBody">
+                        <div class="card-body p-3" id="skippyContent" style="min-height:280px;">
+                            <div class="d-flex align-items-center justify-content-center text-muted py-4" id="skippyLoading">
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                Asking Skippy…
                             </div>
-                            <textarea class="form-control form-control-sm shortlist-notes"
-                                      id="sln_{{ item.id }}"
-                                      data-item-id="{{ item.id }}"
-                                      rows="2"
-                                      placeholder="Notes on why…"
-                                      style="font-size:0.75rem;">{{ item.shortlist_notes or '' }}</textarea>
-                            <div class="save-indicator text-success small mt-1 d-none" id="saved_{{ item.id }}">
-                                <i class="bi bi-check-circle-fill"></i> Saved
-                            </div>
-                            <div class="save-indicator text-danger small mt-1 d-none" id="err_{{ item.id }}">
-                                <i class="bi bi-exclamation-circle-fill"></i> Save failed
-                            </div>
-                        </td>
-                        {% endfor %}
-                    </tr>
-
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- ── Skippy's Two Cents ───────────────────────────────────────────── -->
-    <div class="container px-0 mb-4">
-        <div class="card shadow-sm" id="skippyCard">
-            <div class="card-header d-flex align-items-center justify-content-between py-2"
-                 style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#skippyBody"
-                 aria-expanded="false" aria-controls="skippyBody">
-                <div class="d-flex align-items-center gap-2">
-                    <!-- Beer can SVG avatar -->
-                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" style="flex-shrink:0;">
-                        <defs>
-                            <linearGradient id="skippy-can-grad" x1="0" y1="0" x2="1" y2="0">
-                                <stop offset="0%"   stop-color="#adb5bd"/>
-                                <stop offset="35%"  stop-color="#dee2e6"/>
-                                <stop offset="55%"  stop-color="#f8f9fa"/>
-                                <stop offset="100%" stop-color="#868e96"/>
-                            </linearGradient>
-                        </defs>
-                        <!-- Can body -->
-                        <rect x="7" y="11" width="14" height="13" rx="1.5" fill="url(#skippy-can-grad)"/>
-                        <!-- Rim band -->
-                        <rect x="7" y="11" width="14" height="2.5" rx="1" fill="#868e96"/>
-                        <!-- Top lid -->
-                        <ellipse cx="14" cy="11" rx="7" ry="2" fill="#ced4da"/>
-                        <!-- Pull-ring tab -->
-                        <ellipse cx="14" cy="9.2" rx="2.8" ry="1" fill="none" stroke="#6c757d" stroke-width="1"/>
-                        <line x1="14" y1="10.2" x2="14" y2="11" stroke="#6c757d" stroke-width="1"/>
-                        <!-- Bottom lid -->
-                        <ellipse cx="14" cy="24" rx="7" ry="1.8" fill="#adb5bd"/>
-                    </svg>
-                    <span class="fw-semibold">Skippy's Two Cents</span>
-                    <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle" style="font-size:0.7rem;">AI Pick</span>
-                </div>
-                <i class="bi bi-chevron-down text-muted" id="skippyChevron"></i>
-            </div>
-            <div class="collapse" id="skippyBody">
-                <div class="card-body" id="skippyContent">
-                    <!-- Populated by JS -->
-                    <div class="text-center py-3 text-muted" id="skippyLoading">
-                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-                        Asking Skippy…
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
+
+            <!-- ── Comparison table (right column) ────────────────────────── -->
+            <div class="col-lg-9 col-md-8">
+                <div class="table-responsive" style="overflow-x: auto; max-width: 100%;">
+                    <table class="table table-bordered table-sm align-top mb-0" id="compareTable"
+                           style="min-width: {{ (items | length) * 220 + 180 }}px;">
+                        <thead>
+                            <tr class="table-dark">
+                                <th class="sticky-col" style="min-width:160px;max-width:160px;"></th>
+                                {% for item in items %}
+                                <th style="min-width:220px;max-width:260px;">
+                                    <div class="fw-bold">{{ item.vendor_name or item.title or '—' }}</div>
+                                    {% if item.shortlisted %}
+                                    <span class="badge bg-success mt-1"><i class="bi bi-star-fill"></i> Shortlisted</span>
+                                    {% endif %}
+                                </th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+
+                            <!-- ── CONDENSED PRICE SUMMARY (top of table) ── -->
+                            <tr class="price-summary-row" id="priceSummaryRow">
+                                <td class="sticky-col" style="min-width:160px;max-width:160px;">
+                                    <div class="fw-semibold text-muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.06em;">Total Bid</div>
+                                </td>
+                                {% for item in items %}
+                                <td class="text-center" id="psCell_{{ item.id }}" style="min-width:220px;">
+                                    <div class="fw-bold" id="psTotal_{{ item.id }}"
+                                         style="font-size:1.4rem;line-height:1.2;">—</div>
+                                    <div class="text-muted" id="psNote_{{ item.id }}"
+                                         style="font-size:0.7rem;"></div>
+                                </td>
+                                {% endfor %}
+                            </tr>
+
+                            <!-- ── VENDOR INFO ── -->
+                            <tr class="table-secondary">
+                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                                    Vendor Info
+                                </td>
+                            </tr>
+
+                            <tr>
+                                <td class="sticky-col label-cell">Source File</td>
+                                {% for item in items %}
+                                <td class="small">
+                                    {% if item.original_filename %}
+                                    <span title="{{ item.original_filename }}" class="text-truncate d-inline-block" style="max-width:200px;">
+                                        <i class="bi bi-file-earmark text-muted me-1"></i>{{ item.original_filename }}
+                                    </span>
+                                    {% else %}—{% endif %}
+                                </td>
+                                {% endfor %}
+                            </tr>
+
+                            <tr>
+                                <td class="sticky-col label-cell">Quote Date</td>
+                                {% for item in items %}
+                                <td class="small">{{ item.quote_date.strftime('%b %d, %Y') if item.quote_date else '—' }}</td>
+                                {% endfor %}
+                            </tr>
+
+                            <tr>
+                                <td class="sticky-col label-cell">Expiration Date</td>
+                                {% for item in items %}
+                                <td class="small {% if item.expiration_date and item.expiration_date.strftime('%Y-%m-%d') < now_date %}text-danger fw-medium{% endif %}">
+                                    {{ item.expiration_date.strftime('%b %d, %Y') if item.expiration_date else '—' }}
+                                </td>
+                                {% endfor %}
+                            </tr>
+
+                            <tr>
+                                <td class="sticky-col label-cell">Contact</td>
+                                {% for item in items %}
+                                <td class="small" style="white-space:pre-wrap;">{{ item.vendor_contact or '—' }}</td>
+                                {% endfor %}
+                            </tr>
+
+                            <!-- ── PRICING ── -->
+                            {% if all_labels %}
+                            <tr class="table-secondary">
+                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                                    Pricing Items
+                                </td>
+                            </tr>
+                            {% for lbl in all_labels %}
+                            <tr>
+                                <td class="sticky-col label-cell">{{ lbl }}</td>
+                                {% for item in items %}
+                                {% set pr = per_item_pricing.get(item.id, {}).get(lbl) %}
+                                {% if pr %}
+                                <td>
+                                    <div class="small fw-medium">{{ pr.amount or '' }} {{ pr.unit or '' }}</div>
+                                    {% if pr.notes %}<div class="text-muted" style="font-size:0.75rem;">{{ pr.notes }}</div>{% endif %}
+                                </td>
+                                {% else %}
+                                <td class="text-muted text-center">—</td>
+                                {% endif %}
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                            {% else %}
+                            <tr class="table-secondary">
+                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                                    Pricing Items
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="sticky-col label-cell text-muted fst-italic" colspan="{{ items | length + 1 }}">No pricing items extracted.</td>
+                            </tr>
+                            {% endif %}
+
+                            <!-- ── CONDITIONS ── -->
+                            <tr class="table-secondary">
+                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                                    Conditions &amp; Exclusions
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="sticky-col label-cell">Conditions</td>
+                                {% for item in items %}
+                                <td class="small">
+                                    {% if item.conditions_text %}
+                                    {% set cond_id = "cond_" ~ item.id %}
+                                    <span id="{{ cond_id }}_short">
+                                        {{ item.conditions_text[:150] }}{% if item.conditions_text | length > 150 %}…
+                                        <a href="#" class="text-primary" onclick="expandCond('{{ cond_id }}');return false;">show more</a>
+                                        {% endif %}
+                                    </span>
+                                    {% if item.conditions_text | length > 150 %}
+                                    <span id="{{ cond_id }}_full" class="d-none" style="white-space:pre-wrap;">
+                                        {{ item.conditions_text }}
+                                        <a href="#" class="text-primary d-block mt-1" onclick="collapseCond('{{ cond_id }}');return false;">show less</a>
+                                    </span>
+                                    {% endif %}
+                                    {% else %}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                            </tr>
+
+                            <!-- ── FLAGS ── -->
+                            <tr class="table-secondary">
+                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                                    Flags
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="sticky-col label-cell">Flags</td>
+                                {% for item in items %}
+                                <td>
+                                    {% set flags = item_flags.get(item.id, []) %}
+                                    {% if flags %}
+                                    <div class="d-flex flex-wrap gap-1">
+                                        {% for flag in flags %}
+                                        <span class="badge flag-badge small
+                                            {% if flag in ['no-pricing-submitted','capability-statement-only'] %}bg-flag-warn
+                                            {% elif flag in ['different-project-referenced','needs-verification','prevailing-wage-required'] %}bg-flag-danger
+                                            {% elif flag in ['expires-soon'] %}bg-warning text-dark
+                                            {% else %}bg-flag-default{% endif %}">{{ flag }}</span>
+                                        {% endfor %}
+                                    </div>
+                                    {% else %}
+                                    <span class="text-muted small">—</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                            </tr>
+
+                            <!-- ── SHORTLIST ── -->
+                            <tr class="table-secondary">
+                                <td class="sticky-col fw-semibold small text-uppercase text-muted" colspan="{{ items | length + 1 }}">
+                                    Shortlist
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="sticky-col label-cell">Shortlist this vendor</td>
+                                {% for item in items %}
+                                <td>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input shortlist-chk" type="checkbox"
+                                               id="sl_{{ item.id }}"
+                                               data-item-id="{{ item.id }}"
+                                               {% if item.shortlisted %}checked{% endif %}>
+                                        <label class="form-check-label small fw-medium" for="sl_{{ item.id }}">
+                                            Shortlist
+                                        </label>
+                                    </div>
+                                    <textarea class="form-control form-control-sm shortlist-notes"
+                                              id="sln_{{ item.id }}"
+                                              data-item-id="{{ item.id }}"
+                                              rows="2"
+                                              placeholder="Notes on why…"
+                                              style="font-size:0.75rem;">{{ item.shortlist_notes or '' }}</textarea>
+                                    <div class="save-indicator text-success small mt-1 d-none" id="saved_{{ item.id }}">
+                                        <i class="bi bi-check-circle-fill"></i> Saved
+                                    </div>
+                                    <div class="save-indicator text-danger small mt-1 d-none" id="err_{{ item.id }}">
+                                        <i class="bi bi-exclamation-circle-fill"></i> Save failed
+                                    </div>
+                                </td>
+                                {% endfor %}
+                            </tr>
+
+                        </tbody>
+                    </table>
+                </div>
+            </div><!-- /col-lg-9 -->
+
+        </div><!-- /row -->
     </div>
 
     <!-- ── Actions bar (bottom) ──────────────────────────────────────────── -->
@@ -352,35 +417,24 @@
             <i class="bi bi-arrow-left"></i> All Categories
         </a>
     </div>
-</div>
 
-<style>
-.sticky-col {
-    position: sticky;
-    left: 0;
-    background: #fff;
-    z-index: 2;
-    border-right: 2px solid #dee2e6 !important;
-}
-.table-secondary .sticky-col {
-    background: #e9ecef;
-}
-.label-cell {
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: #495057;
-    vertical-align: middle;
-    min-width: 160px;
-    max-width: 160px;
-}
-.flag-badge { font-size: 0.7rem; }
-.bg-flag-warn { background-color: #fd7e14 !important; color: #fff !important; }
-.bg-flag-danger { background-color: #dc3545 !important; color: #fff !important; }
-.bg-flag-info { background-color: #0dcaf0 !important; color: #000 !important; }
-.bg-flag-default { background-color: #6c757d !important; color: #fff !important; }
-</style>
+</div><!-- /container-fluid -->
 
 <script>
+// ── Vendor pricing data (embedded server-side) ────────────────────────────────
+var VENDOR_DATA = [
+{% for item in items %}
+  {id: {{ item.id }}, vendor: {{ (item.vendor_name or item.title or '') | tojson }}, amounts: [{% for lbl in all_labels %}{% set pr = per_item_pricing.get(item.id, {}).get(lbl) %}{% if pr and pr.amount %}{{ pr.amount | tojson }},{% endif %}{% endfor %}]}{% if not loop.last %},{% endif %}
+{% endfor %}
+];
+
+// Cached Skippy JSON (null if not yet generated)
+{% if summary_obj and summary_obj.skippy_recommendation %}
+var SKIPPY_CACHED = {{ summary_obj.skippy_recommendation | safe }};
+{% else %}
+var SKIPPY_CACHED = null;
+{% endif %}
+
 // ── Conditions expand/collapse ────────────────────────────────────────────────
 function expandCond(id) {
     document.getElementById(id + '_short').classList.add('d-none');
@@ -391,28 +445,81 @@ function collapseCond(id) {
     document.getElementById(id + '_short').classList.remove('d-none');
 }
 
+// ── Price summary ─────────────────────────────────────────────────────────────
+function _parseAmt(str) {
+    if (!str) return NaN;
+    return parseFloat(String(str).replace(/[$,\s]/g, ''));
+}
+
+function renderPriceSummary() {
+    VENDOR_DATA.forEach(function(v) {
+        var totalEl = document.getElementById('psTotal_' + v.id);
+        var noteEl  = document.getElementById('psNote_'  + v.id);
+        if (!totalEl) return;
+        var nums = v.amounts.map(_parseAmt).filter(function(n) { return !isNaN(n); });
+        if (nums.length === 0) {
+            totalEl.textContent = '—';
+            if (noteEl) noteEl.textContent = v.amounts.length ? 'Non-numeric' : 'No pricing';
+        } else {
+            var sum = nums.reduce(function(a, b) { return a + b; }, 0);
+            totalEl.textContent = '$' + sum.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+            if (noteEl) {
+                noteEl.textContent = nums.length < v.amounts.length
+                    ? nums.length + '/' + v.amounts.length + ' items parsed'
+                    : (v.amounts.length > 1 ? v.amounts.length + ' line items' : '');
+            }
+        }
+    });
+}
+
+// ── Crown logic ───────────────────────────────────────────────────────────────
+function applyCrown(pick) {
+    if (!pick) return;
+    var pickLower = pick.toLowerCase();
+    var best = null, bestLen = 0;
+    VENDOR_DATA.forEach(function(v) {
+        var name = v.vendor.toLowerCase();
+        if (name.length > 2 && pickLower.includes(name) && name.length > bestLen) {
+            best = v.id; bestLen = name.length;
+        }
+    });
+    // Remove any existing crowns
+    document.querySelectorAll('.skippy-crown').forEach(function(el) { el.remove(); });
+    VENDOR_DATA.forEach(function(v) {
+        var cell = document.getElementById('psCell_' + v.id);
+        if (cell) cell.style.background = (v.id === best) ? '#fffbea' : '';
+    });
+    if (!best) return;
+    var totalEl = document.getElementById('psTotal_' + best);
+    if (totalEl) {
+        var crown = document.createElement('i');
+        crown.className = 'bi bi-crown-fill text-warning me-1 skippy-crown';
+        crown.title = "Skippy’s pick";
+        totalEl.prepend(crown);
+    }
+}
+
+// On page load
+document.addEventListener('DOMContentLoaded', function() {
+    renderPriceSummary();
+    if (SKIPPY_CACHED) {
+        try { applyCrown(SKIPPY_CACHED.pick); } catch(e) {}
+    }
+});
+
 // ── Shortlist AJAX save ───────────────────────────────────────────────────────
 var _saveTimers = {};
 
 function _saveShortlist(itemId) {
-    var chk = document.getElementById('sl_' + itemId);
-    var notes = document.getElementById('sln_' + itemId);
+    var chk    = document.getElementById('sl_'    + itemId);
+    var notes  = document.getElementById('sln_'   + itemId);
     var savedEl = document.getElementById('saved_' + itemId);
-    var errEl = document.getElementById('err_' + itemId);
+    var errEl   = document.getElementById('err_'   + itemId);
     if (!chk) return;
-
-    var payload = {
-        items: [{
-            id: parseInt(itemId),
-            shortlisted: chk.checked,
-            notes: notes ? notes.value : '',
-        }]
-    };
-
     fetch('{{ url_for("quote_shortlist", project_id=project.id, category_tag=category_tag) }}', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload),
+        body: JSON.stringify({items: [{id: parseInt(itemId), shortlisted: chk.checked, notes: notes ? notes.value : ''}]}),
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -420,45 +527,28 @@ function _saveShortlist(itemId) {
             savedEl.classList.remove('d-none');
             errEl.classList.add('d-none');
             setTimeout(function() { savedEl.classList.add('d-none'); }, 2000);
-            // Update PDF button state
             _refreshPdfButton();
-        } else {
-            errEl.classList.remove('d-none');
-        }
+        } else { errEl.classList.remove('d-none'); }
     })
-    .catch(function() {
-        errEl.classList.remove('d-none');
-    });
+    .catch(function() { errEl.classList.remove('d-none'); });
 }
 
 function _refreshPdfButton() {
     var anyChecked = document.querySelectorAll('.shortlist-chk:checked').length > 0;
-    var btns = [document.getElementById('btnPdfExport'), document.getElementById('btnPdfBottom')];
-    btns.forEach(function(btn) {
+    [document.getElementById('btnPdfExport'), document.getElementById('btnPdfBottom')].forEach(function(btn) {
         if (!btn) return;
-        if (anyChecked) {
-            btn.classList.remove('disabled');
-        } else {
-            btn.classList.add('disabled');
-        }
+        btn.classList.toggle('disabled', !anyChecked);
     });
 }
 
-// Wire up checkboxes — immediate save on change
 document.querySelectorAll('.shortlist-chk').forEach(function(chk) {
-    chk.addEventListener('change', function() {
-        _saveShortlist(this.dataset.itemId);
-    });
+    chk.addEventListener('change', function() { _saveShortlist(this.dataset.itemId); });
 });
-
-// Wire up notes textareas — debounced save on input
 document.querySelectorAll('.shortlist-notes').forEach(function(ta) {
     ta.addEventListener('input', function() {
-        var itemId = this.dataset.itemId;
-        clearTimeout(_saveTimers[itemId]);
-        _saveTimers[itemId] = setTimeout(function() {
-            _saveShortlist(itemId);
-        }, 800);
+        var id = this.dataset.itemId;
+        clearTimeout(_saveTimers[id]);
+        _saveTimers[id] = setTimeout(function() { _saveShortlist(id); }, 800);
     });
 });
 
@@ -471,26 +561,45 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
 (function() {
     var SKIPPY_URL = '{{ url_for("quote_skippy", project_id=project.id, category_tag=category_tag) }}';
     var loaded = false;
+    var _skipNextFetch = false;
 
-    var bodyEl    = document.getElementById('skippyBody');
-    var contentEl = document.getElementById('skippyContent');
-    var loadingEl = document.getElementById('skippyLoading');
-    var chevronEl = document.getElementById('skippyChevron');
+    var bodyEl     = document.getElementById('skippyBody');
+    var contentEl  = document.getElementById('skippyContent');
+    var loadingEl  = document.getElementById('skippyLoading');
+    var chevronEl  = document.getElementById('skippyChevron');
+    var refreshBtn = document.getElementById('skippyRefreshBtn');
 
     bodyEl.addEventListener('show.bs.collapse', function() {
         chevronEl.style.transform = 'rotate(180deg)';
-        if (!loaded) fetchSkippy(false);
+        if (_skipNextFetch) { _skipNextFetch = false; return; }
+        if (loaded) return;
+        if (SKIPPY_CACHED) {
+            loadingEl.classList.add('d-none');
+            renderSkippy(SKIPPY_CACHED);
+            loaded = true;
+        } else {
+            fetchSkippy(false);
+        }
     });
     bodyEl.addEventListener('hide.bs.collapse', function() {
         chevronEl.style.transform = '';
     });
 
+    refreshBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        loaded = false;
+        var isOpen = bodyEl.classList.contains('show');
+        if (!isOpen) {
+            _skipNextFetch = true;
+            bootstrap.Collapse.getOrCreateInstance(bodyEl).show();
+        }
+        fetchSkippy(true);
+    });
+
     function fetchSkippy(force) {
         loadingEl.classList.remove('d-none');
-        // Hide everything except the spinner
         var existing = contentEl.querySelector('#skippyLayer1');
         if (existing) existing.remove();
-
         fetch(SKIPPY_URL, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -500,15 +609,20 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
         .then(function(resp) {
             loadingEl.classList.add('d-none');
             if (!resp.ok) {
-                contentEl.innerHTML = '<div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle me-2"></i>' + (resp.error || 'Skippy had nothing to say.') + '</div>';
+                contentEl.insertAdjacentHTML('afterbegin',
+                    '<div id="skippyLayer1" class="alert alert-warning mb-0 small"><i class="bi bi-exclamation-triangle me-2"></i>' +
+                    esc(resp.error || 'Skippy had nothing to say.') + '</div>');
                 return;
             }
             loaded = true;
-            renderSkippy(resp.data, force);
+            SKIPPY_CACHED = resp.data;
+            renderSkippy(resp.data);
+            try { applyCrown(resp.data.pick); } catch(e) {}
         })
         .catch(function() {
             loadingEl.classList.add('d-none');
-            contentEl.innerHTML = '<div class="alert alert-danger mb-0"><i class="bi bi-wifi-off me-2"></i>Network error — could not reach Skippy.</div>';
+            contentEl.insertAdjacentHTML('afterbegin',
+                '<div id="skippyLayer1" class="alert alert-danger mb-0 small"><i class="bi bi-wifi-off me-2"></i>Network error — could not reach Skippy.</div>');
         });
     }
 
@@ -517,50 +631,40 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
         return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
-    function renderSkippy(d, wasForce) {
-        var watchOuts = (d.watch_outs || []).map(function(w) { return '<li>' + esc(w) + '</li>'; }).join('');
-        var confirmItems = (d.confirm_before_signing || []).map(function(c) { return '<li>' + esc(c) + '</li>'; }).join('');
+    function renderSkippy(d) {
+        var watchOuts    = (d.watch_outs || []).map(function(w) { return '<li class="mb-1">' + esc(w) + '</li>'; }).join('');
+        var confirmItems = (d.confirm_before_signing || []).map(function(c) { return '<li class="mb-1">' + esc(c) + '</li>'; }).join('');
 
-        var runnerUpHtml = d.runner_up
-            ? '<p class="mb-0"><span class="fw-medium text-secondary">Runner-up:</span> ' + esc(d.runner_up) + '</p>'
-            : '';
-
-        var layer2Html = '';
+        var layer2 = '';
         if (d.why_pick || d.why_not_runner_up || d.why_others_lower || confirmItems) {
-            layer2Html =
-                '<div class="collapse mt-3 border-top pt-3" id="skippyLayer2">' +
-                (d.why_pick ? '<p class="mb-2"><span class="fw-medium">Why this pick:</span> ' + esc(d.why_pick) + '</p>' : '') +
-                (d.why_not_runner_up ? '<p class="mb-2"><span class="fw-medium">Why not the runner-up:</span> ' + esc(d.why_not_runner_up) + '</p>' : '') +
-                (d.why_others_lower ? '<p class="mb-2"><span class="fw-medium">Why others ranked lower:</span> ' + esc(d.why_others_lower) + '</p>' : '') +
-                (confirmItems ? '<p class="fw-medium mb-1">Confirm before signing:</p><ul class="mb-0 ps-3">' + confirmItems + '</ul>' : '') +
+            layer2 =
+                '<div class="collapse border-top mt-3 pt-3" id="skippyLayer2">' +
+                (d.why_pick        ? '<p class="small mb-2"><strong>Why this pick:</strong><br>'          + esc(d.why_pick)           + '</p>' : '') +
+                (d.why_not_runner_up ? '<p class="small mb-2"><strong>Why not the runner-up:</strong><br>' + esc(d.why_not_runner_up)  + '</p>' : '') +
+                (d.why_others_lower  ? '<p class="small mb-2"><strong>Why others ranked lower:</strong><br>'+ esc(d.why_others_lower)   + '</p>' : '') +
+                (confirmItems ? '<p class="small fw-semibold mb-1">What to confirm before signing:</p><ul class="small mb-0 ps-3">' + confirmItems + '</ul>' : '') +
                 '</div>';
         }
 
-        var showWhyLink = layer2Html
-            ? '<a href="#skippyLayer2" class="small text-primary" data-bs-toggle="collapse" aria-expanded="false">Show me the why <i class="bi bi-chevron-down" style="font-size:0.7rem;"></i></a>'
-            : '';
-
-        var refreshHtml =
-            '<div class="mt-3 pt-2 border-top d-flex justify-content-end">' +
-            '<button class="btn btn-sm btn-link text-muted p-0" id="skippyRefreshBtn"><i class="bi bi-arrow-clockwise me-1"></i>Refresh Skippy</button>' +
-            '</div>';
-
         var html =
             '<div id="skippyLayer1">' +
-            '<p class="mb-2"><i class="bi bi-trophy-fill text-warning me-1"></i><span class="fw-semibold">Pick:</span> ' + esc(d.pick) + '</p>' +
-            (watchOuts ? '<p class="fw-medium mb-1 text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Watch-outs:</p><ul class="mb-2 ps-3 text-danger small">' + watchOuts + '</ul>' : '') +
-            runnerUpHtml +
-            (showWhyLink ? '<div class="mt-2">' + showWhyLink + '</div>' : '') +
-            layer2Html +
-            refreshHtml +
+            '<p class="fw-bold mb-2" style="font-size:0.95rem; line-height:1.4;">' +
+                '<i class="bi bi-trophy-fill text-warning me-1"></i>' + esc(d.pick) +
+            '</p>' +
+            (watchOuts
+                ? '<p class="small fw-semibold mb-1 text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Watch-outs:</p>' +
+                  '<ul class="small mb-2 ps-3">' + watchOuts + '</ul>'
+                : '') +
+            (d.runner_up
+                ? '<p class="small mb-2"><span class="fw-medium text-secondary">Runner-up:</span> ' + esc(d.runner_up) + '</p>'
+                : '') +
+            (layer2
+                ? '<a href="#skippyLayer2" class="small text-primary d-inline-block mt-1" data-bs-toggle="collapse">Show me the why &rarr;</a>'
+                : '') +
+            layer2 +
             '</div>';
 
         contentEl.insertAdjacentHTML('afterbegin', html);
-
-        document.getElementById('skippyRefreshBtn').addEventListener('click', function() {
-            loaded = false;
-            fetchSkippy(true);
-        });
     }
 })();
 </script>
