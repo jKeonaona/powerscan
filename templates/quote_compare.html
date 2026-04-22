@@ -284,6 +284,52 @@
         </div>
     </div>
 
+    <!-- ── Skippy's Two Cents ───────────────────────────────────────────── -->
+    <div class="container px-0 mb-4">
+        <div class="card shadow-sm" id="skippyCard">
+            <div class="card-header d-flex align-items-center justify-content-between py-2"
+                 style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#skippyBody"
+                 aria-expanded="false" aria-controls="skippyBody">
+                <div class="d-flex align-items-center gap-2">
+                    <!-- Beer can SVG avatar -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" style="flex-shrink:0;">
+                        <defs>
+                            <linearGradient id="skippy-can-grad" x1="0" y1="0" x2="1" y2="0">
+                                <stop offset="0%"   stop-color="#adb5bd"/>
+                                <stop offset="35%"  stop-color="#dee2e6"/>
+                                <stop offset="55%"  stop-color="#f8f9fa"/>
+                                <stop offset="100%" stop-color="#868e96"/>
+                            </linearGradient>
+                        </defs>
+                        <!-- Can body -->
+                        <rect x="7" y="11" width="14" height="13" rx="1.5" fill="url(#skippy-can-grad)"/>
+                        <!-- Rim band -->
+                        <rect x="7" y="11" width="14" height="2.5" rx="1" fill="#868e96"/>
+                        <!-- Top lid -->
+                        <ellipse cx="14" cy="11" rx="7" ry="2" fill="#ced4da"/>
+                        <!-- Pull-ring tab -->
+                        <ellipse cx="14" cy="9.2" rx="2.8" ry="1" fill="none" stroke="#6c757d" stroke-width="1"/>
+                        <line x1="14" y1="10.2" x2="14" y2="11" stroke="#6c757d" stroke-width="1"/>
+                        <!-- Bottom lid -->
+                        <ellipse cx="14" cy="24" rx="7" ry="1.8" fill="#adb5bd"/>
+                    </svg>
+                    <span class="fw-semibold">Skippy's Two Cents</span>
+                    <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle" style="font-size:0.7rem;">AI Pick</span>
+                </div>
+                <i class="bi bi-chevron-down text-muted" id="skippyChevron"></i>
+            </div>
+            <div class="collapse" id="skippyBody">
+                <div class="card-body" id="skippyContent">
+                    <!-- Populated by JS -->
+                    <div class="text-center py-3 text-muted" id="skippyLoading">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                        Asking Skippy…
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ── Actions bar (bottom) ──────────────────────────────────────────── -->
     <div class="container px-0 pb-4 d-flex gap-2">
         <a href="{{ url_for('quote_export_excel', project_id=project.id, category_tag=category_tag) }}"
@@ -420,5 +466,102 @@ document.querySelectorAll('.shortlist-notes').forEach(function(ta) {
 document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
     new bootstrap.Tooltip(el);
 });
+
+// ── Skippy's Two Cents ────────────────────────────────────────────────────────
+(function() {
+    var SKIPPY_URL = '{{ url_for("quote_skippy", project_id=project.id, category_tag=category_tag) }}';
+    var loaded = false;
+
+    var bodyEl    = document.getElementById('skippyBody');
+    var contentEl = document.getElementById('skippyContent');
+    var loadingEl = document.getElementById('skippyLoading');
+    var chevronEl = document.getElementById('skippyChevron');
+
+    bodyEl.addEventListener('show.bs.collapse', function() {
+        chevronEl.style.transform = 'rotate(180deg)';
+        if (!loaded) fetchSkippy(false);
+    });
+    bodyEl.addEventListener('hide.bs.collapse', function() {
+        chevronEl.style.transform = '';
+    });
+
+    function fetchSkippy(force) {
+        loadingEl.classList.remove('d-none');
+        // Hide everything except the spinner
+        var existing = contentEl.querySelector('#skippyLayer1');
+        if (existing) existing.remove();
+
+        fetch(SKIPPY_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({force: force}),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+            loadingEl.classList.add('d-none');
+            if (!resp.ok) {
+                contentEl.innerHTML = '<div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle me-2"></i>' + (resp.error || 'Skippy had nothing to say.') + '</div>';
+                return;
+            }
+            loaded = true;
+            renderSkippy(resp.data, force);
+        })
+        .catch(function() {
+            loadingEl.classList.add('d-none');
+            contentEl.innerHTML = '<div class="alert alert-danger mb-0"><i class="bi bi-wifi-off me-2"></i>Network error — could not reach Skippy.</div>';
+        });
+    }
+
+    function esc(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function renderSkippy(d, wasForce) {
+        var watchOuts = (d.watch_outs || []).map(function(w) { return '<li>' + esc(w) + '</li>'; }).join('');
+        var confirmItems = (d.confirm_before_signing || []).map(function(c) { return '<li>' + esc(c) + '</li>'; }).join('');
+
+        var runnerUpHtml = d.runner_up
+            ? '<p class="mb-0"><span class="fw-medium text-secondary">Runner-up:</span> ' + esc(d.runner_up) + '</p>'
+            : '';
+
+        var layer2Html = '';
+        if (d.why_pick || d.why_not_runner_up || d.why_others_lower || confirmItems) {
+            layer2Html =
+                '<div class="collapse mt-3 border-top pt-3" id="skippyLayer2">' +
+                (d.why_pick ? '<p class="mb-2"><span class="fw-medium">Why this pick:</span> ' + esc(d.why_pick) + '</p>' : '') +
+                (d.why_not_runner_up ? '<p class="mb-2"><span class="fw-medium">Why not the runner-up:</span> ' + esc(d.why_not_runner_up) + '</p>' : '') +
+                (d.why_others_lower ? '<p class="mb-2"><span class="fw-medium">Why others ranked lower:</span> ' + esc(d.why_others_lower) + '</p>' : '') +
+                (confirmItems ? '<p class="fw-medium mb-1">Confirm before signing:</p><ul class="mb-0 ps-3">' + confirmItems + '</ul>' : '') +
+                '</div>';
+        }
+
+        var showWhyLink = layer2Html
+            ? '<a href="#skippyLayer2" class="small text-primary" data-bs-toggle="collapse" aria-expanded="false">Show me the why <i class="bi bi-chevron-down" style="font-size:0.7rem;"></i></a>'
+            : '';
+
+        var refreshHtml =
+            '<div class="mt-3 pt-2 border-top d-flex justify-content-end">' +
+            '<button class="btn btn-sm btn-link text-muted p-0" id="skippyRefreshBtn"><i class="bi bi-arrow-clockwise me-1"></i>Refresh Skippy</button>' +
+            '</div>';
+
+        var html =
+            '<div id="skippyLayer1">' +
+            '<p class="mb-2"><i class="bi bi-trophy-fill text-warning me-1"></i><span class="fw-semibold">Pick:</span> ' + esc(d.pick) + '</p>' +
+            (watchOuts ? '<p class="fw-medium mb-1 text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Watch-outs:</p><ul class="mb-2 ps-3 text-danger small">' + watchOuts + '</ul>' : '') +
+            runnerUpHtml +
+            (showWhyLink ? '<div class="mt-2">' + showWhyLink + '</div>' : '') +
+            layer2Html +
+            refreshHtml +
+            '</div>';
+
+        contentEl.insertAdjacentHTML('afterbegin', html);
+
+        document.getElementById('skippyRefreshBtn').addEventListener('click', function() {
+            loaded = false;
+            fetchSkippy(true);
+        });
+    }
+})();
 </script>
 {% endblock %}

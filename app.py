@@ -124,6 +124,7 @@ def _run_migrations(database):
         ("intelligence_item", "shortlisted_by", "INTEGER"),
         ("intelligence_item", "shortlisted_bid_id", "INTEGER"),
         ("intelligence_item", "shortlisted_scope_option", "VARCHAR(100)"),
+        ("comparison_summary", "skippy_recommendation", "TEXT"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -177,6 +178,30 @@ _ALLOWED_FLAGS = [
 ]
 
 QUOTE_BATCH_MAX_FILES = 15
+
+_SKIPPY_SYSTEM_PROMPT = (
+    "You are Skippy — a straight-talking construction estimating assistant built into PowerScan. "
+    "Your job: look at the vendor quotes for a category and give a clear, opinionated recommendation. "
+    "No waffling. No 'it depends' without specifics. Pick one vendor and back it up.\n\n"
+    "Respond ONLY with a valid JSON object — no markdown, no explanation, just JSON — "
+    "with exactly these keys:\n"
+    "{\n"
+    '  "pick": "vendor name + one punchy sentence on why they are the top pick",\n'
+    '  "watch_outs": ["concern #1 (≤ 15 words)", "concern #2 (≤ 15 words)"],\n'
+    '  "runner_up": "vendor name + one sentence on why they are close but not top",\n'
+    '  "why_pick": "2-3 sentences — pricing, scope coverage, flags, reliability",\n'
+    '  "why_not_runner_up": "1-2 sentences on what held the runner-up back",\n'
+    '  "why_others_lower": "1-2 sentences on what knocked other vendors down the list",\n'
+    '  "confirm_before_signing": ["verify item #1 (≤ 15 words)", "verify item #2 (≤ 15 words)"]\n'
+    "}\n\n"
+    "Rules:\n"
+    "- watch_outs: 2-4 items. confirm_before_signing: 2-4 items.\n"
+    "- If only one vendor exists, still give a pick but note there is no competition.\n"
+    "- If the top pick submitted no pricing, flag it prominently in watch_outs.\n"
+    "- runner_up and why_not_runner_up may be null strings if only one vendor.\n"
+    "- why_others_lower may be null if fewer than 3 vendors.\n"
+    "- Do not reference PowerScan or yourself by name in the JSON values."
+)
 
 
 def _generate_comparison_summary(api_key, project_name, category_tag, quotes):
@@ -1689,6 +1714,104 @@ def create_app():
             db.session.delete(existing)
             db.session.commit()
         return redirect(url_for("quote_compare", project_id=project_id, category_tag=category_tag))
+
+    @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/skippy",
+               methods=["POST"])
+    @login_required
+    @admin_required
+    def quote_skippy(project_id, category_tag):
+        import anthropic
+
+        _auth_project(project_id)
+        force = (request.get_json(force=True, silent=True) or {}).get("force", False)
+
+        summary_obj = ComparisonSummary.query.filter_by(
+            project_id=project_id, category_tag=category_tag
+        ).first()
+
+        if summary_obj and summary_obj.skippy_recommendation and not force:
+            try:
+                return jsonify({"ok": True, "data": json.loads(summary_obj.skippy_recommendation)})
+            except Exception:
+                pass  # Corrupted cache — fall through to regenerate
+
+        api_key = current_app.config.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return jsonify({"ok": False, "error": "Claude API key not configured."}), 503
+
+        items = _items_for_category(project_id, category_tag)
+        if not items:
+            return jsonify({"ok": False, "error": "No quotes found for this category."}), 404
+
+        project = db.session.get(Project, project_id)
+
+        lines = []
+        for i, item in enumerate(items, start=1):
+            vendor = item.vendor_name or item.title or f"Vendor {i}"
+            lines.append(f"\n--- Quote {i}: {vendor} ---")
+            if item.quote_date:
+                lines.append(f"Quote date: {item.quote_date}")
+            if item.expiration_date:
+                lines.append(f"Expiration: {item.expiration_date}")
+            try:
+                pricing = json.loads(item.pricing_items_json) if item.pricing_items_json else []
+            except Exception:
+                pricing = []
+            if pricing:
+                lines.append("Pricing:")
+                for p in pricing:
+                    row = f"  • {p.get('label','')}: {p.get('amount','')} {p.get('unit','')}".rstrip()
+                    if p.get("notes"):
+                        row += f" ({p['notes']})"
+                    lines.append(row)
+            else:
+                lines.append("Pricing: (none submitted)")
+            try:
+                flags = json.loads(item.flags_json) if item.flags_json else []
+            except Exception:
+                flags = []
+            if flags:
+                lines.append(f"Flags: {', '.join(flags)}")
+            if item.conditions_text:
+                lines.append(f"Conditions: {item.conditions_text[:500]}")
+            if item.shortlisted:
+                lines.append("Status: SHORTLISTED")
+
+        quote_data = "\n".join(lines)
+        user_prompt = (
+            f"Category: {category_tag}\n"
+            f"Project: {project.name}\n\n"
+            f"Here are the vendor quotes:\n{quote_data}\n\n"
+            "Give me your recommendation."
+        )
+
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model="claude-opus-4-7",
+                max_tokens=1024,
+                system=_SKIPPY_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            raw = message.content[0].text.strip()
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return jsonify({"ok": False, "error": "Claude returned non-JSON output."}), 500
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+        if not summary_obj:
+            summary_obj = ComparisonSummary(
+                project_id=project_id,
+                category_tag=category_tag,
+                summary_text="",
+            )
+            db.session.add(summary_obj)
+
+        summary_obj.skippy_recommendation = json.dumps(data)
+        db.session.commit()
+
+        return jsonify({"ok": True, "data": data})
 
     @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>/shortlist",
                methods=["POST"])

@@ -247,6 +247,7 @@ class ComparisonSummary(db.Model):
     category_tag = db.Column(db.String(200), nullable=False)
     summary_text = db.Column(db.Text, nullable=False)
     generated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    skippy_recommendation = db.Column(db.Text, nullable=True)
     # Reserved for v2 Bid / Scope Option layers
     bid_id = db.Column(db.Integer, nullable=True)
     scope_option = db.Column(db.String(100), nullable=True)
