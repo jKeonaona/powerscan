@@ -20,11 +20,13 @@
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
+                    {% if current_user.role == 'superadmin' %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('dashboard') }}">
                             <i class="bi bi-speedometer2"></i> Dashboard
                         </a>
                     </li>
+                    {% endif %}
                     {% if current_user.is_superadmin %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('companies') }}">

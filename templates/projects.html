@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ company.name }} - Projects - PowerScan{% endblock %}
+{% block title %}{{ company.name }} — Projects — PowerScan{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -12,8 +12,8 @@
         </ol>
     </nav>
 
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>{{ company.name }} &mdash; Projects</h2>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="mb-0">{{ company.name }} &mdash; Projects</h2>
         {% if current_user.is_admin %}
         <a href="{{ url_for('new_project', company_id=company.id) }}" class="btn btn-primary">
             <i class="bi bi-plus-lg"></i> New Project
@@ -21,47 +21,238 @@
         {% endif %}
     </div>
 
-    {% if company.projects %}
-    <div class="row">
-        {% for project in company.projects %}
-        <div class="col-md-4 mb-4">
-            <div class="card shadow-sm h-100">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-folder"></i> {{ project.name }}</h5>
-                    {% if project.description %}
-                    <p class="text-muted small mb-2">{{ project.description }}</p>
-                    {% endif %}
-                    {% if project.work_scope_list %}
-                    <div class="d-flex flex-wrap gap-1 mb-2">
-                        {% for item in project.work_scope_list %}
-                        <span class="badge bg-info-subtle text-info-emphasis small">{{ item }}</span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                    <p class="text-muted mb-0">{{ project.drawings | length }} document(s)</p>
-                </div>
-                <div class="card-footer bg-transparent d-flex justify-content-between">
-                    <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">
-                        Open Project
-                    </a>
-                    {% if current_user.is_admin %}
-                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                          onsubmit="return confirm('Delete this project and all its documents?')">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
+    <!-- ── Filter bar ──────────────────────────────────────────────────────── -->
+    <form method="get" action="{{ url_for('projects', company_id=company.id) }}"
+          class="row g-2 align-items-center mb-3" id="filterForm">
+        <div class="col-auto">
+            <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="All"      {% if status_filter == 'All'      %}selected{% endif %}>All Statuses</option>
+                <option value="Active"   {% if status_filter == 'Active'   %}selected{% endif %}>Active</option>
+                <option value="On Hold"  {% if status_filter == 'On Hold'  %}selected{% endif %}>On Hold</option>
+                <option value="Complete" {% if status_filter == 'Complete' %}selected{% endif %}>Complete</option>
+            </select>
+        </div>
+        {% if years %}
+        <div class="col-auto">
+            <select name="year" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">All Years</option>
+                {% for y in years %}
+                <option value="{{ y }}" {% if year_filter == y|string %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <div class="col col-md-3">
+            <input type="text" name="search" class="form-control form-control-sm"
+                   placeholder="Search name or description…" value="{{ search }}">
+        </div>
+        <div class="col-auto">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-funnel"></i> Filter
+            </button>
+            {% if status_filter != 'Active' or year_filter or search or show_archived %}
+            <a href="{{ url_for('projects', company_id=company.id) }}"
+               class="btn btn-sm btn-link text-muted p-0 ms-1">Reset</a>
+            {% endif %}
+        </div>
+        <div class="col-auto ms-auto">
+            <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" name="show_archived" value="1"
+                       id="showArchivedChk" {% if show_archived %}checked{% endif %}
+                       onchange="this.form.submit()">
+                <label class="form-check-label small text-muted" for="showArchivedChk">
+                    Show Archived
+                </label>
             </div>
         </div>
-        {% endfor %}
+    </form>
+
+    <!-- ── Active / filtered projects table ───────────────────────────────── -->
+    {% if projects %}
+    <div class="table-responsive">
+        <table class="table table-hover align-middle" id="projectsTable">
+            <thead class="table-light">
+                <tr>
+                    <th class="sort-col" data-col="0" style="cursor:pointer;">
+                        Name <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
+                    </th>
+                    <th class="sort-col" data-col="1" style="cursor:pointer;">
+                        Status <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
+                    </th>
+                    <th class="sort-col" data-col="2" style="cursor:pointer; width:80px;">
+                        Year <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
+                    </th>
+                    <th class="sort-col text-end" data-col="3" style="cursor:pointer; width:110px;">
+                        Documents <i class="bi bi-arrow-down-up text-muted sort-icon" style="font-size:.75rem;"></i>
+                    </th>
+                    <th style="width:140px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for project in projects %}
+                <tr>
+                    <td>
+                        <a href="{{ url_for('project_hub', project_id=project.id) }}"
+                           class="fw-medium text-decoration-none">
+                            <i class="bi bi-folder text-primary me-1"></i>{{ project.name }}
+                        </a>
+                        {% if project.description %}
+                        <div class="text-muted small text-truncate" style="max-width:340px;">{{ project.description }}</div>
+                        {% endif %}
+                    </td>
+                    <td data-sort="{{ project.status }}">
+                        <span class="badge status-badge-{{ project.status | lower | replace(' ', '-') }}">
+                            {{ project.status }}
+                        </span>
+                    </td>
+                    <td>{{ project.created_at.year if project.created_at else '—' }}</td>
+                    <td class="text-end">{{ project.drawings | length }}</td>
+                    <td class="text-end">
+                        <div class="d-flex gap-1 justify-content-end">
+                            <a href="{{ url_for('project_hub', project_id=project.id) }}"
+                               class="btn btn-sm btn-outline-primary">Open</a>
+                            {% if current_user.is_admin %}
+                            <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('Delete {{ project.name | replace(&quot;'&quot;, &quot;\\'&quot;) }} and all its documents?')">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
+    <p class="text-muted small">{{ projects | length }} project{{ 's' if projects | length != 1 else '' }}</p>
+
     {% else %}
-    <div class="text-center py-5">
-        <i class="bi bi-folder fs-1 text-muted"></i>
-        <p class="text-muted mt-2">No projects yet.</p>
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-folder fs-1"></i>
+        <p class="mt-2 mb-1">
+            {% if status_filter != 'All' or year_filter or search %}
+            No projects match the current filters.
+            {% else %}
+            No projects yet.
+            {% endif %}
+        </p>
+        {% if status_filter != 'All' or year_filter or search %}
+        <a href="{{ url_for('projects', company_id=company.id) }}" class="btn btn-sm btn-outline-secondary mt-1">Clear filters</a>
+        {% elif current_user.is_admin %}
+        <a href="{{ url_for('new_project', company_id=company.id) }}" class="btn btn-sm btn-primary mt-1">
+            <i class="bi bi-plus-lg"></i> Create first project
+        </a>
+        {% endif %}
     </div>
     {% endif %}
+
+    <!-- ── Archived projects section ──────────────────────────────────────── -->
+    {% if show_archived and archived_projects %}
+    <hr class="my-4">
+    <h5 class="text-muted mb-3"><i class="bi bi-archive me-1"></i> Archived Projects
+        <span class="badge bg-secondary ms-1" style="font-size:.75rem;">{{ archived_projects | length }}</span>
+    </h5>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle" id="archivedTable">
+            <thead class="table-light">
+                <tr>
+                    <th>Name</th>
+                    <th style="width:100px;">Year</th>
+                    <th style="width:110px;" class="text-end">Documents</th>
+                    <th style="width:170px;">Archived</th>
+                    <th style="width:140px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for project in archived_projects %}
+                <tr class="text-muted">
+                    <td>
+                        <span class="fw-medium"><i class="bi bi-folder me-1"></i>{{ project.name }}</span>
+                        {% if project.description %}
+                        <div class="small text-truncate" style="max-width:340px;">{{ project.description }}</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ project.created_at.year if project.created_at else '—' }}</td>
+                    <td class="text-end">{{ project.drawings | length }}</td>
+                    <td class="small">
+                        {% if project.archived_at %}
+                        {{ project.archived_at.strftime('%b %d, %Y') }}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="text-end">
+                        <div class="d-flex gap-1 justify-content-end">
+                            <a href="{{ url_for('project_hub', project_id=project.id) }}"
+                               class="btn btn-sm btn-outline-secondary">Open</a>
+                            {% if current_user.is_admin %}
+                            <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('Delete {{ project.name | replace(&quot;'&quot;, &quot;\\'&quot;) }} and all its documents?')">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% elif show_archived %}
+    <hr class="my-4">
+    <p class="text-muted small"><i class="bi bi-archive me-1"></i> No archived projects.</p>
+    {% endif %}
+
 </div>
+
+<style>
+.status-badge-active   { background-color: #198754; color: #fff; }
+.status-badge-on-hold  { background-color: #ffc107; color: #000; }
+.status-badge-complete { background-color: #0d6efd; color: #fff; }
+.status-badge-archived { background-color: #6c757d; color: #fff; }
+.sort-col:hover { background: rgba(0,0,0,.04); }
+</style>
+
+<script>
+(function() {
+    var sortCol = -1, sortAsc = true;
+
+    document.querySelectorAll('#projectsTable .sort-col').forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = parseInt(this.dataset.col);
+            if (sortCol === col) sortAsc = !sortAsc;
+            else { sortCol = col; sortAsc = true; }
+
+            var tbody = document.querySelector('#projectsTable tbody');
+            var rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort(function(a, b) {
+                var aVal = a.cells[col].dataset.sort || a.cells[col].textContent.trim();
+                var bVal = b.cells[col].dataset.sort || b.cells[col].textContent.trim();
+                var aNum = parseFloat(aVal.replace(/[^0-9.\-]/g, ''));
+                var bNum = parseFloat(bVal.replace(/[^0-9.\-]/g, ''));
+                var cmp = (!isNaN(aNum) && !isNaN(bNum))
+                    ? aNum - bNum
+                    : aVal.localeCompare(bVal, undefined, {sensitivity: 'base'});
+                return sortAsc ? cmp : -cmp;
+            });
+            rows.forEach(function(r) { tbody.appendChild(r); });
+
+            // Update indicators
+            document.querySelectorAll('#projectsTable .sort-icon').forEach(function(ic) {
+                ic.className = 'bi bi-arrow-down-up text-muted sort-icon';
+                ic.style.fontSize = '.75rem';
+            });
+            var ic = th.querySelector('.sort-icon');
+            if (ic) {
+                ic.className = 'bi bi-arrow-' + (sortAsc ? 'up' : 'down') + ' text-primary sort-icon';
+                ic.style.fontSize = '.75rem';
+            }
+        });
+    });
+})();
+</script>
 {% endblock %}

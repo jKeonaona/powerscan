@@ -32,9 +32,21 @@
                                    value="{{ project.name if project else '' }}">
                         </div>
 
-                        <div class="mb-4">
+                        <div class="mb-3">
                             <label for="description" class="form-label fw-medium">Description <span class="text-muted fw-normal">(optional)</span></label>
                             <textarea class="form-control" id="description" name="description" rows="3">{{ project.description if project else '' }}</textarea>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="status" class="form-label fw-medium">Status</label>
+                            <select class="form-select" id="status" name="status">
+                                {% for s in project_statuses %}
+                                <option value="{{ s }}"
+                                    {% if project and project.status == s %}selected
+                                    {% elif not project and s == 'Active' %}selected
+                                    {% endif %}>{{ s }}</option>
+                                {% endfor %}
+                            </select>
                         </div>
 
                         <hr class="my-4">

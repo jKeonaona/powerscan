@@ -53,6 +53,9 @@ class Company(db.Model):
     projects = db.relationship("Project", backref="company", cascade="all, delete-orphan")
 
 
+PROJECT_STATUSES = ["Active", "On Hold", "Complete", "Archived"]
+
+
 class Project(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
@@ -61,6 +64,8 @@ class Project(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     work_scope = db.Column(db.Text, nullable=True)   # JSON array of selected scope items
     scope_details = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(32), nullable=False, default="Active")
+    archived_at = db.Column(db.DateTime, nullable=True)
 
     drawings = db.relationship("Drawing", backref="project", cascade="all, delete-orphan")
 

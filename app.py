@@ -23,6 +23,7 @@ from models import (
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
+    PROJECT_STATUSES,
 )
 from email_notify import (
     send_feedback_email_async, send_reply_email_async, send_password_reset_email_async,
@@ -125,6 +126,8 @@ def _run_migrations(database):
         ("intelligence_item", "shortlisted_bid_id", "INTEGER"),
         ("intelligence_item", "shortlisted_scope_option", "VARCHAR(100)"),
         ("comparison_summary", "skippy_recommendation", "TEXT"),
+        ("project", "status", "VARCHAR(32) NOT NULL DEFAULT 'Active'"),
+        ("project", "archived_at", "DATETIME"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -525,6 +528,8 @@ def create_app():
         if current_user.is_authenticated:
             if current_user.must_change_password:
                 return redirect(url_for("change_password"))
+            if current_user.role != ROLE_SUPERADMIN:
+                return redirect(url_for("projects", company_id=current_user.company_id))
             return redirect(url_for("dashboard"))
         if request.method == "POST":
             identifier = request.form.get("username", "").strip()
@@ -545,6 +550,8 @@ def create_app():
                     flash("Please choose a new password to finish logging in.", "info")
                     return redirect(url_for("change_password"))
                 next_page = request.args.get("next")
+                if not next_page and user.role != ROLE_SUPERADMIN:
+                    return redirect(url_for("projects", company_id=user.company_id))
                 return redirect(next_page or url_for("dashboard"))
             flash("Invalid username or password.", "danger")
         return render_template("login.html")
@@ -638,20 +645,14 @@ def create_app():
     @app.route("/")
     @login_required
     def dashboard():
-        if current_user.is_superadmin:
-            companies = Company.query.order_by(Company.name).all()
-            stats = {
-                "companies": Company.query.count(),
-                "projects": sum(len(c.projects) for c in companies),
-                "drawings": sum(len(p.drawings) for c in companies for p in c.projects),
-            }
-        else:
-            companies = []  # not passed to template — prevents data leakage
-            uc = current_user.company if current_user.company_id else None
-            stats = {
-                "projects": len(uc.projects) if uc else 0,
-                "drawings": sum(len(p.drawings) for p in uc.projects) if uc else 0,
-            }
+        if current_user.role != ROLE_SUPERADMIN:
+            return redirect(url_for("projects", company_id=current_user.company_id))
+        companies = Company.query.order_by(Company.name).all()
+        stats = {
+            "companies": Company.query.count(),
+            "projects": sum(len(c.projects) for c in companies),
+            "drawings": sum(len(p.drawings) for c in companies for p in c.projects),
+        }
         return render_template("dashboard.html", companies=companies, stats=stats)
 
     # ── Company Routes ──────────────────────────────────────────
@@ -703,7 +704,66 @@ def create_app():
         company = db.session.get(Company, company_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != company_id:
             abort(403)
-        return render_template("projects.html", company=company)
+
+        status_filter  = request.args.get("status",        "Active")
+        year_filter    = request.args.get("year",           "")
+        search         = request.args.get("search",         "").strip()
+        show_archived  = request.args.get("show_archived",  "0") == "1"
+
+        all_projects = (
+            Project.query
+            .filter_by(company_id=company_id)
+            .order_by(Project.name)
+            .all()
+        )
+
+        years = sorted(
+            {p.created_at.year for p in all_projects if p.created_at},
+            reverse=True,
+        )
+
+        def _matches_search(p):
+            if not search:
+                return True
+            sl = search.lower()
+            return sl in (p.name or "").lower() or sl in (p.description or "").lower()
+
+        def _matches_year(p):
+            if not year_filter:
+                return True
+            try:
+                return p.created_at and p.created_at.year == int(year_filter)
+            except ValueError:
+                return True
+
+        filtered = [
+            p for p in all_projects
+            if p.status != "Archived"
+            and (status_filter == "All" or p.status == status_filter)
+            and _matches_year(p)
+            and _matches_search(p)
+        ]
+
+        archived = []
+        if show_archived:
+            archived = sorted(
+                [p for p in all_projects
+                 if p.status == "Archived" and _matches_year(p) and _matches_search(p)],
+                key=lambda p: p.archived_at or p.created_at,
+                reverse=True,
+            )
+
+        return render_template(
+            "projects.html",
+            company=company,
+            projects=filtered,
+            archived_projects=archived,
+            years=years,
+            status_filter=status_filter,
+            year_filter=year_filter,
+            search=search,
+            show_archived=show_archived,
+        )
 
     @app.route("/companies/<int:company_id>/projects/new", methods=["GET", "POST"])
     @login_required
@@ -715,6 +775,9 @@ def create_app():
             description = request.form.get("description", "").strip()
             scope_items = request.form.getlist("work_scope")
             scope_details = request.form.get("scope_details", "").strip()
+            status = request.form.get("status", "Active")
+            if status not in PROJECT_STATUSES:
+                status = "Active"
             if not name:
                 flash("Project name is required.", "danger")
             else:
@@ -724,13 +787,15 @@ def create_app():
                     company_id=company.id,
                     work_scope=json.dumps(scope_items) if scope_items else None,
                     scope_details=scope_details or None,
+                    status=status,
                 )
                 db.session.add(project)
                 db.session.commit()
                 flash(f"Project '{name}' created.", "success")
                 return redirect(url_for("projects", company_id=company.id))
         return render_template("project_form.html", company=company, project=None,
-                               scope_options=WORK_SCOPE_OPTIONS, current_scope=[])
+                               scope_options=WORK_SCOPE_OPTIONS, current_scope=[],
+                               project_statuses=PROJECT_STATUSES)
 
     @app.route("/projects/<int:project_id>/edit", methods=["GET", "POST"])
     @login_required
@@ -745,19 +810,29 @@ def create_app():
             description = request.form.get("description", "").strip()
             scope_items = request.form.getlist("work_scope")
             scope_details = request.form.get("scope_details", "").strip()
+            new_status = request.form.get("status", "Active")
+            if new_status not in PROJECT_STATUSES:
+                new_status = "Active"
             if not name:
                 flash("Project name is required.", "danger")
             else:
+                old_status = project.status
                 project.name = name
                 project.description = description
                 project.work_scope = json.dumps(scope_items) if scope_items else None
                 project.scope_details = scope_details or None
+                project.status = new_status
+                if new_status == "Archived" and old_status != "Archived":
+                    project.archived_at = datetime.now(timezone.utc)
+                elif new_status != "Archived":
+                    project.archived_at = None
                 db.session.commit()
                 flash("Project updated.", "success")
                 return redirect(url_for("project_hub", project_id=project.id))
         return render_template("project_form.html", company=company, project=project,
                                scope_options=WORK_SCOPE_OPTIONS,
-                               current_scope=project.work_scope_list)
+                               current_scope=project.work_scope_list,
+                               project_statuses=PROJECT_STATUSES)
 
     @app.route("/projects/<int:project_id>/delete", methods=["POST"])
     @login_required
