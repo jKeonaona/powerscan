@@ -1172,7 +1172,12 @@ def create_app():
         project = takeoff.project
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        batches = QuoteBatch.query.filter_by(takeoff_id=takeoff_id).order_by(QuoteBatch.created_at.desc()).all()
+        batches = (
+            QuoteBatch.query.filter_by(takeoff_id=takeoff_id)
+            .filter(QuoteBatch.status != "cancelled")
+            .order_by(QuoteBatch.created_at.desc())
+            .all()
+        )
         summaries = ComparisonSummary.query.filter_by(takeoff_id=takeoff_id).order_by(ComparisonSummary.generated_at.desc()).all()
         reports = Report.query.filter_by(takeoff_id=takeoff_id).order_by(Report.created_at.desc()).all()
         return render_template(
