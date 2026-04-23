@@ -90,6 +90,7 @@
                                 <th>Headline Price</th>
                                 <th>Flags</th>
                                 <th>Source</th>
+                                {% if current_user.is_admin %}<th></th>{% endif %}
                             </tr>
                         </thead>
                         <tbody>
@@ -127,6 +128,19 @@
                                     &mdash;
                                     {% endif %}
                                 </td>
+                                {% if current_user.is_admin %}
+                                <td class="text-end pe-2">
+                                    <form method="POST"
+                                          action="{{ url_for('delete_quote_item', item_id=item.id) }}"
+                                          onsubmit="return confirm('Delete vendor quote ' + {{ (item.vendor or '') | tojson }} + ' from ' + {{ cat.name | tojson }} + '? This cannot be undone.')">
+                                        <input type="hidden" name="category_tag" value="{{ cat.name }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2"
+                                                title="Delete this vendor quote">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                                {% endif %}
                             </tr>
                             {% endfor %}
                         </tbody>

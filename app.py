@@ -2096,6 +2096,71 @@ def create_app():
         flash(f"Deleted batch '{label}' and its {item_count} vendor quote(s).", "success")
         return redirect(url_for("quote_compare_select", project_id=project_id))
 
+    @app.route("/quote-item/<int:item_id>/delete", methods=["POST"])
+    @login_required
+    @admin_required
+    def delete_quote_item(item_id):
+        item = db.session.get(IntelligenceItem, item_id) or abort(404)
+        if not current_user.is_superadmin and item.project_id:
+            proj = db.session.get(Project, item.project_id)
+            if not proj or proj.company_id != current_user.company_id:
+                abort(403)
+
+        project_id = item.project_id
+        category_tag = request.form.get("category_tag", "")
+        vendor_name = item.vendor_name or item.title or "Unknown vendor"
+
+        # Delete file artifact
+        if item.file_path:
+            fpath = os.path.join(app.config["LIBRARY_FOLDER"], item.file_path)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+
+        # Decrement tag usage counts and delete the item
+        for tag in list(item.tags):
+            if tag.usage_count > 0:
+                tag.usage_count -= 1
+        db.session.delete(item)
+        db.session.flush()
+
+        # Check remaining vendors in this category
+        remaining = _items_for_category(project_id, category_tag) if category_tag else []
+
+        if not remaining:
+            # Last vendor — cascade: delete ComparisonSummary and all QuoteBatch rows
+            import shutil
+            ComparisonSummary.query.filter_by(
+                project_id=project_id, category_tag=category_tag
+            ).delete(synchronize_session=False)
+            all_batches = QuoteBatch.query.filter_by(
+                project_id=project_id, category_tag=category_tag
+            ).all()
+            for b in all_batches:
+                staging_dir = os.path.join(
+                    app.config["LIBRARY_FOLDER"], "quotes_staging", b.batch_id
+                )
+                if os.path.isdir(staging_dir):
+                    shutil.rmtree(staging_dir, ignore_errors=True)
+                db.session.delete(b)
+            db.session.commit()
+            label = category_tag or "(unlabeled)"
+            flash(
+                f"Deleted vendor quote '{vendor_name}' and removed empty batch '{label}'.",
+                "success",
+            )
+        else:
+            # Vendors remain — clear Skippy cache so it regenerates with the updated pool
+            summary = ComparisonSummary.query.filter_by(
+                project_id=project_id, category_tag=category_tag
+            ).first()
+            if summary:
+                summary.skippy_recommendation = None
+            db.session.commit()
+            label = category_tag or "(unlabeled)"
+            flash(f"Deleted vendor quote '{vendor_name}' from '{label}'.", "success")
+
+        return redirect(url_for("quote_compare_select", project_id=project_id))
+
     @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>")
     @login_required
     @admin_required
