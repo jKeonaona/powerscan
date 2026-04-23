@@ -135,6 +135,83 @@ def _run_migrations(database):
         ("report", "takeoff_id", "INTEGER"),
         ("takeoff", "scopes", "TEXT"),
         ("intelligence_item", "content_hash", "VARCHAR(64)"),
+        # Takeoff inputs — project parameters
+        ("takeoff", "deck_area_sf", "NUMERIC"),
+        ("takeoff", "blast_level", "VARCHAR(32)"),
+        ("takeoff", "abrasive_type", "VARCHAR(64)"),
+        ("takeoff", "abrasive_lb_per_sf", "NUMERIC"),
+        # Takeoff inputs — materials
+        ("takeoff", "primer_vol_pct", "NUMERIC"),
+        ("takeoff", "primer_mils", "NUMERIC"),
+        ("takeoff", "primer_gal", "NUMERIC"),
+        ("takeoff", "second_primer_vol_pct", "NUMERIC"),
+        ("takeoff", "second_primer_mils", "NUMERIC"),
+        ("takeoff", "second_primer_gal", "NUMERIC"),
+        ("takeoff", "stripe_prime_vol_pct", "NUMERIC"),
+        ("takeoff", "stripe_prime_mils", "NUMERIC"),
+        ("takeoff", "stripe_prime_gal", "NUMERIC"),
+        ("takeoff", "stripe_intermediate_vol_pct", "NUMERIC"),
+        ("takeoff", "stripe_intermediate_mils", "NUMERIC"),
+        ("takeoff", "stripe_intermediate_gal", "NUMERIC"),
+        ("takeoff", "intermediate_vol_pct", "NUMERIC"),
+        ("takeoff", "intermediate_mils", "NUMERIC"),
+        ("takeoff", "intermediate_gal", "NUMERIC"),
+        ("takeoff", "finish_vol_pct", "NUMERIC"),
+        ("takeoff", "finish_mils", "NUMERIC"),
+        ("takeoff", "finish_gal", "NUMERIC"),
+        # Takeoff inputs — labor SF/HR + workers/nozzle
+        ("takeoff", "mobilize_sf_per_hr", "NUMERIC"),
+        ("takeoff", "mobilize_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "equip_setup_sf_per_hr", "NUMERIC"),
+        ("takeoff", "equip_setup_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "scaffold_sf_per_hr", "NUMERIC"),
+        ("takeoff", "scaffold_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "containment_sf_per_hr", "NUMERIC"),
+        ("takeoff", "containment_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "masking_sf_per_hr", "NUMERIC"),
+        ("takeoff", "masking_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "pressure_wash_sf_per_hr", "NUMERIC"),
+        ("takeoff", "pressure_wash_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "caulking_sf_per_hr", "NUMERIC"),
+        ("takeoff", "caulking_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "blast_sf_per_hr", "NUMERIC"),
+        ("takeoff", "blast_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "primer_labor_sf_per_hr", "NUMERIC"),
+        ("takeoff", "primer_labor_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "second_primer_labor_sf_per_hr", "NUMERIC"),
+        ("takeoff", "second_primer_labor_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "stripe_prime_labor_sf_per_hr", "NUMERIC"),
+        ("takeoff", "stripe_prime_labor_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "stripe_intermediate_labor_sf_per_hr", "NUMERIC"),
+        ("takeoff", "stripe_intermediate_labor_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "intermediate_labor_sf_per_hr", "NUMERIC"),
+        ("takeoff", "intermediate_labor_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "finish_labor_sf_per_hr", "NUMERIC"),
+        ("takeoff", "finish_labor_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "traffic_control_sf_per_hr", "NUMERIC"),
+        ("takeoff", "traffic_control_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "inspection_touchup_sf_per_hr", "NUMERIC"),
+        ("takeoff", "inspection_touchup_workers_per_nozzle", "NUMERIC"),
+        ("takeoff", "osha_training_sf_per_hr", "NUMERIC"),
+        ("takeoff", "osha_training_workers_per_nozzle", "NUMERIC"),
+        # Takeoff inputs — time-based labor
+        ("takeoff", "mobilize_hrs_per_day", "NUMERIC"),
+        ("takeoff", "mobilize_days", "NUMERIC"),
+        ("takeoff", "equip_setup_hrs_per_day", "NUMERIC"),
+        ("takeoff", "equip_setup_days", "NUMERIC"),
+        ("takeoff", "scaffold_hrs_per_day", "NUMERIC"),
+        ("takeoff", "scaffold_days", "NUMERIC"),
+        ("takeoff", "traffic_control_hrs_per_day", "NUMERIC"),
+        ("takeoff", "traffic_control_days", "NUMERIC"),
+        ("takeoff", "inspection_touchup_hrs_per_day", "NUMERIC"),
+        ("takeoff", "inspection_touchup_days", "NUMERIC"),
+        ("takeoff", "osha_training_hrs_per_day", "NUMERIC"),
+        ("takeoff", "osha_training_days", "NUMERIC"),
+        # Takeoff inputs — shift structure
+        ("takeoff", "shift_hours_per_day", "NUMERIC"),
+        ("takeoff", "shift_days_total", "NUMERIC"),
+        ("takeoff", "crew_size", "INTEGER"),
+        ("takeoff", "shifts_per_day", "INTEGER"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -1275,6 +1352,76 @@ def create_app():
             summaries=summaries,
             reports=reports,
         )
+
+    @app.route("/takeoffs/<int:takeoff_id>/inputs", methods=["GET", "POST"])
+    @login_required
+    def takeoff_inputs(takeoff_id):
+        takeoff = db.session.get(Takeoff, takeoff_id) or abort(404)
+        project = takeoff.project
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        if request.method == "POST":
+            def _num(field, scale=2):
+                v = request.form.get(field, "").strip()
+                if not v:
+                    return None
+                try:
+                    return round(float(v), scale)
+                except (ValueError, TypeError):
+                    return None
+
+            def _int(field):
+                v = request.form.get(field, "").strip()
+                if not v:
+                    return None
+                try:
+                    return int(v)
+                except (ValueError, TypeError):
+                    return None
+
+            def _str(field):
+                return request.form.get(field, "").strip() or None
+
+            # Project parameters
+            takeoff.deck_area_sf = _num("deck_area_sf")
+            takeoff.blast_level = _str("blast_level")
+            takeoff.abrasive_type = _str("abrasive_type")
+            takeoff.abrasive_lb_per_sf = _num("abrasive_lb_per_sf", 3)
+
+            # Materials
+            for layer in ["primer", "second_primer", "stripe_prime", "stripe_intermediate", "intermediate", "finish"]:
+                setattr(takeoff, f"{layer}_vol_pct", _num(f"{layer}_vol_pct"))
+                setattr(takeoff, f"{layer}_mils", _num(f"{layer}_mils"))
+                setattr(takeoff, f"{layer}_gal", _num(f"{layer}_gal"))
+
+            # Labor — SF/HR + workers/nozzle for all tasks
+            for task in [
+                "mobilize", "equip_setup", "scaffold", "containment", "masking",
+                "pressure_wash", "caulking", "blast", "primer_labor",
+                "second_primer_labor", "stripe_prime_labor", "stripe_intermediate_labor",
+                "intermediate_labor", "finish_labor", "traffic_control",
+                "inspection_touchup", "osha_training",
+            ]:
+                setattr(takeoff, f"{task}_sf_per_hr", _num(f"{task}_sf_per_hr"))
+                setattr(takeoff, f"{task}_workers_per_nozzle", _num(f"{task}_workers_per_nozzle"))
+
+            # Labor — time-based tasks
+            for task in ["mobilize", "equip_setup", "scaffold", "traffic_control", "inspection_touchup", "osha_training"]:
+                setattr(takeoff, f"{task}_hrs_per_day", _num(f"{task}_hrs_per_day"))
+                setattr(takeoff, f"{task}_days", _num(f"{task}_days"))
+
+            # Shift structure
+            takeoff.shift_hours_per_day = _num("shift_hours_per_day")
+            takeoff.shift_days_total = _num("shift_days_total")
+            takeoff.crew_size = _int("crew_size")
+            takeoff.shifts_per_day = _int("shifts_per_day")
+
+            db.session.commit()
+            flash("Takeoff inputs saved.", "success")
+            return redirect(url_for("takeoff_inputs", takeoff_id=takeoff_id))
+
+        return render_template("takeoff_inputs.html", project=project, takeoff=takeoff)
 
     # ── Drawing Routes ──────────────────────────────────────────
 
