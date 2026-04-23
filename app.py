@@ -19,11 +19,11 @@ from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     IntelligenceTag, IntelligenceItem, QuoteBatch,
-    ComparisonSummary, QuoteComparisonExport,
+    ComparisonSummary, QuoteComparisonExport, Takeoff,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
-    PROJECT_STATUSES,
+    PROJECT_STATUSES, TAKEOFF_STATUSES,
 )
 from email_notify import (
     send_feedback_email_async, send_reply_email_async, send_password_reset_email_async,
@@ -127,9 +127,12 @@ def _run_migrations(database):
         ("intelligence_item", "shortlisted_bid_id", "INTEGER"),
         ("intelligence_item", "shortlisted_scope_option", "VARCHAR(100)"),
         ("comparison_summary", "skippy_recommendation", "TEXT"),
+        ("comparison_summary", "takeoff_id", "INTEGER"),
         ("project", "status", "VARCHAR(32) NOT NULL DEFAULT 'Active'"),
         ("project", "archived_at", "DATETIME"),
         ("project", "bid_date", "DATE"),
+        ("quote_batch", "takeoff_id", "INTEGER"),
+        ("report", "takeoff_id", "INTEGER"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -491,6 +494,46 @@ def _do_archive_sweep(app=None):
     return _run()
 
 
+def migrate_projects_to_takeoffs():
+    """Idempotent: create one Final takeoff per project that has no takeoffs yet."""
+    projects = Project.query.all()
+    created = 0
+    for project in projects:
+        if not project.takeoffs:
+            t = Takeoff(
+                project_id=project.id,
+                name="Initial Takeoff",
+                status="Final",
+            )
+            db.session.add(t)
+            created += 1
+    if created:
+        db.session.commit()
+        print(f"[migrate_projects_to_takeoffs] Created {created} takeoff(s).")
+
+
+def _get_active_takeoff(project_id):
+    """Return the active takeoff for a project (Final if exists, else latest Draft, else create one)."""
+    final = (
+        Takeoff.query.filter_by(project_id=project_id, status="Final")
+        .order_by(Takeoff.created_at.desc())
+        .first()
+    )
+    if final:
+        return final
+    draft = (
+        Takeoff.query.filter_by(project_id=project_id, status="Draft")
+        .order_by(Takeoff.created_at.desc())
+        .first()
+    )
+    if draft:
+        return draft
+    t = Takeoff(project_id=project_id, name="New Takeoff", status="Draft")
+    db.session.add(t)
+    db.session.commit()
+    return t
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -530,6 +573,8 @@ def create_app():
 
         # Seed CCC admin accounts (idempotent — skipped if email already exists)
         _seed_ccc_admins()
+        # Create Initial Takeoff for any projects that have none
+        migrate_projects_to_takeoffs()
 
     # Start background conversion worker thread
     start_worker(app)
@@ -950,9 +995,15 @@ def create_app():
             project_id=project_id, status="reviewing"
         ).count()
         report_count = Report.query.filter_by(project_id=project_id).count()
+        takeoff_count = Takeoff.query.filter_by(project_id=project_id).count()
         previous_bids_count = 0
         bid_date = None
         days_to_bid = None
+
+        if project.bid_date:
+            from datetime import date as _date
+            bid_date = project.bid_date
+            days_to_bid = (bid_date - _date.today()).days
 
         return render_template(
             "project_hub.html",
@@ -962,6 +1013,7 @@ def create_app():
             saved_categories=saved_categories,
             reviewing_batches=reviewing_batches,
             report_count=report_count,
+            takeoff_count=takeoff_count,
             previous_bids_count=previous_bids_count,
             bid_date=bid_date,
             days_to_bid=days_to_bid,
@@ -974,6 +1026,107 @@ def create_app():
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
         return render_template("project_previous_bids_placeholder.html", project=project)
+
+    # ── Takeoff Routes ──────────────────────────────────────────
+
+    @app.route("/projects/<int:project_id>/takeoffs")
+    @login_required
+    def takeoffs_list(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        takeoffs = Takeoff.query.filter_by(project_id=project_id).order_by(Takeoff.created_at.desc()).all()
+        return render_template("takeoffs.html", project=project, takeoffs=takeoffs)
+
+    @app.route("/projects/<int:project_id>/takeoffs/new", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def new_takeoff(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        if request.method == "POST":
+            name = request.form.get("name", "").strip() or "New Takeoff"
+            status = request.form.get("status", "Draft")
+            if status not in TAKEOFF_STATUSES:
+                status = "Draft"
+            revision_note = request.form.get("revision_note", "").strip() or None
+            submitted_amount_raw = request.form.get("submitted_amount", "").strip()
+            submitted_amount = None
+            if submitted_amount_raw:
+                try:
+                    submitted_amount = float(submitted_amount_raw.replace(",", ""))
+                except ValueError:
+                    pass
+            t = Takeoff(
+                project_id=project_id,
+                name=name,
+                status=status,
+                revision_note=revision_note,
+                submitted_amount=submitted_amount,
+                created_by_user_id=current_user.id,
+            )
+            db.session.add(t)
+            db.session.commit()
+            flash(f"Takeoff '{name}' created.", "success")
+            return redirect(url_for("takeoff_detail", takeoff_id=t.id))
+        return render_template(
+            "takeoff_form.html",
+            project=project,
+            takeoff=None,
+            takeoff_statuses=TAKEOFF_STATUSES,
+        )
+
+    @app.route("/takeoffs/<int:takeoff_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def edit_takeoff(takeoff_id):
+        takeoff = db.session.get(Takeoff, takeoff_id) or abort(404)
+        project = takeoff.project
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        if request.method == "POST":
+            takeoff.name = request.form.get("name", "").strip() or takeoff.name
+            status = request.form.get("status", "Draft")
+            if status in TAKEOFF_STATUSES:
+                takeoff.status = status
+            takeoff.revision_note = request.form.get("revision_note", "").strip() or None
+            submitted_amount_raw = request.form.get("submitted_amount", "").strip()
+            if submitted_amount_raw:
+                try:
+                    takeoff.submitted_amount = float(submitted_amount_raw.replace(",", ""))
+                except ValueError:
+                    pass
+            else:
+                takeoff.submitted_amount = None
+            db.session.commit()
+            flash("Takeoff updated.", "success")
+            return redirect(url_for("takeoff_detail", takeoff_id=takeoff.id))
+        return render_template(
+            "takeoff_form.html",
+            project=project,
+            takeoff=takeoff,
+            takeoff_statuses=TAKEOFF_STATUSES,
+        )
+
+    @app.route("/takeoffs/<int:takeoff_id>")
+    @login_required
+    def takeoff_detail(takeoff_id):
+        takeoff = db.session.get(Takeoff, takeoff_id) or abort(404)
+        project = takeoff.project
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        batches = QuoteBatch.query.filter_by(takeoff_id=takeoff_id).order_by(QuoteBatch.created_at.desc()).all()
+        summaries = ComparisonSummary.query.filter_by(takeoff_id=takeoff_id).order_by(ComparisonSummary.generated_at.desc()).all()
+        reports = Report.query.filter_by(takeoff_id=takeoff_id).order_by(Report.created_at.desc()).all()
+        return render_template(
+            "takeoff_detail.html",
+            project=project,
+            takeoff=takeoff,
+            batches=batches,
+            summaries=summaries,
+            reports=reports,
+        )
 
     # ── Drawing Routes ──────────────────────────────────────────
 
@@ -1456,6 +1609,7 @@ def create_app():
             entry["staged_filename"] = safe_name
             entries.append(entry)
 
+        active_takeoff = _get_active_takeoff(project_id)
         batch = QuoteBatch(
             batch_id=batch_id,
             project_id=project_id,
@@ -1463,6 +1617,7 @@ def create_app():
             status="reviewing",
             category_tag=category_tag or None,
             entries_json=json.dumps(entries),
+            takeoff_id=active_takeoff.id,
         )
         db.session.add(batch)
         db.session.commit()
@@ -1795,10 +1950,12 @@ def create_app():
                 skippy_data = _generate_skippy_recommendation(api_key, project, items, category_tag)
                 if skippy_data is not None:
                     if not summary_obj:
+                        active_takeoff = _get_active_takeoff(project_id)
                         summary_obj = ComparisonSummary(
                             project_id=project_id,
                             category_tag=category_tag,
                             summary_text="",
+                            takeoff_id=active_takeoff.id,
                         )
                         db.session.add(summary_obj)
                     summary_obj.skippy_recommendation = json.dumps(skippy_data)
@@ -1862,10 +2019,12 @@ def create_app():
             return jsonify({"ok": False, "error": "Failed to generate recommendation."}), 500
 
         if not summary_obj:
+            active_takeoff = _get_active_takeoff(project_id)
             summary_obj = ComparisonSummary(
                 project_id=project_id,
                 category_tag=category_tag,
                 summary_text="",
+                takeoff_id=active_takeoff.id,
             )
             db.session.add(summary_obj)
 

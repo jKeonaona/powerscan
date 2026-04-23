@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{% if takeoff %}Edit Takeoff{% else %}New Takeoff{% endif %} — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-7">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    {% if current_user.role == 'superadmin' %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+                    {% endif %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('takeoffs_list', project_id=project.id) }}">Takeoffs</a></li>
+                    {% if takeoff %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('takeoff_detail', takeoff_id=takeoff.id) }}">{{ takeoff.name }}</a></li>
+                    <li class="breadcrumb-item active">Edit</li>
+                    {% else %}
+                    <li class="breadcrumb-item active">New Takeoff</li>
+                    {% endif %}
+                </ol>
+            </nav>
+
+            <h2 class="mb-4">{% if takeoff %}Edit Takeoff{% else %}New Takeoff{% endif %}</h2>
+
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <form method="POST">
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label fw-medium">Name</label>
+                            <input type="text" class="form-control" id="name" name="name" required autofocus
+                                   value="{{ takeoff.name if takeoff else '' }}"
+                                   placeholder="e.g. Rev 1 — Initial Estimate">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="status" class="form-label fw-medium">Status</label>
+                            <select class="form-select" id="status" name="status">
+                                {% for s in takeoff_statuses %}
+                                <option value="{{ s }}"
+                                    {% if takeoff and takeoff.status == s %}selected
+                                    {% elif not takeoff and s == 'Draft' %}selected
+                                    {% endif %}>{{ s }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Final takeoffs are used as the active scope version for this project.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="revision_note" class="form-label fw-medium">Revision Note <span class="text-muted fw-normal">(optional)</span></label>
+                            <textarea class="form-control" id="revision_note" name="revision_note" rows="2"
+                                      placeholder="e.g. Added Zone 4 blast scope per addendum 2">{{ takeoff.revision_note if takeoff else '' }}</textarea>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="submitted_amount" class="form-label fw-medium">Submitted Amount <span class="text-muted fw-normal">(optional)</span></label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number" step="0.01" min="0" class="form-control" id="submitted_amount"
+                                       name="submitted_amount"
+                                       value="{{ takeoff.submitted_amount if takeoff and takeoff.submitted_amount else '' }}"
+                                       placeholder="0.00">
+                            </div>
+                            <div class="form-text">The total bid amount submitted for this takeoff revision.</div>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                {% if takeoff %}
+                                <i class="bi bi-check-lg"></i> Save Changes
+                                {% else %}
+                                <i class="bi bi-plus-lg"></i> Create Takeoff
+                                {% endif %}
+                            </button>
+                            <a href="{% if takeoff %}{{ url_for('takeoff_detail', takeoff_id=takeoff.id) }}{% else %}{{ url_for('takeoffs_list', project_id=project.id) }}{% endif %}"
+                               class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

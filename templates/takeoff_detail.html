@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}{{ takeoff.name }} — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            {% endif %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('takeoffs_list', project_id=project.id) }}">Takeoffs</a></li>
+            <li class="breadcrumb-item active">{{ takeoff.name }}</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2 class="mb-1">{{ takeoff.name }}</h2>
+            <div class="d-flex align-items-center gap-2 mb-2">
+                {% if takeoff.status == 'Final' %}
+                <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">Final</span>
+                {% else %}
+                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">Draft</span>
+                {% endif %}
+                <span class="text-muted small">Created {{ takeoff.created_at.strftime('%b %d, %Y') }}</span>
+                {% if takeoff.created_by %}
+                <span class="text-muted small">by {{ takeoff.created_by.username }}</span>
+                {% endif %}
+            </div>
+            {% if takeoff.revision_note %}
+            <p class="text-muted mb-1">{{ takeoff.revision_note }}</p>
+            {% endif %}
+            {% if takeoff.submitted_amount %}
+            <div class="fw-semibold fs-5">Submitted: ${{ "{:,.2f}".format(takeoff.submitted_amount) }}</div>
+            {% endif %}
+        </div>
+        {% if current_user.is_admin %}
+        <a href="{{ url_for('edit_takeoff', takeoff_id=takeoff.id) }}" class="btn btn-sm btn-outline-secondary flex-shrink-0 ms-3">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        {% endif %}
+    </div>
+
+    <div class="row g-4">
+
+        <!-- Quote Batches -->
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span class="fw-semibold">Quote Batches</span>
+                    <span class="badge bg-secondary">{{ batches | length }}</span>
+                </div>
+                {% if batches %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Category</th>
+                                <th>Status</th>
+                                <th>Uploaded</th>
+                                <th>By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for b in batches %}
+                            <tr>
+                                <td>{{ b.category_tag or '—' }}</td>
+                                <td><span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle">{{ b.status }}</span></td>
+                                <td class="text-muted small">{{ b.created_at.strftime('%b %d, %Y') }}</td>
+                                <td class="text-muted small">{{ b.user.username if b.user else '—' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="card-body text-muted small">No quote batches linked to this takeoff yet.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Comparison Summaries -->
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span class="fw-semibold">Comparison Summaries</span>
+                    <span class="badge bg-secondary">{{ summaries | length }}</span>
+                </div>
+                {% if summaries %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Category</th>
+                                <th>Generated</th>
+                                <th>Skippy</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in summaries %}
+                            <tr>
+                                <td>
+                                    <a href="{{ url_for('quote_compare', project_id=project.id, category_tag=s.category_tag) }}"
+                                       class="text-decoration-none">{{ s.category_tag }}</a>
+                                </td>
+                                <td class="text-muted small">{{ s.generated_at.strftime('%b %d, %Y') }}</td>
+                                <td>
+                                    {% if s.skippy_recommendation %}
+                                    <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">Yes</span>
+                                    {% else %}
+                                    <span class="text-muted small">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="card-body text-muted small">No comparison summaries linked to this takeoff yet.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Reports -->
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span class="fw-semibold">Reports</span>
+                    <span class="badge bg-secondary">{{ reports | length }}</span>
+                </div>
+                {% if reports %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Template</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in reports %}
+                            <tr>
+                                <td>{{ r.template_name }}</td>
+                                <td><span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle">{{ r.status }}</span></td>
+                                <td class="text-muted small">{{ r.created_at.strftime('%b %d, %Y') }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="card-body text-muted small">No reports linked to this takeoff yet.</div>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

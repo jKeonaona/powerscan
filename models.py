@@ -55,6 +55,8 @@ class Company(db.Model):
 
 PROJECT_STATUSES = ["Active", "On Hold", "Complete", "Archived"]
 
+TAKEOFF_STATUSES = ["Draft", "Final"]
+
 
 class Project(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -79,6 +81,20 @@ class Project(db.Model):
             return json.loads(self.work_scope)
         except Exception:
             return []
+
+
+class Takeoff(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    name = db.Column(db.String(200), nullable=False, default="New Takeoff")
+    status = db.Column(db.String(32), nullable=False, default="Draft")
+    revision_note = db.Column(db.Text, nullable=True)
+    submitted_amount = db.Column(db.Numeric(14, 2), nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+
+    project = db.relationship("Project", backref="takeoffs")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
 
 
 class Drawing(db.Model):
@@ -254,11 +270,13 @@ class ComparisonSummary(db.Model):
     summary_text = db.Column(db.Text, nullable=False)
     generated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     skippy_recommendation = db.Column(db.Text, nullable=True)
+    takeoff_id = db.Column(db.Integer, db.ForeignKey("takeoff.id"), nullable=True)
     # Reserved for v2 Bid / Scope Option layers
     bid_id = db.Column(db.Integer, nullable=True)
     scope_option = db.Column(db.String(100), nullable=True)
 
     project = db.relationship("Project")
+    takeoff = db.relationship("Takeoff", backref="comparison_summaries")
 
 
 class QuoteComparisonExport(db.Model):
@@ -290,8 +308,11 @@ class QuoteBatch(db.Model):
     category_tag = db.Column(db.String(100), nullable=True)
     entries_json = db.Column(db.Text, nullable=True)
 
+    takeoff_id = db.Column(db.Integer, db.ForeignKey("takeoff.id"), nullable=True)
+
     project = db.relationship("Project")
     user = db.relationship("User")
+    takeoff = db.relationship("Takeoff", backref="quote_batches")
 
 
 class Report(db.Model):
@@ -307,5 +328,8 @@ class Report(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = db.Column(db.DateTime, nullable=True)
 
+    takeoff_id = db.Column(db.Integer, db.ForeignKey("takeoff.id"), nullable=True)
+
     project = db.relationship("Project", backref=db.backref("reports", cascade="all, delete-orphan"))
     user = db.relationship("User")
+    takeoff = db.relationship("Takeoff", backref="reports")
