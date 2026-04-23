@@ -134,12 +134,21 @@ def _run_migrations(database):
         ("quote_batch", "takeoff_id", "INTEGER"),
         ("report", "takeoff_id", "INTEGER"),
         ("takeoff", "scopes", "TEXT"),
+        ("intelligence_item", "content_hash", "VARCHAR(64)"),
     ]
     for table, column, col_def in migrations:
         try:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
         except Exception:
             pass  # Column already exists
+    # Indexes that may be missing on existing databases
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intelligence_item_content_hash "
+            "ON intelligence_item(content_hash)"
+        )
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -495,6 +504,30 @@ def _do_archive_sweep(app=None):
     return _run()
 
 
+def backfill_content_hashes(library_folder):
+    """Idempotent: compute SHA-256 for IntelligenceItems whose file exists but content_hash is NULL."""
+    import hashlib
+    items = IntelligenceItem.query.filter(
+        IntelligenceItem.content_hash.is_(None),
+        IntelligenceItem.file_path.isnot(None),
+    ).all()
+    total = len(items)
+    hashed = 0
+    for idx, item in enumerate(items):
+        fpath = os.path.join(library_folder, item.file_path)
+        if not os.path.exists(fpath):
+            print(f"[backfill_content_hashes] WARNING: file missing for item {item.id} ({item.file_path})")
+            continue
+        with open(fpath, "rb") as fh:
+            item.content_hash = hashlib.sha256(fh.read()).hexdigest()
+        hashed += 1
+        if hashed % 50 == 0:
+            db.session.commit()
+    if hashed % 50 != 0:
+        db.session.commit()
+    print(f"[backfill_content_hashes] hashed {hashed} of {total} items")
+
+
 def migrate_projects_to_takeoffs():
     """Idempotent: create one Draft takeoff per project that has no takeoffs yet."""
     projects = Project.query.all()
@@ -653,6 +686,8 @@ def create_app():
         rename_legacy_initial_takeoffs()
         # Backfill scopes on any takeoffs where scopes is still NULL
         backfill_takeoff_scopes()
+        # Compute SHA-256 content hashes for existing library files
+        backfill_content_hashes(app.config["LIBRARY_FOLDER"])
 
     # Start background conversion worker thread
     start_worker(app)
@@ -1696,6 +1731,7 @@ def create_app():
     @login_required
     @admin_required
     def bulk_quote_intake_post(project_id):
+        import hashlib
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
@@ -1720,14 +1756,59 @@ def create_app():
 
         api_key = app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
 
-        entries = []
+        # Save all files to staging and compute SHA-256 hashes
+        staged = []
         for f in files:
             ext = os.path.splitext(f.filename)[1].lower()
             safe_name = uuid.uuid4().hex + ext
             dest = os.path.join(staging_dir, safe_name)
             f.save(dest)
-            entry = _extract_quote_file(api_key, dest, f.filename)
-            entry["staged_filename"] = safe_name
+            with open(dest, "rb") as fh:
+                content_hash = hashlib.sha256(fh.read()).hexdigest()
+            staged.append({
+                "safe_name": safe_name,
+                "original_filename": f.filename,
+                "content_hash": content_hash,
+                "dest": dest,
+            })
+
+        # Layer 1: within-session dedup — keep first occurrence of each hash
+        seen_hashes = {}
+        deduped = []
+        duplicates_within_session = 0
+        for s in staged:
+            h = s["content_hash"]
+            if h in seen_hashes:
+                os.remove(s["dest"])
+                duplicates_within_session += 1
+            else:
+                seen_hashes[h] = True
+                deduped.append(s)
+
+        # Run AI extraction and Layer 2 project-level duplicate check
+        entries = []
+        for s in deduped:
+            entry = _extract_quote_file(api_key, s["dest"], s["original_filename"])
+            entry["staged_filename"] = s["safe_name"]
+            entry["content_hash"] = s["content_hash"]
+
+            # Layer 2: check for matching hash in this project's library
+            existing = IntelligenceItem.query.filter_by(
+                project_id=project_id,
+                content_hash=s["content_hash"],
+            ).first()
+            if existing:
+                existing_category = existing.tags[0].name if existing.tags else ""
+                existing_by = ""
+                if existing.uploader:
+                    existing_by = existing.uploader.username or existing.uploader.email
+                entry["is_duplicate_of_existing"] = True
+                entry["existing_item_id"] = existing.id
+                entry["existing_item_title"] = existing.title
+                entry["existing_item_uploaded_date"] = existing.created_at.strftime("%b %d, %Y")
+                entry["existing_item_uploaded_by"] = existing_by
+                entry["existing_item_category"] = existing_category
+
             entries.append(entry)
 
         active_takeoff = _get_active_takeoff(project_id)
@@ -1737,7 +1818,10 @@ def create_app():
             user_id=current_user.id,
             status="reviewing",
             category_tag=category_tag or None,
-            entries_json=json.dumps(entries),
+            entries_json=json.dumps({
+                "duplicates_within_session": duplicates_within_session,
+                "entries": entries,
+            }),
             takeoff_id=active_takeoff.id,
         )
         db.session.add(batch)
@@ -1754,7 +1838,13 @@ def create_app():
         batch = QuoteBatch.query.filter_by(batch_id=batch_id, project_id=project_id).first() or abort(404)
         if batch.user_id != current_user.id and not current_user.is_superadmin:
             abort(403)
-        entries = json.loads(batch.entries_json or "[]")
+        raw = json.loads(batch.entries_json or "[]")
+        if isinstance(raw, list):
+            entries = raw
+            duplicates_within_session = 0
+        else:
+            entries = raw.get("entries", [])
+            duplicates_within_session = raw.get("duplicates_within_session", 0)
         return render_template(
             "bulk_quote_review.html",
             project=project,
@@ -1762,6 +1852,7 @@ def create_app():
             entries=entries,
             allowed_flags=_ALLOWED_FLAGS,
             entry_count=len(entries),
+            duplicates_within_session=duplicates_within_session,
         )
 
     @app.route("/projects/<int:project_id>/quotes/bulk-intake/review/<batch_id>/save", methods=["POST"])
@@ -1776,14 +1867,50 @@ def create_app():
             abort(403)
 
         staging_dir = os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", batch_id)
-        entries = json.loads(batch.entries_json or "[]")
+        raw = json.loads(batch.entries_json or "[]")
+        if isinstance(raw, list):
+            entries = raw
+        else:
+            entries = raw.get("entries", [])
         entry_count = int(request.form.get("entry_count", len(entries)))
         saved = 0
+        skipped_dupes = 0
+        replaced_dupes = 0
 
         for i in range(entry_count):
             prefix = f"entry_{i}_"
+            entry = entries[i] if i < len(entries) else {}
+
             if request.form.get(prefix + "remove"):
                 continue
+
+            # Handle duplicate decision before the rest of the save logic
+            if entry.get("is_duplicate_of_existing"):
+                dup_action = request.form.get(f"duplicate_action_{i}", "skip")
+                if dup_action == "skip":
+                    staged_fn = request.form.get(prefix + "staged_filename", "")
+                    if staged_fn:
+                        staged_path = os.path.join(staging_dir, staged_fn)
+                        if os.path.exists(staged_path):
+                            os.remove(staged_path)
+                    skipped_dupes += 1
+                    continue
+                if dup_action == "replace":
+                    old_id = entry.get("existing_item_id")
+                    if old_id:
+                        old_item = db.session.get(IntelligenceItem, int(old_id))
+                        if old_item:
+                            if old_item.file_path:
+                                old_fpath = os.path.join(app.config["LIBRARY_FOLDER"], old_item.file_path)
+                                if os.path.exists(old_fpath):
+                                    os.remove(old_fpath)
+                            for tag in list(old_item.tags):
+                                if tag.usage_count > 0:
+                                    tag.usage_count -= 1
+                            db.session.delete(old_item)
+                            db.session.flush()
+                    replaced_dupes += 1
+                # "upload" or post-replace: fall through to normal save
 
             staged_filename = request.form.get(prefix + "staged_filename", "")
             original_filename = request.form.get(prefix + "original_filename", staged_filename)
@@ -1869,6 +1996,7 @@ def create_app():
                 pricing_items_json=json.dumps(pricing_rows) if pricing_rows else None,
                 flags_json=json.dumps(valid_flags) if valid_flags else None,
                 extraction_status=extraction_status,
+                content_hash=entry.get("content_hash"),
             )
             db.session.add(item)
             db.session.flush()
@@ -1895,10 +2023,12 @@ def create_app():
         if os.path.isdir(staging_dir):
             shutil.rmtree(staging_dir, ignore_errors=True)
 
-        flash(
-            f"{saved} quote{'s' if saved != 1 else ''} saved to the Intelligence Library.",
-            "success",
-        )
+        parts = [f"{saved} quote{'s' if saved != 1 else ''} saved to the Intelligence Library."]
+        if skipped_dupes:
+            parts.append(f"Skipped {skipped_dupes} duplicate{'s' if skipped_dupes != 1 else ''}.")
+        if replaced_dupes:
+            parts.append(f"Replaced {replaced_dupes} existing {'entries' if replaced_dupes != 1 else 'entry'}.")
+        flash(" ".join(parts), "success")
         return redirect(url_for("intelligence_library") + f"?project_id={project_id}")
 
     @app.route("/projects/<int:project_id>/quotes/bulk-intake/review/<batch_id>/cancel", methods=["POST"])

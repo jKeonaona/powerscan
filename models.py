@@ -249,6 +249,7 @@ class IntelligenceItem(db.Model):
     vendor_contact = db.Column(db.Text, nullable=True)
     quote_date = db.Column(db.Date, nullable=True)
     expiration_date = db.Column(db.Date, nullable=True)
+    content_hash = db.Column(db.String(64), nullable=True, index=True)
     # Shortlist fields (v1: shortlisted within a category; v2 will populate bid_id/scope_option)
     shortlisted = db.Column(db.Boolean, nullable=False, default=False)
     shortlist_notes = db.Column(db.Text, nullable=True)
