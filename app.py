@@ -1454,8 +1454,8 @@ def create_app():
             return render_template("takeoff_import_upload.html", project=project, takeoff=takeoff)
 
         fname = secure_filename(f.filename)
-        if not fname.lower().endswith(".xlsm"):
-            flash("Only .xlsm files are accepted.", "danger")
+        if not fname.lower().endswith((".xlsm", ".xlsx")):
+            flash("Only .xlsm or .xlsx files are accepted.", "danger")
             return render_template("takeoff_import_upload.html", project=project, takeoff=takeoff)
 
         f.seek(0, 2)
