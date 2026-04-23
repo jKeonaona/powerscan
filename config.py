@@ -23,7 +23,7 @@ class Config:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
     PROCESSED_FOLDER = os.path.join(BASE_DIR, "processed")
     REPORTS_FOLDER = os.path.join(BASE_DIR, "reports_output")
-    MAX_CONTENT_LENGTH = 100 * 1024 * 1024
+    MAX_CONTENT_LENGTH = 500 * 1024 * 1024
     ANTHROPIC_API_KEY = _key
 
     # ── Email notifications (Resend HTTP API) ───────────────────
