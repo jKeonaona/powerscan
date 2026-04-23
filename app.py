@@ -10,6 +10,7 @@ from flask import (
     Flask, render_template, request, redirect, url_for, flash,
     send_from_directory, send_file, jsonify, abort,
 )
+from werkzeug.utils import secure_filename
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user,
 )
@@ -33,6 +34,7 @@ from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
 from calculations import calculate_painting_quantities, has_any_inputs
+from xlsm_importer import parse_estimate_workbook
 
 
 CCC_ADMIN_SEEDS = [
@@ -717,6 +719,68 @@ def _get_active_takeoff(project_id):
     return t
 
 
+_LAYERS = ["primer", "second_primer", "stripe_prime", "stripe_intermediate", "intermediate", "finish"]
+_ALL_LABOR_TASKS = [
+    "mobilize", "equip_setup", "scaffold", "containment", "masking",
+    "pressure_wash", "caulking", "blast", "primer_labor",
+    "second_primer_labor", "stripe_prime_labor", "stripe_intermediate_labor",
+    "intermediate_labor", "finish_labor", "traffic_control",
+    "inspection_touchup", "osha_training",
+]
+_TIME_TASKS = ["mobilize", "equip_setup", "scaffold", "traffic_control", "inspection_touchup", "osha_training"]
+
+
+def _apply_takeoff_inputs(takeoff, form):
+    """
+    Write all takeoff input fields from a form-like mapping onto a Takeoff
+    record. Does NOT commit — caller is responsible for db.session.commit().
+    `form` may be flask.request.form or any dict-like object.
+    """
+    def _num(field, scale=2):
+        v = (form.get(field) or "").strip()
+        if not v:
+            return None
+        try:
+            return round(float(v), scale)
+        except (ValueError, TypeError):
+            return None
+
+    def _int(field):
+        v = (form.get(field) or "").strip()
+        if not v:
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
+
+    def _str(field):
+        return (form.get(field) or "").strip() or None
+
+    takeoff.deck_area_sf = _num("deck_area_sf")
+    takeoff.blast_level = _str("blast_level")
+    takeoff.abrasive_type = _str("abrasive_type")
+    takeoff.abrasive_lb_per_sf = _num("abrasive_lb_per_sf", 3)
+
+    for layer in _LAYERS:
+        setattr(takeoff, f"{layer}_vol_pct", _num(f"{layer}_vol_pct"))
+        setattr(takeoff, f"{layer}_mils", _num(f"{layer}_mils"))
+        setattr(takeoff, f"{layer}_gal", _num(f"{layer}_gal"))
+
+    for task in _ALL_LABOR_TASKS:
+        setattr(takeoff, f"{task}_sf_per_hr", _num(f"{task}_sf_per_hr"))
+        setattr(takeoff, f"{task}_workers_per_nozzle", _num(f"{task}_workers_per_nozzle"))
+
+    for task in _TIME_TASKS:
+        setattr(takeoff, f"{task}_hrs_per_day", _num(f"{task}_hrs_per_day"))
+        setattr(takeoff, f"{task}_days", _num(f"{task}_days"))
+
+    takeoff.shift_hours_per_day = _num("shift_hours_per_day")
+    takeoff.shift_days_total = _num("shift_days_total")
+    takeoff.crew_size = _int("crew_size")
+    takeoff.shifts_per_day = _int("shifts_per_day")
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -1365,66 +1429,71 @@ def create_app():
             abort(403)
 
         if request.method == "POST":
-            def _num(field, scale=2):
-                v = request.form.get(field, "").strip()
-                if not v:
-                    return None
-                try:
-                    return round(float(v), scale)
-                except (ValueError, TypeError):
-                    return None
-
-            def _int(field):
-                v = request.form.get(field, "").strip()
-                if not v:
-                    return None
-                try:
-                    return int(v)
-                except (ValueError, TypeError):
-                    return None
-
-            def _str(field):
-                return request.form.get(field, "").strip() or None
-
-            # Project parameters
-            takeoff.deck_area_sf = _num("deck_area_sf")
-            takeoff.blast_level = _str("blast_level")
-            takeoff.abrasive_type = _str("abrasive_type")
-            takeoff.abrasive_lb_per_sf = _num("abrasive_lb_per_sf", 3)
-
-            # Materials
-            for layer in ["primer", "second_primer", "stripe_prime", "stripe_intermediate", "intermediate", "finish"]:
-                setattr(takeoff, f"{layer}_vol_pct", _num(f"{layer}_vol_pct"))
-                setattr(takeoff, f"{layer}_mils", _num(f"{layer}_mils"))
-                setattr(takeoff, f"{layer}_gal", _num(f"{layer}_gal"))
-
-            # Labor — SF/HR + workers/nozzle for all tasks
-            for task in [
-                "mobilize", "equip_setup", "scaffold", "containment", "masking",
-                "pressure_wash", "caulking", "blast", "primer_labor",
-                "second_primer_labor", "stripe_prime_labor", "stripe_intermediate_labor",
-                "intermediate_labor", "finish_labor", "traffic_control",
-                "inspection_touchup", "osha_training",
-            ]:
-                setattr(takeoff, f"{task}_sf_per_hr", _num(f"{task}_sf_per_hr"))
-                setattr(takeoff, f"{task}_workers_per_nozzle", _num(f"{task}_workers_per_nozzle"))
-
-            # Labor — time-based tasks
-            for task in ["mobilize", "equip_setup", "scaffold", "traffic_control", "inspection_touchup", "osha_training"]:
-                setattr(takeoff, f"{task}_hrs_per_day", _num(f"{task}_hrs_per_day"))
-                setattr(takeoff, f"{task}_days", _num(f"{task}_days"))
-
-            # Shift structure
-            takeoff.shift_hours_per_day = _num("shift_hours_per_day")
-            takeoff.shift_days_total = _num("shift_days_total")
-            takeoff.crew_size = _int("crew_size")
-            takeoff.shifts_per_day = _int("shifts_per_day")
-
+            _apply_takeoff_inputs(takeoff, request.form)
             db.session.commit()
             flash("Takeoff inputs saved.", "success")
             return redirect(url_for("takeoff_inputs", takeoff_id=takeoff_id))
 
         return render_template("takeoff_inputs.html", project=project, takeoff=takeoff)
+
+    @app.route("/takeoffs/<int:takeoff_id>/import-xlsm", methods=["GET", "POST"])
+    @login_required
+    def import_xlsm(takeoff_id):
+        takeoff = db.session.get(Takeoff, takeoff_id) or abort(404)
+        project = takeoff.project
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        if request.method == "GET":
+            return render_template("takeoff_import_upload.html", project=project, takeoff=takeoff)
+
+        # POST — parse the uploaded workbook
+        f = request.files.get("xlsm_file")
+        if not f or not f.filename:
+            flash("No file selected.", "danger")
+            return render_template("takeoff_import_upload.html", project=project, takeoff=takeoff)
+
+        fname = secure_filename(f.filename)
+        if not fname.lower().endswith(".xlsm"):
+            flash("Only .xlsm files are accepted.", "danger")
+            return render_template("takeoff_import_upload.html", project=project, takeoff=takeoff)
+
+        f.seek(0, 2)
+        file_size = f.tell()
+        f.seek(0)
+        if file_size > 10 * 1024 * 1024:
+            flash("File exceeds the 10 MB size limit.", "danger")
+            return render_template("takeoff_import_upload.html", project=project, takeoff=takeoff)
+
+        try:
+            parsed = parse_estimate_workbook(f.stream)
+        except Exception as exc:
+            app.logger.error("XLSM parse error for takeoff %s: %s", takeoff_id, exc)
+            flash(f"Could not parse workbook: {exc}", "danger")
+            return render_template("takeoff_import_upload.html", project=project, takeoff=takeoff)
+
+        found_count = sum(1 for v in parsed.values() if v is not None)
+        return render_template(
+            "takeoff_import_review.html",
+            project=project,
+            takeoff=takeoff,
+            parsed=parsed,
+            found_count=found_count,
+            total_count=len(parsed),
+            filename=fname,
+        )
+
+    @app.route("/takeoffs/<int:takeoff_id>/import-xlsm/save", methods=["POST"])
+    @login_required
+    def import_xlsm_save(takeoff_id):
+        takeoff = db.session.get(Takeoff, takeoff_id) or abort(404)
+        project = takeoff.project
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        _apply_takeoff_inputs(takeoff, request.form)
+        db.session.commit()
+        flash("Takeoff inputs imported and saved.", "success")
+        return redirect(url_for("takeoff_inputs", takeoff_id=takeoff_id))
 
     # ── Drawing Routes ──────────────────────────────────────────
 

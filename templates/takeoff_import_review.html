@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% block title %}Review Import — {{ takeoff.name }} — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            {% endif %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('takeoffs_list', project_id=project.id) }}">Takeoffs</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('takeoff_detail', takeoff_id=takeoff.id) }}">{{ takeoff.name }}</a></li>
+            <li class="breadcrumb-item active">Review Import</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-file-earmark-check"></i> Review Parsed Values</h2>
+            <p class="text-muted mb-0">
+                From <strong>{{ filename }}</strong> &mdash;
+                {{ found_count }} of {{ total_count }} fields parsed.
+                {% if found_count < total_count %}
+                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1">
+                    {{ total_count - found_count }} not found
+                </span>
+                {% endif %}
+            </p>
+        </div>
+        <a href="{{ url_for('import_xlsm', takeoff_id=takeoff.id) }}"
+           class="btn btn-sm btn-outline-secondary flex-shrink-0 ms-3">
+            <i class="bi bi-arrow-left"></i> Upload different file
+        </a>
+    </div>
+
+    {% if found_count < total_count %}
+    <div class="alert alert-warning d-flex gap-2 align-items-start mb-3">
+        <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
+        <div>
+            <strong>{{ total_count - found_count }} field(s) were not found in the workbook.</strong>
+            Fields with a yellow background could not be located — enter the correct values manually before saving.
+            Cell addresses can be added to <code>xlsm_importer.py</code> to activate automatic parsing for future uploads.
+        </div>
+    </div>
+    {% endif %}
+
+    {# Helper macro: render one input with yellow flag when value is None #}
+    {% macro field_input(name, val, type="number", step="0.01", placeholder="", extra_class="") %}
+    {% set missing = val is none %}
+    <input type="{{ type }}"
+           class="form-control {{ extra_class }} {% if missing %}border-warning bg-warning-subtle{% endif %}"
+           name="{{ name }}"
+           {% if step %}step="{{ step }}"{% endif %}
+           {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+           value="{{ val if val is not none else '' }}">
+    {% if missing %}
+    <div class="form-text text-warning-emphasis">
+        <i class="bi bi-exclamation-triangle"></i> not found in workbook
+    </div>
+    {% endif %}
+    {% endmacro %}
+
+    {% macro text_input(name, val, placeholder="") %}
+    {% set missing = val is none %}
+    <input type="text"
+           class="form-control {% if missing %}border-warning bg-warning-subtle{% endif %}"
+           name="{{ name }}"
+           {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+           value="{{ val if val is not none else '' }}">
+    {% if missing %}
+    <div class="form-text text-warning-emphasis">
+        <i class="bi bi-exclamation-triangle"></i> not found in workbook
+    </div>
+    {% endif %}
+    {% endmacro %}
+
+    <form method="POST" action="{{ url_for('import_xlsm_save', takeoff_id=takeoff.id) }}">
+
+        <!-- Tab navigation -->
+        <ul class="nav nav-tabs mb-0" id="importTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="itab-params" data-bs-toggle="tab"
+                        data-bs-target="#ipane-params" type="button" role="tab">
+                    <i class="bi bi-rulers"></i> Project Parameters
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="itab-materials" data-bs-toggle="tab"
+                        data-bs-target="#ipane-materials" type="button" role="tab">
+                    <i class="bi bi-layers"></i> Materials
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="itab-labor" data-bs-toggle="tab"
+                        data-bs-target="#ipane-labor" type="button" role="tab">
+                    <i class="bi bi-people"></i> Labor
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="itab-shift" data-bs-toggle="tab"
+                        data-bs-target="#ipane-shift" type="button" role="tab">
+                    <i class="bi bi-clock"></i> Shift
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content border border-top-0 rounded-bottom p-4 bg-white shadow-sm mb-4" id="importTabContent">
+
+            <!-- ── Tab 1: Project Parameters ─────────────────────────────── -->
+            <div class="tab-pane fade show active" id="ipane-params" role="tabpanel">
+                <div class="row g-3 mt-1">
+                    <div class="col-md-4">
+                        <label class="form-label fw-medium">Deck Area</label>
+                        <div class="input-group has-validation">
+                            {{ field_input("deck_area_sf", parsed.get("deck_area_sf"), placeholder="0.00") }}
+                            <span class="input-group-text">SF</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-medium">Blast Level</label>
+                        {{ text_input("blast_level", parsed.get("blast_level"), placeholder="e.g. SP-5, SP-7, SP-10") }}
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-medium">Abrasive Type</label>
+                        {{ text_input("abrasive_type", parsed.get("abrasive_type"), placeholder="e.g. Steel grit G-25") }}
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-medium">Abrasive LB/SF</label>
+                        <div class="input-group">
+                            {{ field_input("abrasive_lb_per_sf", parsed.get("abrasive_lb_per_sf"), step="0.001", placeholder="0.000") }}
+                            <span class="input-group-text">lb/SF</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Tab 2: Materials ───────────────────────────────────────── -->
+            <div class="tab-pane fade" id="ipane-materials" role="tabpanel">
+                <div class="table-responsive mt-2">
+                    <table class="table table-bordered table-sm align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:22%">Coating Layer</th>
+                                <th>VOL %</th>
+                                <th>Mils (DFT)</th>
+                                <th>Gallons</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set mat_rows = [
+                                ('primer',               'Primer'),
+                                ('second_primer',        '2nd Primer'),
+                                ('stripe_prime',         'Stripe Prime'),
+                                ('stripe_intermediate',  'Stripe Intermediate'),
+                                ('intermediate',         'Intermediate'),
+                                ('finish',               'Finish'),
+                            ] %}
+                            {% for prefix, label in mat_rows %}
+                            <tr>
+                                <td class="fw-medium">{{ label }}</td>
+                                <td>{{ field_input(prefix ~ "_vol_pct", parsed.get(prefix ~ "_vol_pct"), placeholder="%") }}</td>
+                                <td>{{ field_input(prefix ~ "_mils", parsed.get(prefix ~ "_mils"), placeholder="mils") }}</td>
+                                <td>{{ field_input(prefix ~ "_gal", parsed.get(prefix ~ "_gal"), placeholder="GAL") }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ── Tab 3: Labor ───────────────────────────────────────────── -->
+            <div class="tab-pane fade" id="ipane-labor" role="tabpanel">
+
+                <h6 class="fw-semibold mt-3 mb-2">Production Rates</h6>
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:28%">Task</th>
+                                <th>SF / HR</th>
+                                <th>Workers / Nozzle</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set prod_rows = [
+                                ('pressure_wash',             'Pressure Wash'),
+                                ('caulking',                  'Caulking'),
+                                ('blast',                     'Blast'),
+                                ('primer_labor',              'Primer'),
+                                ('second_primer_labor',       '2nd Primer'),
+                                ('stripe_prime_labor',        'Stripe Prime'),
+                                ('stripe_intermediate_labor', 'Stripe Intermediate'),
+                                ('intermediate_labor',        'Intermediate'),
+                                ('finish_labor',              'Finish'),
+                                ('containment',               'Containment'),
+                                ('masking',                   'Masking'),
+                            ] %}
+                            {% for task, label in prod_rows %}
+                            <tr>
+                                <td class="fw-medium">{{ label }}</td>
+                                <td>{{ field_input(task ~ "_sf_per_hr", parsed.get(task ~ "_sf_per_hr"), placeholder="SF/HR") }}</td>
+                                <td>{{ field_input(task ~ "_workers_per_nozzle", parsed.get(task ~ "_workers_per_nozzle"), placeholder="workers") }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <h6 class="fw-semibold mt-4 mb-2">Time-Based Tasks</h6>
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:28%">Task</th>
+                                <th>SF / HR</th>
+                                <th>Workers / Nozzle</th>
+                                <th>Hours / Day</th>
+                                <th>Days</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set time_rows = [
+                                ('mobilize',           'Mobilize'),
+                                ('equip_setup',        'Equip Setup'),
+                                ('scaffold',           'Scaffold'),
+                                ('traffic_control',    'Traffic Control'),
+                                ('inspection_touchup', 'Inspection / Touchup'),
+                                ('osha_training',      'OSHA Training'),
+                            ] %}
+                            {% for task, label in time_rows %}
+                            <tr>
+                                <td class="fw-medium">{{ label }}</td>
+                                <td>{{ field_input(task ~ "_sf_per_hr", parsed.get(task ~ "_sf_per_hr"), placeholder="SF/HR") }}</td>
+                                <td>{{ field_input(task ~ "_workers_per_nozzle", parsed.get(task ~ "_workers_per_nozzle"), placeholder="workers") }}</td>
+                                <td>{{ field_input(task ~ "_hrs_per_day", parsed.get(task ~ "_hrs_per_day"), placeholder="hrs") }}</td>
+                                <td>{{ field_input(task ~ "_days", parsed.get(task ~ "_days"), placeholder="days") }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ── Tab 4: Shift ───────────────────────────────────────────── -->
+            <div class="tab-pane fade" id="ipane-shift" role="tabpanel">
+                <div class="row g-3 mt-1">
+                    <div class="col-md-3">
+                        <label class="form-label fw-medium">Shift Hours / Day</label>
+                        <div class="input-group">
+                            {{ field_input("shift_hours_per_day", parsed.get("shift_hours_per_day"), placeholder="8.00") }}
+                            <span class="input-group-text">hrs</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-medium">Total Project Days</label>
+                        <div class="input-group">
+                            {{ field_input("shift_days_total", parsed.get("shift_days_total"), placeholder="0.00") }}
+                            <span class="input-group-text">days</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-medium">Crew Size</label>
+                        <div class="input-group">
+                            {{ field_input("crew_size", parsed.get("crew_size"), step="1", placeholder="0") }}
+                            <span class="input-group-text">workers</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-medium">Shifts / Day</label>
+                        <div class="input-group">
+                            {{ field_input("shifts_per_day", parsed.get("shifts_per_day"), step="1", placeholder="1") }}
+                            <span class="input-group-text">shifts</span>
+                        </div>
+                        <div class="form-text">1 = single shift, 2 = double shift</div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /tab-content -->
+
+        <div class="d-flex align-items-center gap-3 pb-4">
+            <button type="submit" class="btn btn-primary btn-lg">
+                <i class="bi bi-floppy"></i> Save Inputs
+            </button>
+            <a href="{{ url_for('takeoff_detail', takeoff_id=takeoff.id) }}"
+               class="btn btn-outline-secondary">Discard &amp; Back to Takeoff</a>
+        </div>
+
+    </form>
+</div>
+{% endblock %}

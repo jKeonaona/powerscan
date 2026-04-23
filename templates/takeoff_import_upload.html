@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Import XLSM — {{ takeoff.name }} — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            {% endif %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('takeoffs_list', project_id=project.id) }}">Takeoffs</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('takeoff_detail', takeoff_id=takeoff.id) }}">{{ takeoff.name }}</a></li>
+            <li class="breadcrumb-item active">Import XLSM</li>
+        </ol>
+    </nav>
+
+    <div class="row justify-content-center mt-4">
+        <div class="col-md-6">
+
+            <h2 class="mb-1"><i class="bi bi-file-earmark-spreadsheet"></i> Import from XLSM</h2>
+            <p class="text-muted mb-4">
+                Upload a CCC Estimate Blank workbook to pre-populate the Takeoff input fields.
+                You will be able to review and correct every value before saving.
+            </p>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+            {% endwith %}
+
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <form method="POST" enctype="multipart/form-data">
+                        <div class="mb-4">
+                            <label for="xlsm_file" class="form-label fw-medium">
+                                Estimate Workbook <span class="text-danger">*</span>
+                            </label>
+                            <input type="file" class="form-control" id="xlsm_file" name="xlsm_file"
+                                   accept=".xlsm" required>
+                            <div class="form-text">
+                                Accepts .xlsm only &mdash; CCC Estimate Blank template. Max 10 MB.
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info small mb-4">
+                            <i class="bi bi-info-circle"></i>
+                            The workbook is parsed in memory and never stored on the server.
+                            Parsed values appear on a review screen where you can edit anything
+                            before saving.
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-upload"></i> Upload &amp; Parse
+                            </button>
+                            <a href="{{ url_for('takeoff_detail', takeoff_id=takeoff.id) }}"
+                               class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}
