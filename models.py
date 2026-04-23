@@ -90,11 +90,22 @@ class Takeoff(db.Model):
     status = db.Column(db.String(32), nullable=False, default="Draft")
     revision_note = db.Column(db.Text, nullable=True)
     submitted_amount = db.Column(db.Numeric(14, 2), nullable=True)
+    scopes = db.Column(db.Text, nullable=True)  # JSON list of scope strings
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
 
     project = db.relationship("Project", backref="takeoffs")
     created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+
+    @property
+    def scopes_list(self):
+        if not self.scopes:
+            return []
+        try:
+            import json
+            return json.loads(self.scopes)
+        except Exception:
+            return []
 
 
 class Drawing(db.Model):

@@ -26,7 +26,7 @@
 
             <div class="card shadow-sm">
                 <div class="card-body">
-                    <form method="POST">
+                    <form method="POST" id="takeoffForm">
 
                         <div class="mb-3">
                             <label for="name" class="form-label fw-medium">Name</label>
@@ -66,6 +66,52 @@
                             <div class="form-text">The total bid amount submitted for this takeoff revision.</div>
                         </div>
 
+                        <hr class="my-4">
+
+                        {% set scopes_locked = takeoff and takeoff.status == 'Final' %}
+                        <div class="mb-4">
+                            <label class="form-label fw-medium">
+                                Scopes
+                                <span class="text-danger">*</span>
+                            </label>
+                            {% if scopes_locked %}
+                            <p class="text-muted small mb-2">
+                                <i class="bi bi-lock-fill"></i> Scopes are locked once a takeoff is marked Final.
+                            </p>
+                            {% else %}
+                            <p class="text-muted small mb-2">Select the work scopes this takeoff is pricing. At least one is required.</p>
+                            {% endif %}
+
+                            {% if project_scopes %}
+                            <div class="border rounded p-3 {% if scopes_locked %}bg-light{% endif %}" id="scopesContainer">
+                                <div class="row row-cols-1 row-cols-sm-2 g-2">
+                                    {% for scope in project_scopes %}
+                                    <div class="col">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input scope-checkbox" type="checkbox"
+                                                   name="scopes" value="{{ scope }}"
+                                                   id="scope_{{ loop.index }}"
+                                                   {% if scope in selected_scopes %}checked{% endif %}
+                                                   {% if scopes_locked %}disabled{% endif %}>
+                                            <label class="form-check-label small" for="scope_{{ loop.index }}">
+                                                {{ scope }}
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="mt-2 text-danger small d-none" id="scopeError">
+                                    Please select at least one scope.
+                                </div>
+                            </div>
+                            {% else %}
+                            <div class="text-muted small fst-italic">
+                                This project has no work scopes defined.
+                                <a href="{{ url_for('edit_project', project_id=project.id) }}">Edit the project</a> to add scopes first.
+                            </div>
+                            {% endif %}
+                        </div>
+
                         <div class="d-flex gap-2">
                             <button type="submit" class="btn btn-primary">
                                 {% if takeoff %}
@@ -84,4 +130,18 @@
         </div>
     </div>
 </div>
+
+<script>
+document.getElementById('takeoffForm').addEventListener('submit', function(e) {
+    var locked = {{ 'true' if (takeoff and takeoff.status == 'Final') else 'false' }};
+    if (locked) return; // scopes not editable, skip validation
+    var checked = document.querySelectorAll('.scope-checkbox:checked');
+    var errorEl = document.getElementById('scopeError');
+    if (checked.length === 0) {
+        e.preventDefault();
+        if (errorEl) errorEl.classList.remove('d-none');
+        document.getElementById('scopesContainer').scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+});
+</script>
 {% endblock %}

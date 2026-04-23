@@ -33,8 +33,17 @@
             <p class="text-muted mb-1">{{ takeoff.revision_note }}</p>
             {% endif %}
             {% if takeoff.submitted_amount %}
-            <div class="fw-semibold fs-5">Submitted: ${{ "{:,.2f}".format(takeoff.submitted_amount) }}</div>
+            <div class="fw-semibold fs-5 mb-2">Submitted: ${{ "{:,.2f}".format(takeoff.submitted_amount) }}</div>
             {% endif %}
+            <div class="d-flex flex-wrap gap-1 mt-1">
+                {% if takeoff.scopes_list %}
+                {% for scope in takeoff.scopes_list %}
+                <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">{{ scope }}</span>
+                {% endfor %}
+                {% else %}
+                <span class="text-muted small fst-italic">No scopes specified</span>
+                {% endif %}
+            </div>
         </div>
         {% if current_user.is_admin %}
         <a href="{{ url_for('edit_takeoff', takeoff_id=takeoff.id) }}" class="btn btn-sm btn-outline-secondary flex-shrink-0 ms-3">

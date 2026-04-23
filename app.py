@@ -133,6 +133,7 @@ def _run_migrations(database):
         ("project", "bid_date", "DATE"),
         ("quote_batch", "takeoff_id", "INTEGER"),
         ("report", "takeoff_id", "INTEGER"),
+        ("takeoff", "scopes", "TEXT"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -507,6 +508,7 @@ def migrate_projects_to_takeoffs():
                 name=f"Takeoff {n}",
                 status="Draft",
                 revision_note="Auto-created by migration",
+                scopes=project.work_scope,
             )
             db.session.add(t)
             created += 1
@@ -564,6 +566,18 @@ def rename_legacy_initial_takeoffs():
     print(f"[takeoff_rename] updated {updated} legacy Initial Takeoff records to Takeoff 1 / Draft")
 
 
+def backfill_takeoff_scopes():
+    """Idempotent: copy parent Project scopes to any Takeoff where scopes IS NULL."""
+    takeoffs = Takeoff.query.filter(Takeoff.scopes.is_(None)).all()
+    updated = 0
+    for t in takeoffs:
+        t.scopes = t.project.work_scope
+        updated += 1
+    if updated:
+        db.session.commit()
+    print(f"[backfill_takeoff_scopes] updated {updated} takeoffs")
+
+
 def _get_active_takeoff(project_id):
     """Return the active takeoff for a project (Final if exists, else latest Draft, else create one)."""
     final = (
@@ -580,7 +594,13 @@ def _get_active_takeoff(project_id):
     )
     if draft:
         return draft
-    t = Takeoff(project_id=project_id, name="New Takeoff", status="Draft")
+    project = db.session.get(Project, project_id)
+    t = Takeoff(
+        project_id=project_id,
+        name="New Takeoff",
+        status="Draft",
+        scopes=project.work_scope if project else None,
+    )
     db.session.add(t)
     db.session.commit()
     return t
@@ -631,6 +651,8 @@ def create_app():
         backfill_takeoff_ids()
         # Rename any legacy "Initial Takeoff / Final" records to "Takeoff 1 / Draft"
         rename_legacy_initial_takeoffs()
+        # Backfill scopes on any takeoffs where scopes is still NULL
+        backfill_takeoff_scopes()
 
     # Start background conversion worker thread
     start_worker(app)
@@ -1114,12 +1136,24 @@ def create_app():
                     submitted_amount = float(submitted_amount_raw.replace(",", ""))
                 except ValueError:
                     pass
+            selected_scopes = request.form.getlist("scopes")
+            if not selected_scopes:
+                flash("At least one scope must be selected.", "danger")
+                return render_template(
+                    "takeoff_form.html",
+                    project=project,
+                    takeoff=None,
+                    takeoff_statuses=TAKEOFF_STATUSES,
+                    project_scopes=project.work_scope_list,
+                    selected_scopes=[],
+                )
             t = Takeoff(
                 project_id=project_id,
                 name=name,
                 status=status,
                 revision_note=revision_note,
                 submitted_amount=submitted_amount,
+                scopes=json.dumps(selected_scopes),
                 created_by_user_id=current_user.id,
             )
             db.session.add(t)
@@ -1131,6 +1165,8 @@ def create_app():
             project=project,
             takeoff=None,
             takeoff_statuses=TAKEOFF_STATUSES,
+            project_scopes=project.work_scope_list,
+            selected_scopes=project.work_scope_list,
         )
 
     @app.route("/takeoffs/<int:takeoff_id>/edit", methods=["GET", "POST"])
@@ -1155,6 +1191,20 @@ def create_app():
                     pass
             else:
                 takeoff.submitted_amount = None
+            # Scopes are locked once Final; ignore submitted scopes if so
+            if takeoff.status != "Final":
+                selected_scopes = request.form.getlist("scopes")
+                if not selected_scopes:
+                    flash("At least one scope must be selected.", "danger")
+                    return render_template(
+                        "takeoff_form.html",
+                        project=project,
+                        takeoff=takeoff,
+                        takeoff_statuses=TAKEOFF_STATUSES,
+                        project_scopes=project.work_scope_list,
+                        selected_scopes=takeoff.scopes_list,
+                    )
+                takeoff.scopes = json.dumps(selected_scopes)
             db.session.commit()
             flash("Takeoff updated.", "success")
             return redirect(url_for("takeoff_detail", takeoff_id=takeoff.id))
@@ -1163,6 +1213,8 @@ def create_app():
             project=project,
             takeoff=takeoff,
             takeoff_statuses=TAKEOFF_STATUSES,
+            project_scopes=project.work_scope_list,
+            selected_scopes=takeoff.scopes_list,
         )
 
     @app.route("/takeoffs/<int:takeoff_id>")
