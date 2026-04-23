@@ -495,21 +495,73 @@ def _do_archive_sweep(app=None):
 
 
 def migrate_projects_to_takeoffs():
-    """Idempotent: create one Final takeoff per project that has no takeoffs yet."""
+    """Idempotent: create one Draft takeoff per project that has no takeoffs yet."""
     projects = Project.query.all()
     created = 0
     for project in projects:
         if not project.takeoffs:
+            existing_count = Takeoff.query.filter_by(project_id=project.id).count()
+            n = existing_count + 1
             t = Takeoff(
                 project_id=project.id,
-                name="Initial Takeoff",
-                status="Final",
+                name=f"Takeoff {n}",
+                status="Draft",
+                revision_note="Auto-created by migration",
             )
             db.session.add(t)
             created += 1
     if created:
         db.session.commit()
         print(f"[migrate_projects_to_takeoffs] Created {created} takeoff(s).")
+
+
+def backfill_takeoff_ids():
+    """Idempotent: assign the earliest takeoff per project to records with NULL takeoff_id."""
+    projects = Project.query.all()
+    batch_count = 0
+    summary_count = 0
+    report_count = 0
+    has_report_project_id = hasattr(Report, "project_id")
+    for project in projects:
+        earliest = (
+            Takeoff.query.filter_by(project_id=project.id)
+            .order_by(Takeoff.created_at.asc())
+            .first()
+        )
+        if not earliest:
+            continue
+        batches = QuoteBatch.query.filter_by(project_id=project.id, takeoff_id=None).all()
+        for b in batches:
+            b.takeoff_id = earliest.id
+            batch_count += 1
+        summaries = ComparisonSummary.query.filter_by(project_id=project.id, takeoff_id=None).all()
+        for s in summaries:
+            s.takeoff_id = earliest.id
+            summary_count += 1
+        if has_report_project_id:
+            reports = Report.query.filter_by(project_id=project.id, takeoff_id=None).all()
+            for r in reports:
+                r.takeoff_id = earliest.id
+                report_count += 1
+        else:
+            print("[backfill_takeoff_ids] Report has no project_id column — skipping reports")
+    db.session.commit()
+    print(f"[backfill_takeoff_ids] quote_batches: {batch_count}, comparison_summaries: {summary_count}, reports: {report_count}")
+
+
+def rename_legacy_initial_takeoffs():
+    """One-shot: rename 'Initial Takeoff / Final / Auto-created' records to 'Takeoff 1 / Draft'."""
+    legacy = Takeoff.query.filter_by(name="Initial Takeoff", status="Final").all()
+    updated = 0
+    for t in legacy:
+        # Rename if revision_note is NULL (old migration record) or contains the marker (new)
+        if t.revision_note is None or "Auto-created" in t.revision_note:
+            t.name = "Takeoff 1"
+            t.status = "Draft"
+            updated += 1
+    if updated:
+        db.session.commit()
+    print(f"[takeoff_rename] updated {updated} legacy Initial Takeoff records to Takeoff 1 / Draft")
 
 
 def _get_active_takeoff(project_id):
@@ -573,8 +625,12 @@ def create_app():
 
         # Seed CCC admin accounts (idempotent — skipped if email already exists)
         _seed_ccc_admins()
-        # Create Initial Takeoff for any projects that have none
+        # Create Takeoff shell for any projects that have none
         migrate_projects_to_takeoffs()
+        # Backfill takeoff_id on existing batches/summaries/reports
+        backfill_takeoff_ids()
+        # Rename any legacy "Initial Takeoff / Final" records to "Takeoff 1 / Draft"
+        rename_legacy_initial_takeoffs()
 
     # Start background conversion worker thread
     start_worker(app)
