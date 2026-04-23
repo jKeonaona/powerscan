@@ -1877,6 +1877,21 @@ def create_app():
         skipped_dupes = 0
         replaced_dupes = 0
 
+        # Server-side validation: every non-removed duplicate must have an action
+        missing_actions = []
+        for i in range(entry_count):
+            entry = entries[i] if i < len(entries) else {}
+            if request.form.get(f"entry_{i}_remove"):
+                continue
+            if entry.get("is_duplicate_of_existing") and not request.form.get(f"duplicate_action_{i}"):
+                missing_actions.append(i + 1)
+        if missing_actions:
+            flash(
+                f"Please choose an action for duplicate file(s) at position(s): {', '.join(str(n) for n in missing_actions)}.",
+                "danger",
+            )
+            return redirect(url_for("bulk_quote_review", project_id=project_id, batch_id=batch_id))
+
         for i in range(entry_count):
             prefix = f"entry_{i}_"
             entry = entries[i] if i < len(entries) else {}

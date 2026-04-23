@@ -35,6 +35,18 @@
         </form>
     </div>
 
+    {% set dup_count = entries | selectattr('is_duplicate_of_existing') | list | length %}
+    {% if dup_count > 0 %}
+    <div class="alert alert-danger d-flex align-items-start gap-2 mb-4" id="dupBanner">
+        <i class="bi bi-exclamation-octagon-fill fs-5 flex-shrink-0 mt-1"></i>
+        <div>
+            <strong>{{ dup_count }} duplicate file{{ 's' if dup_count != 1 else '' }} detected.</strong>
+            You must choose an action for each duplicate before saving.
+            Expand the highlighted row{{ 's' if dup_count != 1 else '' }} below to review.
+        </div>
+    </div>
+    {% endif %}
+
     <form method="POST" id="saveForm"
           action="{{ url_for('bulk_quote_save', project_id=project.id, batch_id=batch.batch_id) }}">
         <input type="hidden" name="entry_count" value="{{ entry_count }}">
@@ -49,10 +61,10 @@
         {% set vendor = res.vendor_name if res and res.vendor_name else '' %}
         <div class="accordion-item mb-2 shadow-sm" id="card_{{ i }}">
             <h2 class="accordion-header" id="heading_{{ i }}">
-                <button class="accordion-button {% if not err %}collapsed{% endif %} py-2"
+                <button class="accordion-button {% if not err and not entry.is_duplicate_of_existing %}collapsed{% endif %} py-2"
                         type="button" data-bs-toggle="collapse"
                         data-bs-target="#collapse_{{ i }}"
-                        aria-expanded="{{ 'true' if err else 'false' }}"
+                        aria-expanded="{{ 'true' if (err or entry.is_duplicate_of_existing) else 'false' }}"
                         aria-controls="collapse_{{ i }}">
                     <div class="d-flex align-items-center gap-3 w-100 me-3">
                         <span class="text-truncate fw-medium" style="max-width:300px;" title="{{ fname }}">
@@ -79,7 +91,7 @@
             </h2>
 
             <div id="collapse_{{ i }}"
-                 class="accordion-collapse collapse {% if err %}show{% endif %}"
+                 class="accordion-collapse collapse {% if err or entry.is_duplicate_of_existing %}show{% endif %}"
                  aria-labelledby="heading_{{ i }}">
                 <div class="accordion-body" id="body_{{ i }}">
 
@@ -91,10 +103,10 @@
 
                     <!-- Duplicate warning -->
                     {% if entry.is_duplicate_of_existing %}
-                    <div class="alert alert-warning mb-3">
+                    <div class="alert alert-danger mb-3">
                         <div class="fw-medium mb-2">
-                            <i class="bi bi-exclamation-triangle-fill"></i>
-                            This file appears to already exist in this project.
+                            <i class="bi bi-exclamation-octagon-fill"></i>
+                            This file already exists in this project.
                         </div>
                         <div class="small mb-3">
                             Originally uploaded {{ entry.existing_item_uploaded_date }}
@@ -103,17 +115,18 @@
                             in category <strong>{{ entry.existing_item_category }}</strong>
                             {% endif %}.
                         </div>
-                        <div class="d-flex flex-column gap-1">
+                        <div class="fw-medium small mb-2">You must choose an action for this duplicate:</div>
+                        <div class="d-flex flex-column gap-1" data-dup-group="{{ i }}">
                             <div class="form-check">
-                                <input class="form-check-input" type="radio"
+                                <input class="form-check-input dup-radio" type="radio"
                                        name="duplicate_action_{{ i }}"
-                                       id="dup_skip_{{ i }}" value="skip" checked>
+                                       id="dup_skip_{{ i }}" value="skip">
                                 <label class="form-check-label small" for="dup_skip_{{ i }}">
                                     <strong>Skip</strong> — keep existing, don't upload this
                                 </label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="radio"
+                                <input class="form-check-input dup-radio" type="radio"
                                        name="duplicate_action_{{ i }}"
                                        id="dup_upload_{{ i }}" value="upload">
                                 <label class="form-check-label small" for="dup_upload_{{ i }}">
@@ -121,7 +134,7 @@
                                 </label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="radio"
+                                <input class="form-check-input dup-radio" type="radio"
                                        name="duplicate_action_{{ i }}"
                                        id="dup_replace_{{ i }}" value="replace">
                                 <label class="form-check-label small" for="dup_replace_{{ i }}">
@@ -277,10 +290,14 @@
         {% endfor %}
         </div><!-- /accordion -->
 
-        <div class="d-flex gap-2 pb-4">
+        <div class="d-flex flex-column gap-2 pb-4 align-items-start">
             <button type="submit" class="btn btn-primary btn-lg" id="btnSave">
                 <i class="bi bi-cloud-check"></i> Save All to Library
             </button>
+            <div id="dupSaveMsg" class="text-danger small d-none">
+                <i class="bi bi-exclamation-circle"></i>
+                Resolve all duplicates before saving.
+            </div>
             <form method="POST"
                   action="{{ url_for('bulk_quote_cancel', project_id=project.id, batch_id=batch.batch_id) }}"
                   class="d-inline"
@@ -356,11 +373,53 @@ function toggleRemove(idx, checked) {
     }
 }
 
-// ── Prevent double-submit ─────────────────────────────────────────────────────
-document.getElementById('saveForm').addEventListener('submit', function () {
+// ── Duplicate-action gate ─────────────────────────────────────────────────────
+(function () {
     var btn = document.getElementById('btnSave');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Saving...';
-});
+    var msg = document.getElementById('dupSaveMsg');
+    var groups = document.querySelectorAll('[data-dup-group]');
+
+    function unresolvedCount() {
+        var n = 0;
+        groups.forEach(function (g) {
+            var idx = g.getAttribute('data-dup-group');
+            // skip if the whole entry is being removed
+            var removeCheck = document.getElementById('remove_' + idx);
+            if (removeCheck && removeCheck.checked) return;
+            if (!document.querySelector('input[name="duplicate_action_' + idx + '"]:checked')) n++;
+        });
+        return n;
+    }
+
+    function refresh() {
+        var n = unresolvedCount();
+        if (n > 0) {
+            btn.disabled = true;
+            if (msg) {
+                msg.classList.remove('d-none');
+                msg.querySelector('i').nextSibling.textContent = ' Resolve ' + n + ' duplicate' + (n !== 1 ? 's' : '') + ' before saving.';
+            }
+        } else {
+            btn.disabled = false;
+            if (msg) msg.classList.add('d-none');
+        }
+    }
+
+    document.querySelectorAll('.dup-radio').forEach(function (r) {
+        r.addEventListener('change', refresh);
+    });
+    document.querySelectorAll('.remove-check').forEach(function (c) {
+        c.addEventListener('change', refresh);
+    });
+
+    refresh(); // set initial state on page load
+
+    // ── Prevent double-submit ─────────────────────────────────────────────────
+    document.getElementById('saveForm').addEventListener('submit', function () {
+        if (unresolvedCount() > 0) return false;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Saving...';
+    });
+})();
 </script>
 {% endblock %}
