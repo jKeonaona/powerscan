@@ -68,6 +68,16 @@
                        class="btn btn-sm btn-primary">
                         Open comparison &rarr;
                     </a>
+                    {% if current_user.is_admin and cat.batch_id %}
+                    <form method="POST"
+                          action="{{ url_for('delete_quote_batch', batch_id=cat.batch_id) }}"
+                          onsubmit="return confirm('Delete all {{ cat.count }} vendor quote{{ \'s\' if cat.count != 1 else \'\' }} in \'{{ cat.name }}\'? This cannot be undone.')">
+                        <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2"
+                                title="Delete this batch">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </form>
+                    {% endif %}
                 </div>
             </div>
 

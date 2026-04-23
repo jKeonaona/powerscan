@@ -2005,6 +2005,13 @@ def create_app():
             except Exception:
                 return []
 
+        # Index batches by category_tag for delete button (take the earliest batch per tag)
+        batch_by_tag = {}
+        for b in saved_batches:
+            tag = (b.category_tag or "").strip()
+            if tag and tag not in batch_by_tag:
+                batch_by_tag[tag] = b.id
+
         categories = []
         for tag in ordered_tags:
             items = _items_for_category(project_id, tag)
@@ -2021,6 +2028,7 @@ def create_app():
                 "name": tag,
                 "count": len(items),
                 "quotes": cat_items,
+                "batch_id": batch_by_tag.get(tag),
             })
 
         # Sort: most vendors first, then alpha by name
@@ -2031,6 +2039,54 @@ def create_app():
             project=project,
             categories=categories,
         )
+
+    @app.route("/quote-batch/<int:batch_id>/delete", methods=["POST"])
+    @login_required
+    @admin_required
+    def delete_quote_batch(batch_id):
+        import shutil
+        batch = db.session.get(QuoteBatch, batch_id) or abort(404)
+        project = db.session.get(Project, batch.project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        project_id = batch.project_id
+        category_tag = batch.category_tag or ""
+
+        # Delete all IntelligenceItems tagged with this category for this project
+        items = _items_for_category(project_id, category_tag)
+        item_count = len(items)
+        for item in items:
+            if item.file_path:
+                fpath = os.path.join(app.config["LIBRARY_FOLDER"], item.file_path)
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+            for tag in list(item.tags):
+                if tag.usage_count > 0:
+                    tag.usage_count -= 1
+            db.session.delete(item)
+
+        # Delete the ComparisonSummary for this category
+        ComparisonSummary.query.filter_by(
+            project_id=project_id, category_tag=category_tag
+        ).delete(synchronize_session=False)
+
+        # Delete all saved batches for this (project, category_tag) and their staging dirs
+        all_batches = QuoteBatch.query.filter_by(
+            project_id=project_id, category_tag=category_tag
+        ).all()
+        for b in all_batches:
+            staging_dir = os.path.join(
+                app.config["LIBRARY_FOLDER"], "quotes_staging", b.batch_id
+            )
+            if os.path.isdir(staging_dir):
+                shutil.rmtree(staging_dir, ignore_errors=True)
+            db.session.delete(b)
+
+        db.session.commit()
+        label = category_tag or "(unlabeled)"
+        flash(f"Deleted batch '{label}' and its {item_count} vendor quote(s).", "success")
+        return redirect(url_for("quote_compare_select", project_id=project_id))
 
     @app.route("/projects/<int:project_id>/quotes/compare/<path:category_tag>")
     @login_required
