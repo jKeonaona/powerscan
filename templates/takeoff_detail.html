@@ -57,6 +57,128 @@
         </div>
     </div>
 
+    <!-- ── Calculated Totals ──────────────────────────────────────────────── -->
+    <p class="text-muted small mb-2">
+        <i class="bi bi-info-circle"></i>
+        Calculations update automatically when Takeoff Inputs are saved.
+    </p>
+    <div class="card shadow-sm mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold"><i class="bi bi-calculator"></i> Calculated Totals — Painting</span>
+            <a href="{{ url_for('takeoff_inputs', takeoff_id=takeoff.id) }}"
+               class="btn btn-xs btn-sm btn-outline-primary py-0 px-2">
+                <i class="bi bi-pencil-square"></i> Edit Inputs
+            </a>
+        </div>
+        <div class="card-body">
+
+        {% if quantities is none %}
+            <div class="text-center py-3">
+                <p class="text-muted mb-2">Enter Takeoff Inputs to see calculated quantities.</p>
+                <a href="{{ url_for('takeoff_inputs', takeoff_id=takeoff.id) }}"
+                   class="btn btn-sm btn-primary">
+                    <i class="bi bi-table"></i> Go to Inputs
+                </a>
+            </div>
+        {% else %}
+        {% set q = quantities %}
+
+        <div class="row g-4">
+
+            <!-- Materials -->
+            <div class="col-md-4">
+                <h6 class="fw-semibold text-secondary mb-2">Materials</h6>
+                <table class="table table-sm table-borderless mb-0">
+                    <thead class="table-light">
+                        <tr><th class="py-1">Layer</th><th class="py-1 text-end">Gallons</th></tr>
+                    </thead>
+                    <tbody>
+                        {% set layer_labels = {
+                            'primer':               'Primer',
+                            'second_primer':        '2nd Primer',
+                            'stripe_prime':         'Stripe Prime',
+                            'stripe_intermediate':  'Stripe Intermediate',
+                            'intermediate':         'Intermediate',
+                            'finish':               'Finish',
+                        } %}
+                        {% for layer in q._coating_layers %}
+                        {% set val = q.materials[layer ~ '_gal'] %}
+                        <tr>
+                            <td class="py-1 small">{{ layer_labels[layer] }}</td>
+                            <td class="py-1 small text-end">
+                                {% if val is none %}—{% else %}{{ "%.2f"|format(val) }}{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <h6 class="fw-semibold text-secondary mt-3 mb-2">Abrasive</h6>
+                <div class="small">
+                    <span class="text-muted">Tons:</span>
+                    {% set tons = q.abrasive.tons %}
+                    <span class="fw-medium">{% if tons is none %}—{% else %}{{ "%.2f"|format(tons) }}{% endif %}</span>
+                </div>
+            </div>
+
+            <!-- Labor Hours by Task -->
+            <div class="col-md-5">
+                <h6 class="fw-semibold text-secondary mb-2">Labor Hours by Task</h6>
+                <table class="table table-sm table-borderless mb-0">
+                    <thead class="table-light">
+                        <tr><th class="py-1">Task</th><th class="py-1 text-end">Hours</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for task in q._task_display_order %}
+                        {% set hrs = q.labor_hours_by_task.get(task) %}
+                        <tr>
+                            <td class="py-1 small">{{ q._task_labels[task] }}</td>
+                            <td class="py-1 small text-end">
+                                {% if hrs is none %}—{% else %}{{ "%.1f"|format(hrs) }}{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Labor Totals + Schedule -->
+            <div class="col-md-3">
+                <h6 class="fw-semibold text-secondary mb-2">Labor Totals</h6>
+                <dl class="row row-cols-2 g-0 small mb-0">
+                    {% set st = q.labor_totals.sum_task_hours %}
+                    {% set sv = q.labor_totals.supervision_hours %}
+                    {% set tl = q.labor_totals.total_labor_hours %}
+                    <dt class="col-8 fw-normal text-muted">Task hours</dt>
+                    <dd class="col-4 text-end mb-1 fw-medium">
+                        {% if st is none %}—{% else %}{{ "%.1f"|format(st) }}{% endif %}
+                    </dd>
+                    <dt class="col-8 fw-normal text-muted">Supervision (12%)</dt>
+                    <dd class="col-4 text-end mb-1 fw-medium">
+                        {% if sv is none %}—{% else %}{{ "%.1f"|format(sv) }}{% endif %}
+                    </dd>
+                    <dt class="col-8 fw-semibold">Total labor hrs</dt>
+                    <dd class="col-4 text-end mb-1 fw-semibold border-top pt-1">
+                        {% if tl is none %}—{% else %}{{ "%.1f"|format(tl) }}{% endif %}
+                    </dd>
+                </dl>
+
+                <h6 class="fw-semibold text-secondary mt-3 mb-2">Schedule</h6>
+                <dl class="row row-cols-2 g-0 small mb-0">
+                    {% set wd = q.schedule.work_days %}
+                    <dt class="col-8 fw-normal text-muted">Work days</dt>
+                    <dd class="col-4 text-end mb-1 fw-semibold">
+                        {% if wd is none %}—{% else %}{{ "%.1f"|format(wd) }}{% endif %}
+                    </dd>
+                </dl>
+            </div>
+
+        </div><!-- /row -->
+        {% endif %}
+
+        </div><!-- /card-body -->
+    </div><!-- /Calculated Totals card -->
+
     <div class="row g-4">
 
         <!-- Quote Batches -->

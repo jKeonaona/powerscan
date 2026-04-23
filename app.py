@@ -32,6 +32,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
+from calculations import calculate_painting_quantities, has_any_inputs
 
 
 CCC_ADMIN_SEEDS = [
@@ -1344,6 +1345,7 @@ def create_app():
         )
         summaries = ComparisonSummary.query.filter_by(takeoff_id=takeoff_id).order_by(ComparisonSummary.generated_at.desc()).all()
         reports = Report.query.filter_by(takeoff_id=takeoff_id).order_by(Report.created_at.desc()).all()
+        quantities = calculate_painting_quantities(takeoff) if has_any_inputs(takeoff) else None
         return render_template(
             "takeoff_detail.html",
             project=project,
@@ -1351,6 +1353,7 @@ def create_app():
             batches=batches,
             summaries=summaries,
             reports=reports,
+            quantities=quantities,
         )
 
     @app.route("/takeoffs/<int:takeoff_id>/inputs", methods=["GET", "POST"])
