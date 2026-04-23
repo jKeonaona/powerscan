@@ -1467,6 +1467,13 @@ def create_app():
                 .all()
             )
 
+        filtered_project = None
+        if project_filter:
+            try:
+                filtered_project = db.session.get(Project, int(project_filter))
+            except (ValueError, TypeError):
+                pass
+
         return render_template(
             "library.html",
             items=items,
@@ -1478,6 +1485,7 @@ def create_app():
             scope_filter=scope_filter,
             project_filter=project_filter,
             search_q=search_q,
+            filtered_project=filtered_project,
         )
 
     @app.route("/library/tags")

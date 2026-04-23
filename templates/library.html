@@ -3,6 +3,26 @@
 
 {% block content %}
 <div class="container-fluid">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            {% if filtered_project %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=filtered_project.company_id) }}">{{ filtered_project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=filtered_project.id) }}">{{ filtered_project.name }}</a></li>
+            {% endif %}
+            {% else %}
+            {% if current_user.company %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=current_user.company_id) }}">{{ current_user.company.name }}</a></li>
+            {% endif %}
+            {% if filtered_project %}
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=filtered_project.id) }}">{{ filtered_project.name }}</a></li>
+            {% endif %}
+            {% endif %}
+            <li class="breadcrumb-item active">Intelligence Library</li>
+        </ol>
+    </nav>
+
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2><i class="bi bi-lightbulb"></i> Intelligence Library</h2>
         <a href="{{ url_for('library_add') }}" class="btn btn-primary">
