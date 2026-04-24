@@ -19,10 +19,18 @@
             <h2 class="mb-1"><i class="bi bi-columns-gap"></i> Compare Quotes</h2>
             <p class="text-muted mb-0">{{ project.name }} — select a category to open the comparison view</p>
         </div>
-        <a href="{{ url_for('library_add_for_project', project_id=project.id) }}"
-           class="btn btn-sm btn-outline-primary flex-shrink-0 ms-3">
-            <i class="bi bi-plus-lg"></i> Add more quotes
-        </a>
+        <div class="d-flex gap-2 flex-shrink-0 ms-3">
+            {% if current_user.is_admin and categories | length >= 2 %}
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    data-bs-toggle="modal" data-bs-target="#mergeCatModal">
+                <i class="bi bi-arrow-left-right"></i> Merge Categories
+            </button>
+            {% endif %}
+            <a href="{{ url_for('library_add_for_project', project_id=project.id) }}"
+               class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-plus-lg"></i> Add more quotes
+            </a>
+        </div>
     </div>
 
     {% if categories %}
@@ -90,7 +98,7 @@
                                 <th>Headline Price</th>
                                 <th>Flags</th>
                                 <th>Source</th>
-                                {% if current_user.is_admin %}<th></th>{% endif %}
+                                {% if current_user.is_admin %}<th style="min-width:160px;">Category</th><th></th>{% endif %}
                             </tr>
                         </thead>
                         <tbody>
@@ -129,6 +137,19 @@
                                     {% endif %}
                                 </td>
                                 {% if current_user.is_admin %}
+                                <td>
+                                    <!-- Inline category move pill -->
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-secondary py-0 px-2 move-cat-btn"
+                                            data-item-id="{{ item.id }}"
+                                            data-vendor="{{ item.vendor or '' }}"
+                                            data-current-cat="{{ cat.name }}"
+                                            title="Move to a different category"
+                                            data-bs-toggle="modal" data-bs-target="#moveCatModal">
+                                        <span class="badge bg-light text-dark border">{{ cat.name }}</span>
+                                        <i class="bi bi-pencil-fill" style="font-size:.65rem;"></i>
+                                    </button>
+                                </td>
                                 <td class="text-end pe-2">
                                     <form method="POST"
                                           action="{{ url_for('delete_quote_item', item_id=item.id) }}"
@@ -163,10 +184,196 @@
     {% endif %}
 </div>
 
+<!-- ── Move to Category modal ────────────────────────────────────────────── -->
+{% if current_user.is_admin %}
+<div class="modal fade" id="moveCatModal" tabindex="-1" aria-labelledby="moveCatModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title" id="moveCatModalLabel"><i class="bi bi-arrow-left-right"></i> Move to Category</h6>
+                <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="" id="moveCatForm">
+                <div class="modal-body py-3">
+                    <p class="small text-muted mb-2" id="moveCatVendorName"></p>
+                    <label class="form-label small fw-medium">New category</label>
+                    <select name="category" class="form-select form-select-sm" id="moveCatSelect" required>
+                        <option value="" disabled selected>— Select category —</option>
+                        {% for cat in project_categories %}
+                        <option value="{{ cat.name }}">{{ cat.name }} ({{ cat.count }})</option>
+                        {% endfor %}
+                        {% if scope_suggestions %}
+                        <option disabled>──────────────</option>
+                        {% for s in scope_suggestions %}
+                        <option value="{{ s }}">{{ s }}</option>
+                        {% endfor %}
+                        {% endif %}
+                        <option disabled>──────────────</option>
+                        <option value="__new__">+ Create new category…</option>
+                    </select>
+                    <div class="input-group input-group-sm mt-2" id="moveCatNewGroup" style="display:none;">
+                        <input type="text" class="form-control" id="moveCatNewText" placeholder="New category name…">
+                        <button type="button" class="btn btn-outline-secondary" id="moveCatNewApply">Apply</button>
+                    </div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-primary" id="moveCatConfirmBtn">Move</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ── Merge Categories modal ────────────────────────────────────────────── -->
+{% if categories | length >= 2 %}
+<div class="modal fade" id="mergeCatModal" tabindex="-1" aria-labelledby="mergeCatModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mergeCatModalLabel"><i class="bi bi-arrow-left-right"></i> Merge Categories</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('quote_categories_merge', project_id=project.id) }}" id="mergeCatForm">
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">Move all quotes from the source category into the target, then remove the source.</p>
+                    <div class="mb-3">
+                        <label class="form-label fw-medium">From <span class="text-muted fw-normal">(source — will be deleted)</span></label>
+                        <select name="source_category" class="form-select" id="mergeSource" required>
+                            <option value="">— Select source —</option>
+                            {% for cat in project_categories %}
+                            <option value="{{ cat.name }}">{{ cat.name }} ({{ cat.count }} quote{{ 's' if cat.count != 1 else '' }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-medium">Into <span class="text-muted fw-normal">(target — will be kept)</span></label>
+                        <select name="target_category" class="form-select" id="mergeTarget" required>
+                            <option value="">— Select target —</option>
+                            {% for cat in project_categories %}
+                            <option value="{{ cat.name }}">{{ cat.name }} ({{ cat.count }} quote{{ 's' if cat.count != 1 else '' }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div id="mergeSummary" class="alert alert-warning small py-2" style="display:none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger" id="mergeConfirmBtn" disabled>
+                        <i class="bi bi-arrow-left-right"></i> Merge &amp; Delete Source
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
 <style>
 .flag-badge { font-size: 0.7rem; }
 .bg-flag-warn    { background-color: #fd7e14 !important; color: #fff !important; }
 .bg-flag-danger  { background-color: #dc3545 !important; color: #fff !important; }
 .bg-flag-default { background-color: #6c757d !important; color: #fff !important; }
 </style>
+
+<script>
+(function () {
+    // ── Move-to-category modal ────────────────────────────────────────────
+    var moveCatModal = document.getElementById('moveCatModal');
+    if (moveCatModal) {
+        moveCatModal.addEventListener('show.bs.modal', function (e) {
+            var btn = e.relatedTarget;
+            if (!btn) return;
+            var itemId  = btn.dataset.itemId;
+            var vendor  = btn.dataset.vendor || 'this quote';
+            var curCat  = btn.dataset.currentCat || '';
+
+            document.getElementById('moveCatVendorName').textContent = vendor;
+            var form = document.getElementById('moveCatForm');
+            form.action = '/projects/{{ project.id }}/quotes/item/' + itemId + '/category';
+
+            var sel = document.getElementById('moveCatSelect');
+            sel.value = curCat;
+            if (!sel.value) sel.selectedIndex = 0;
+
+            // Reset new-cat state
+            var newGroup = document.getElementById('moveCatNewGroup');
+            if (newGroup) newGroup.style.display = 'none';
+            var newText = document.getElementById('moveCatNewText');
+            if (newText) newText.value = '';
+        });
+
+        // "Create new" option in move modal
+        var moveSel = document.getElementById('moveCatSelect');
+        if (moveSel) {
+            moveSel.addEventListener('change', function () {
+                var newGroup = document.getElementById('moveCatNewGroup');
+                if (newGroup) newGroup.style.display = (moveSel.value === '__new__') ? '' : 'none';
+            });
+        }
+
+        var moveCatNewApply = document.getElementById('moveCatNewApply');
+        if (moveCatNewApply) {
+            moveCatNewApply.addEventListener('click', function () {
+                var text = document.getElementById('moveCatNewText');
+                var name = text ? text.value.trim() : '';
+                if (!name) return;
+                var sel = document.getElementById('moveCatSelect');
+                var found = false;
+                for (var i = 0; i < sel.options.length; i++) {
+                    if (sel.options[i].value === name) { found = true; break; }
+                }
+                if (!found) {
+                    var opt = document.createElement('option');
+                    opt.value = name;
+                    opt.text = name + ' (new)';
+                    sel.insertBefore(opt, sel.options[sel.options.length - 2]);
+                }
+                sel.value = name;
+                var newGroup = document.getElementById('moveCatNewGroup');
+                if (newGroup) newGroup.style.display = 'none';
+                if (text) text.value = '';
+            });
+        }
+    }
+
+    // ── Merge modal validation ────────────────────────────────────────────
+    var mergeSource = document.getElementById('mergeSource');
+    var mergeTarget = document.getElementById('mergeTarget');
+    var mergeSummary = document.getElementById('mergeSummary');
+    var mergeConfirmBtn = document.getElementById('mergeConfirmBtn');
+
+    function refreshMerge() {
+        var src = mergeSource ? mergeSource.value : '';
+        var tgt = mergeTarget ? mergeTarget.value : '';
+        var valid = src && tgt && src !== tgt;
+        if (mergeConfirmBtn) mergeConfirmBtn.disabled = !valid;
+        if (mergeSummary) {
+            if (valid) {
+                mergeSummary.style.display = '';
+                var srcText = mergeSource.options[mergeSource.selectedIndex].text;
+                var tgtText = mergeTarget.options[mergeTarget.selectedIndex].text;
+                mergeSummary.innerHTML = 'All quotes from <strong>' + srcText + '</strong> will be moved into <strong>' + tgtText + '</strong>. The source category will be permanently removed.';
+            } else {
+                mergeSummary.style.display = 'none';
+            }
+        }
+    }
+
+    if (mergeSource) mergeSource.addEventListener('change', refreshMerge);
+    if (mergeTarget) mergeTarget.addEventListener('change', refreshMerge);
+
+    var mergeCatForm = document.getElementById('mergeCatForm');
+    if (mergeCatForm) {
+        mergeCatForm.addEventListener('submit', function (e) {
+            var src = mergeSource ? mergeSource.options[mergeSource.selectedIndex].text : '';
+            var tgt = mergeTarget ? mergeTarget.options[mergeTarget.selectedIndex].text : '';
+            if (!confirm('Move all quotes from "' + src + '" into "' + tgt + '" and permanently remove the source category?')) {
+                e.preventDefault();
+            }
+        });
+    }
+})();
+</script>
 {% endblock %}

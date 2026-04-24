@@ -219,12 +219,19 @@
     {% if quote_batch_refs %}
     <hr class="my-3">
     <h5 class="fw-semibold mb-2"><i class="bi bi-currency-dollar text-warning"></i> Routed to Quotes — {{ n_quotes }} file{{ 's' if n_quotes != 1 else '' }}</h5>
+    <div class="alert alert-light border small mb-3">
+        <i class="bi bi-info-circle"></i>
+        Assign a <strong>category</strong> to each batch — this is how quotes are grouped in Compare Quotes.
+        Select an existing category or create a new one. Categories must be assigned before accepting.
+    </div>
 
     {% set reviewing_count = quote_batch_refs | selectattr('status', 'equalto', 'reviewing') | list | length %}
     {% if reviewing_count > 1 %}
     <div class="d-flex justify-content-end mb-2">
-        <form method="POST" action="{{ url_for('library_bulk_review_quotes_accept_all', lib_batch_id=batch_id) }}">
-            <button type="submit" class="btn btn-sm btn-warning">
+        <form method="POST" action="{{ url_for('library_bulk_review_quotes_accept_all', lib_batch_id=batch_id) }}"
+              id="acceptAllForm">
+            <button type="submit" class="btn btn-sm btn-warning" id="acceptAllBtn" disabled
+                    title="Assign categories to all quotes first">
                 <i class="bi bi-check-all"></i> Accept All Quotes
             </button>
         </form>
@@ -233,83 +240,136 @@
 
     {% for qbr in quote_batch_refs %}
     <div class="card mb-3 {% if qbr.status == 'saved' %}border-success{% elif qbr.status == 'cancelled' %}border-secondary{% else %}border-warning-subtle{% endif %}">
-        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center
+
+        <!-- Card header: filenames + status indicator -->
+        <div class="card-header py-2 px-3 d-flex flex-wrap gap-1 align-items-center
             {% if qbr.status == 'saved' %}bg-success-subtle{% elif qbr.status == 'cancelled' %}bg-light{% else %}bg-warning-subtle{% endif %}">
-            <div class="d-flex flex-wrap gap-1 align-items-center">
-                {% for fname in qbr.filenames %}
-                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
-                    <i class="bi bi-file-earmark-text"></i> {{ fname }}
-                </span>
-                {% endfor %}
-            </div>
-            <div class="ms-3 flex-shrink-0">
-                {% if qbr.status == 'saved' %}
-                <span class="badge bg-success"><i class="bi bi-check-circle"></i> Accepted</span>
-                {% elif qbr.status == 'cancelled' %}
-                <span class="badge bg-secondary"><i class="bi bi-x-circle"></i> Discarded</span>
-                {% else %}
-                <div class="d-flex gap-2">
-                    <form method="POST" action="{{ url_for('library_bulk_review_quote_accept', lib_batch_id=batch_id, quote_batch_id=qbr.batch_id) }}">
-                        <button type="submit" class="btn btn-sm btn-success text-nowrap">
-                            <i class="bi bi-check-lg"></i> Accept
-                        </button>
-                    </form>
-                    <form method="POST" action="{{ url_for('library_bulk_review_quote_discard', lib_batch_id=batch_id, quote_batch_id=qbr.batch_id) }}"
-                          onsubmit="return confirm('Discard these quote files? Extracted data will be lost.')">
-                        <button type="submit" class="btn btn-sm btn-outline-danger text-nowrap">
-                            <i class="bi bi-x-lg"></i> Discard
-                        </button>
-                    </form>
-                    {% if context_project_id %}
-                    <a href="{{ url_for('bulk_quote_review', project_id=context_project_id, batch_id=qbr.batch_id) }}"
-                       class="btn btn-sm btn-outline-warning text-nowrap">
-                        <i class="bi bi-pencil-square"></i> Review &amp; Edit
-                    </a>
+            {% for fname in qbr.filenames %}
+            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                <i class="bi bi-file-earmark-text"></i> {{ fname }}
+            </span>
+            {% endfor %}
+            {% if qbr.status == 'saved' %}
+            <span class="badge bg-success ms-auto"><i class="bi bi-check-circle"></i> Accepted{% if qbr.category_tag %} — {{ qbr.category_tag }}{% endif %}</span>
+            {% elif qbr.status == 'cancelled' %}
+            <span class="badge bg-secondary ms-auto"><i class="bi bi-x-circle"></i> Discarded</span>
+            {% endif %}
+        </div>
+
+        {% if qbr.status == 'reviewing' %}
+        <div class="card-body p-3">
+
+            <!-- Category selection form (includes Accept button) -->
+            <form method="POST"
+                  action="{{ url_for('library_bulk_review_quote_accept', lib_batch_id=batch_id, quote_batch_id=qbr.batch_id) }}"
+                  class="quote-accept-form mb-0">
+
+                <div class="mb-2">
+                    <label class="form-label small fw-semibold mb-1">
+                        Category <span class="text-danger">*</span>
+                    </label>
+                    <select name="category_tag"
+                            class="form-select form-select-sm cat-select"
+                            id="cat_{{ qbr.batch_id }}"
+                            data-batch-id="{{ qbr.batch_id }}"
+                            required>
+                        <option value="" disabled {% if not qbr.category_tag %}selected{% endif %} style="color:#dc3545;">— Select category —</option>
+                        {% if project_categories %}
+                        {% for cat in project_categories %}
+                        <option value="{{ cat.name }}" {% if qbr.category_tag == cat.name %}selected{% endif %}>
+                            {{ cat.name }} ({{ cat.count }})
+                        </option>
+                        {% endfor %}
+                        {% endif %}
+                        {% if scope_suggestions %}
+                        <option disabled>──────────────</option>
+                        {% for s in scope_suggestions %}
+                        <option value="{{ s }}" {% if qbr.category_tag == s %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                        {% endif %}
+                        <option disabled>──────────────</option>
+                        <option value="__new__">+ Create new category…</option>
+                    </select>
+                    {% if qbr.suggested_category and not qbr.category_tag %}
+                    <div class="form-text text-muted">
+                        <i class="bi bi-lightbulb"></i> AI suggestion: <strong>{{ qbr.suggested_category }}</strong>
+                    </div>
                     {% endif %}
+                    <!-- Inline new-category input (hidden by default) -->
+                    <div class="new-cat-group input-group input-group-sm mt-1" style="display:none;">
+                        <input type="text" class="form-control new-cat-text" placeholder="New category name…">
+                        <button type="button" class="btn btn-outline-secondary new-cat-apply"
+                                data-select-id="cat_{{ qbr.batch_id }}">Apply</button>
+                    </div>
+                </div>
+
+                <!-- Entry preview table -->
+                {% if qbr.entries %}
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-2">Vendor</th>
+                                <th>Quote Date</th>
+                                <th>Line Items</th>
+                                <th>Flags</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in qbr.entries %}
+                            {% if not entry.get('error') %}
+                            <tr>
+                                <td class="ps-2 small fw-medium">{{ entry.get('vendor_name') or '—' }}</td>
+                                <td class="small">{{ entry.get('quote_date') or '—' }}</td>
+                                <td class="small">
+                                    {% set n_items = (entry.get('pricing_items') or []) | length %}
+                                    {% if n_items %}{{ n_items }} item{{ 's' if n_items != 1 else '' }}{% else %}<span class="text-muted">—</span>{% endif %}
+                                </td>
+                                <td>
+                                    {% for flag in (entry.get('flags') or []) %}
+                                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle" style="font-size:.65rem;">{{ flag }}</span>
+                                    {% endfor %}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="ps-2 small text-danger">
+                                    <i class="bi bi-exclamation-triangle"></i> Extraction failed: {{ entry.get('error', 'Unknown error') }}
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
                 {% endif %}
+
+                <!-- Action row -->
+                <div class="d-flex gap-2 flex-wrap align-items-center">
+                    <button type="submit" class="btn btn-sm btn-success accept-btn" disabled
+                            title="Select a category first">
+                        <i class="bi bi-check-lg"></i> Accept
+                    </button>
+                </div>
+            </form>
+
+            <!-- Discard + Review (separate forms, siblings of accept form) -->
+            <div class="d-flex gap-2 flex-wrap mt-2">
+                <form method="POST"
+                      action="{{ url_for('library_bulk_review_quote_discard', lib_batch_id=batch_id, quote_batch_id=qbr.batch_id) }}"
+                      onsubmit="return confirm('Discard these quote files? Extracted data will be lost.')">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-x-lg"></i> Discard
+                    </button>
+                </form>
+                {% if context_project_id %}
+                <a href="{{ url_for('bulk_quote_review', project_id=context_project_id, batch_id=qbr.batch_id) }}"
+                   class="btn btn-sm btn-outline-warning">
+                    <i class="bi bi-pencil-square"></i> Review &amp; Edit
+                </a>
+                {% endif %}
             </div>
-        </div>
-        {% if qbr.status == 'reviewing' and qbr.entries %}
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-sm align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th class="ps-3">Vendor</th>
-                            <th>Quote Date</th>
-                            <th>Line Items</th>
-                            <th>Flags</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for entry in qbr.entries %}
-                        {% if not entry.get('error') %}
-                        <tr>
-                            <td class="ps-3 small fw-medium">{{ entry.get('vendor_name') or '—' }}</td>
-                            <td class="small">{{ entry.get('quote_date') or '—' }}</td>
-                            <td class="small">
-                                {% set n_items = (entry.get('pricing_items') or []) | length %}
-                                {% if n_items %}{{ n_items }} item{{ 's' if n_items != 1 else '' }}{% else %}<span class="text-muted">—</span>{% endif %}
-                            </td>
-                            <td>
-                                {% for flag in (entry.get('flags') or []) %}
-                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle small">{{ flag }}</span>
-                                {% endfor %}
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="4" class="ps-3 small text-danger">
-                                <i class="bi bi-exclamation-triangle"></i>
-                                Extraction failed: {{ entry.get('error', 'Unknown error') }}
-                            </td>
-                        </tr>
-                        {% endif %}
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+
         </div>
         {% endif %}
     </div>
@@ -320,6 +380,7 @@
 
 <script>
 (function () {
+    // ── Scope radio → work scope toggle (Library section) ─────────────────
     document.querySelectorAll('.scope-radio').forEach(function (radio) {
         radio.addEventListener('change', function () {
             var sid = this.dataset.sid;
@@ -334,6 +395,93 @@
             }
         });
     });
+
+    // ── Quote category select logic ────────────────────────────────────────
+    function refreshAcceptBtn(sel) {
+        var form = sel.closest('form.quote-accept-form');
+        if (!form) return;
+        var btn = form.querySelector('.accept-btn');
+        var newGroup = form.querySelector('.new-cat-group');
+        var val = sel.value;
+        if (val === '__new__') {
+            if (newGroup) newGroup.style.display = '';
+            if (btn) { btn.disabled = true; btn.title = 'Enter a category name and click Apply'; }
+        } else if (val) {
+            if (newGroup) newGroup.style.display = 'none';
+            if (btn) { btn.disabled = false; btn.title = ''; }
+        } else {
+            if (newGroup) newGroup.style.display = 'none';
+            if (btn) { btn.disabled = true; btn.title = 'Select a category first'; }
+        }
+        refreshAcceptAll();
+    }
+
+    // "Apply" button: adds a new option to the select and selects it
+    document.querySelectorAll('.new-cat-apply').forEach(function (applyBtn) {
+        applyBtn.addEventListener('click', function () {
+            var group = applyBtn.closest('.new-cat-group');
+            var textInput = group ? group.querySelector('.new-cat-text') : null;
+            var name = textInput ? textInput.value.trim() : '';
+            if (!name) { if (textInput) textInput.focus(); return; }
+            var form = applyBtn.closest('form.quote-accept-form');
+            var sel = form ? form.querySelector('.cat-select') : null;
+            if (!sel) return;
+            // Add option if not already present
+            var found = false;
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === name) { found = true; break; }
+            }
+            if (!found) {
+                var opt = document.createElement('option');
+                opt.value = name;
+                opt.text = name + ' (new)';
+                // Insert before the last two options (divider + create-new)
+                var insertBefore = sel.options.length >= 2 ? sel.options[sel.options.length - 2] : null;
+                if (insertBefore) sel.insertBefore(opt, insertBefore);
+                else sel.appendChild(opt);
+            }
+            sel.value = name;
+            if (group) group.style.display = 'none';
+            if (textInput) textInput.value = '';
+            refreshAcceptBtn(sel);
+        });
+    });
+
+    document.querySelectorAll('.cat-select').forEach(function (sel) {
+        sel.addEventListener('change', function () { refreshAcceptBtn(sel); });
+        refreshAcceptBtn(sel);  // initialise state on page load
+    });
+
+    // ── Accept All: validate + inject hidden category inputs ──────────────
+    function refreshAcceptAll() {
+        var pendingSelects = document.querySelectorAll('.cat-select');
+        var allReady = true;
+        pendingSelects.forEach(function (sel) {
+            if (!sel.value || sel.value === '__new__') allReady = false;
+        });
+        var btn = document.getElementById('acceptAllBtn');
+        if (btn) {
+            btn.disabled = !allReady;
+            btn.title = allReady ? '' : 'Assign categories to all quotes first';
+        }
+    }
+
+    var acceptAllForm = document.getElementById('acceptAllForm');
+    if (acceptAllForm) {
+        acceptAllForm.addEventListener('submit', function () {
+            document.querySelectorAll('.cat-select').forEach(function (sel) {
+                var batchId = sel.dataset.batchId;
+                if (!batchId || !sel.value || sel.value === '__new__') return;
+                var hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = 'category_' + batchId;
+                hidden.value = sel.value;
+                acceptAllForm.appendChild(hidden);
+            });
+        });
+    }
+
+    refreshAcceptAll();
 })();
 </script>
 {% endblock %}

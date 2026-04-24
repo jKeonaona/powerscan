@@ -2194,16 +2194,26 @@ def create_app():
         context_project_id = batch_data.get("project_id") if isinstance(batch_data, dict) else None
         context_project = db.session.get(Project, context_project_id) if context_project_id else None
 
+        project_categories = _project_quote_categories(context_project_id) if context_project_id else []
+        existing_cat_names = {c["name"] for c in project_categories}
+        scope_suggestions = [s for s in WORK_SCOPE_OPTIONS if s not in existing_cat_names]
+
         enriched_quotes = []
         for qbr in quote_batch_refs:
             qb = QuoteBatch.query.filter_by(batch_id=qbr["batch_id"]).first()
             qb_raw = json.loads(qb.entries_json or "[]") if qb else {}
             qb_entries = qb_raw.get("entries", qb_raw) if isinstance(qb_raw, dict) else qb_raw
+            # Derive a suggested category from the first entry's suggested_tags
+            first_entry = qb_entries[0] if qb_entries else {}
+            ai_suggestions = first_entry.get("suggested_tags") or []
+            suggested_cat = ai_suggestions[0].title() if ai_suggestions else None
             enriched_quotes.append({
                 "batch_id": qbr["batch_id"],
                 "filenames": qbr["filenames"],
                 "status": qb.status if qb else "unknown",
                 "entries": qb_entries,
+                "category_tag": qb.category_tag if qb else None,
+                "suggested_category": suggested_cat,
             })
 
         return render_template(
@@ -2216,6 +2226,8 @@ def create_app():
             context_project_id=context_project_id,
             scope_options=WORK_SCOPE_OPTIONS,
             context_project=context_project,
+            project_categories=project_categories,
+            scope_suggestions=scope_suggestions,
         )
 
     @app.route("/library/bulk-review/<batch_id>/save", methods=["POST"])
@@ -2684,9 +2696,14 @@ def create_app():
             proj = db.session.get(Project, batch.project_id)
             if not proj or proj.company_id != current_user.company_id:
                 abort(403)
+        category_tag = request.form.get("category_tag", "").strip()
+        if not category_tag:
+            flash("Please select a category before accepting.", "danger")
+            return redirect(url_for("library_bulk_review", batch_id=lib_batch_id))
         if batch.status == "reviewing":
+            batch.category_tag = category_tag
             n = _auto_accept_quote_batch(batch, batch.project_id)
-            flash(f"{n} quote{'s' if n != 1 else ''} accepted and saved to the Intelligence Library.", "success")
+            flash(f"{n} quote{'s' if n != 1 else ''} accepted under '{category_tag}'.", "success")
         return redirect(url_for("library_bulk_review", batch_id=lib_batch_id))
 
     @app.route("/library/bulk-review/<lib_batch_id>/quote/<quote_batch_id>/discard", methods=["POST"])
@@ -2717,6 +2734,7 @@ def create_app():
             flash("Session expired.", "warning")
             return redirect(url_for("intelligence_library"))
         total_saved = 0
+        skipped_no_cat = 0
         for qbr in batch_data.get("quote_batches", []):
             qb = QuoteBatch.query.filter_by(batch_id=qbr["batch_id"]).first()
             if not qb or qb.status != "reviewing":
@@ -2725,12 +2743,58 @@ def create_app():
                 proj = db.session.get(Project, qb.project_id)
                 if not proj or proj.company_id != current_user.company_id:
                     continue
+            cat = request.form.get(f"category_{qbr['batch_id']}", "").strip()
+            if not cat:
+                skipped_no_cat += 1
+                continue
+            qb.category_tag = cat
             total_saved += _auto_accept_quote_batch(qb, qb.project_id)
-        flash(
-            f"{total_saved} quote{'s' if total_saved != 1 else ''} accepted and saved to the Intelligence Library.",
-            "success",
-        )
+        parts = []
+        if total_saved:
+            parts.append(f"{total_saved} quote{'s' if total_saved != 1 else ''} accepted and saved to the Intelligence Library.")
+        if skipped_no_cat:
+            parts.append(f"{skipped_no_cat} batch{'es' if skipped_no_cat != 1 else ''} skipped — no category selected.")
+        flash(" ".join(parts) if parts else "Nothing to accept.", "success" if total_saved else "warning")
         return redirect(url_for("library_bulk_review", batch_id=lib_batch_id))
+
+    # ── Quote category management ─────────────────────────────────────────────
+
+    @app.route("/projects/<int:project_id>/quotes/item/<int:item_id>/category", methods=["POST"])
+    @login_required
+    @admin_required
+    def quote_item_set_category(project_id, item_id):
+        _auth_project(project_id)
+        item = db.session.get(IntelligenceItem, item_id) or abort(404)
+        if item.project_id != project_id:
+            abort(403)
+        new_cat = request.form.get("category", "").strip()
+        if not new_cat:
+            flash("Category is required.", "danger")
+            return redirect(url_for("quote_compare_select", project_id=project_id))
+        _update_item_category(item, project_id, new_cat)
+        db.session.commit()
+        flash(f"Quote moved to '{new_cat}'.", "success")
+        return redirect(url_for("quote_compare_select", project_id=project_id))
+
+    @app.route("/projects/<int:project_id>/quotes/categories/merge", methods=["POST"])
+    @login_required
+    @admin_required
+    def quote_categories_merge(project_id):
+        _auth_project(project_id)
+        source = request.form.get("source_category", "").strip()
+        target = request.form.get("target_category", "").strip()
+        if not source or not target or source == target:
+            flash("Select two different categories to merge.", "danger")
+            return redirect(url_for("quote_compare_select", project_id=project_id))
+        items = _items_for_category(project_id, source)
+        n = len(items)
+        for item in items:
+            _update_item_category(item, project_id, target)
+        for b in QuoteBatch.query.filter_by(project_id=project_id, category_tag=source).all():
+            b.category_tag = target
+        db.session.commit()
+        flash(f"Merged {n} quote{'s' if n != 1 else ''} from '{source}' into '{target}'.", "success")
+        return redirect(url_for("quote_compare_select", project_id=project_id))
 
     # ── Quote Comparison ──────────────────────────────────────────────────────
 
@@ -2750,6 +2814,43 @@ def create_app():
             .filter(IntelligenceTag.name == category_tag)
             .all()
         )
+
+    def _project_quote_categories(project_id):
+        """Return [{name, count}] for all saved quote categories in this project, sorted alpha."""
+        batches = QuoteBatch.query.filter_by(project_id=project_id, status="saved").all()
+        seen = set()
+        names = []
+        for b in batches:
+            tag = (b.category_tag or "").strip()
+            if tag and tag not in seen:
+                seen.add(tag)
+                names.append(tag)
+        result = []
+        for name in sorted(names, key=str.lower):
+            count = len(_items_for_category(project_id, name))
+            result.append({"name": name, "count": count})
+        return result
+
+    def _update_item_category(item, project_id, new_category_name):
+        """Replace the category tag on an IntelligenceItem without touching other tags."""
+        saved_cats = {
+            b.category_tag for b in
+            QuoteBatch.query.filter_by(project_id=project_id, status="saved").all()
+            if b.category_tag
+        }
+        for tag in list(item.tags):
+            if tag.name in saved_cats:
+                item.tags.remove(tag)
+                if tag.usage_count > 0:
+                    tag.usage_count -= 1
+        new_tag = IntelligenceTag.query.filter_by(name=new_category_name).first()
+        if not new_tag:
+            new_tag = IntelligenceTag(name=new_category_name, usage_count=0)
+            db.session.add(new_tag)
+            db.session.flush()
+        if new_tag not in item.tags:
+            item.tags.append(new_tag)
+            new_tag.usage_count += 1
 
     def _build_pricing_matrix(items):
         """Return (all_labels, per_item_pricing) for the comparison table.
@@ -2852,10 +2953,16 @@ def create_app():
         # Sort: most vendors first, then alpha by name
         categories.sort(key=lambda c: (-c["count"], c["name"].lower()))
 
+        project_categories = _project_quote_categories(project_id)
+        existing_cat_names = {c["name"] for c in project_categories}
+        scope_suggestions = [s for s in WORK_SCOPE_OPTIONS if s not in existing_cat_names]
+
         return render_template(
             "quote_compare_select.html",
             project=project,
             categories=categories,
+            project_categories=project_categories,
+            scope_suggestions=scope_suggestions,
         )
 
     @app.route("/quote-batch/<int:batch_id>/delete", methods=["POST"])
