@@ -445,6 +445,91 @@ def _extract_quote_file(api_key, file_path, original_filename):
         }
 
 
+_CLASSIFY_PIPELINE_PROMPT = """Classify this construction document and return a JSON object with these exact fields:
+{
+  "doc_type": "Drawing|Contract|Specification|Bid Doc|Addendum|Estimation Notes|Quote|Other",
+  "processing_pipeline": "text|drawing|quote",
+  "is_image_only": true|false,
+  "confidence": "high|medium|low"
+}
+
+Routing rules:
+- doc_type "Drawing" → processing_pipeline "drawing"
+- doc_type "Quote" (vendor quotes, pricing proposals, rate sheets, capability statements, material price lists) → processing_pipeline "quote"
+- is_image_only true (PDF with no extractable text layer, regardless of doc_type) → processing_pipeline "drawing"
+- All other doc types → processing_pipeline "text"
+
+Estimation Notes are estimating notes, takeoff sheets, or handwritten cost notes.
+Quote documents contain structured pricing from a vendor or supplier.
+is_image_only is true only when the page contains NO readable text characters — only scanned images or graphics.
+
+Reply with ONLY the JSON object, no other text."""
+
+
+def _classify_file_pipeline(api_key, file_path, original_filename):
+    """Classify a saved file and return its processing pipeline.
+
+    Returns dict with keys: processing_pipeline ("text"|"drawing"|"quote"),
+    doc_type, is_image_only, confidence. Falls back to "text" on any error.
+    """
+    import base64
+    import anthropic as _anthropic
+    from search import CLAUDE_MODEL
+
+    _FALLBACK = {"processing_pipeline": "text", "doc_type": DEFAULT_DOC_TYPE,
+                 "is_image_only": False, "confidence": "low"}
+
+    ext = os.path.splitext(original_filename)[1].lower()
+    if ext != ".pdf":
+        return {"processing_pipeline": "text", "doc_type": "Other",
+                "is_image_only": False, "confidence": "high"}
+
+    if not api_key:
+        return _FALLBACK
+
+    try:
+        from pdf2image import convert_from_path
+        from PIL import Image as _Image
+
+        images = convert_from_path(file_path, dpi=100, first_page=1, last_page=1)
+        if not images:
+            return _FALLBACK
+
+        img = images[0]
+        if img.width > 800:
+            img = img.resize((800, int(img.height * 800 / img.width)), _Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=75)
+        img_b64 = base64.standard_b64encode(buf.getvalue()).decode()
+
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=150,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                {"type": "text", "text": _CLASSIFY_PIPELINE_PROMPT},
+            ]}],
+        )
+        raw = resp.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        result = json.loads(raw)
+        pipeline = result.get("processing_pipeline", "text").lower()
+        if pipeline not in ("text", "drawing", "quote"):
+            print(f"[powerscan] _classify_file_pipeline: unrecognized pipeline '{pipeline}' for {original_filename}, defaulting to text", flush=True)
+            pipeline = "text"
+        result["processing_pipeline"] = pipeline
+        return result
+    except Exception as exc:
+        print(f"[powerscan] _classify_file_pipeline error for {original_filename}: {exc}", flush=True)
+        return _FALLBACK
+
+
 def _write_category_sheet(ws, items, all_labels, per_item_pricing,
                           category_tag, summary_obj, project_name, ts):
     """Write one category's full comparison data into an openpyxl worksheet."""
@@ -1819,13 +1904,17 @@ def create_app():
             mode = request.form.get("mode", "text")
 
             if mode == "upload":
-                # ── Bulk file upload ──────────────────────────────────────────
+                # ── Bulk file upload with classifier routing ─────────────────
+                import hashlib
                 files = request.files.getlist("library_files")
                 raw_tags = request.form.get("tags_input", "")
                 work_scope_selected = request.form.getlist("work_scope")
                 resolved_project_id = _resolve_library_scope(request.form, project_id)
+                api_key = app.config.get("ANTHROPIC_API_KEY") or ""
 
-                saved_ids = []
+                library_saved_ids = []
+                drawing_ids = []
+                quote_files_for_batch = []  # [{dest, safe_name, original_filename}]
                 skipped = []
 
                 for f in files:
@@ -1835,39 +1924,122 @@ def create_app():
                     if ext not in _BULK_UPLOAD_EXTS:
                         skipped.append(f"{f.filename}: unsupported file type")
                         continue
+
+                    # Save to library folder first (temp landing spot)
                     safe_name = uuid.uuid4().hex + ext
                     dest = os.path.join(app.config["LIBRARY_FOLDER"], safe_name)
                     f.save(dest)
-                    extracted = extract_text_from_file(dest, ext)
-                    title = os.path.splitext(f.filename)[0]
-                    item = IntelligenceItem(
-                        title=title,
-                        entry_type="file",
-                        text_content=extracted,
-                        file_path=safe_name,
-                        original_filename=f.filename,
-                        file_mime=f.content_type,
-                        project_id=resolved_project_id,
-                        work_scope_json=json.dumps(work_scope_selected) if (resolved_project_id is None and work_scope_selected) else None,
-                        auto_include_in_search=True,
-                        uploaded_by=current_user.id,
+
+                    # Classify (PDFs only; non-PDF always → text)
+                    classification = _classify_file_pipeline(api_key, dest, f.filename)
+                    pipeline = classification.get("processing_pipeline", "text")
+                    doc_type = classification.get("doc_type", DEFAULT_DOC_TYPE)
+                    if doc_type not in DOC_TYPES:
+                        doc_type = DEFAULT_DOC_TYPE
+
+                    if pipeline == "drawing":
+                        # Move to UPLOAD_FOLDER; drawing pipeline worker picks it up
+                        drawing_dest = os.path.join(app.config["UPLOAD_FOLDER"], safe_name)
+                        os.rename(dest, drawing_dest)
+                        drawing = Drawing(
+                            filename=safe_name,
+                            original_filename=f.filename,
+                            project_id=project_id,
+                            uploaded_by=current_user.id,
+                            doc_type=doc_type,
+                            status="pending",
+                        )
+                        db.session.add(drawing)
+                        db.session.flush()
+                        drawing_ids.append(drawing.id)
+
+                    elif pipeline == "quote":
+                        # Collect; will be batched below after the loop
+                        quote_files_for_batch.append({
+                            "dest": dest,
+                            "safe_name": safe_name,
+                            "original_filename": f.filename,
+                        })
+
+                    else:
+                        # text pipeline — stays in LIBRARY_FOLDER
+                        extracted = extract_text_from_file(dest, ext)
+                        item = IntelligenceItem(
+                            title=os.path.splitext(f.filename)[0],
+                            entry_type="file",
+                            text_content=extracted,
+                            file_path=safe_name,
+                            original_filename=f.filename,
+                            file_mime=f.content_type,
+                            project_id=resolved_project_id,
+                            work_scope_json=json.dumps(work_scope_selected) if (resolved_project_id is None and work_scope_selected) else None,
+                            auto_include_in_search=True,
+                            uploaded_by=current_user.id,
+                        )
+                        db.session.add(item)
+                        db.session.flush()
+                        _apply_item_tags(item, raw_tags)
+                        library_saved_ids.append(item.id)
+
+                # ── Process quote files as a single QuoteBatch ────────────────
+                quote_batch_ref = None
+                if quote_files_for_batch:
+                    quote_batch_id = str(uuid.uuid4())
+                    staging_dir = os.path.join(
+                        app.config["LIBRARY_FOLDER"], "quotes_staging", quote_batch_id
                     )
-                    db.session.add(item)
+                    os.makedirs(staging_dir, exist_ok=True)
+                    entries = []
+                    for qf in quote_files_for_batch:
+                        staging_dest = os.path.join(staging_dir, qf["safe_name"])
+                        os.rename(qf["dest"], staging_dest)
+                        with open(staging_dest, "rb") as fh:
+                            content_hash = hashlib.sha256(fh.read()).hexdigest()
+                        entry = _extract_quote_file(api_key, staging_dest, qf["original_filename"])
+                        entry["staged_filename"] = qf["safe_name"]
+                        entry["content_hash"] = content_hash
+                        existing = IntelligenceItem.query.filter_by(
+                            project_id=project_id, content_hash=content_hash,
+                        ).first()
+                        if existing:
+                            entry["is_duplicate_of_existing"] = True
+                            entry["existing_item_id"] = existing.id
+                            entry["existing_item_title"] = existing.title
+                            entry["existing_item_uploaded_date"] = existing.created_at.strftime("%b %d, %Y")
+                        entries.append(entry)
+                    active_takeoff = _get_active_takeoff(project_id)
+                    quote_batch = QuoteBatch(
+                        batch_id=quote_batch_id,
+                        project_id=project_id,
+                        user_id=current_user.id,
+                        status="reviewing",
+                        category_tag=None,
+                        entries_json=json.dumps({"duplicates_within_session": 0, "entries": entries}),
+                        takeoff_id=active_takeoff.id if active_takeoff else None,
+                    )
+                    db.session.add(quote_batch)
                     db.session.flush()
-                    _apply_item_tags(item, raw_tags)
-                    saved_ids.append(item.id)
+                    quote_batch_ref = {
+                        "batch_id": quote_batch_id,
+                        "filenames": [qf["original_filename"] for qf in quote_files_for_batch],
+                    }
 
                 db.session.commit()
 
                 for msg in skipped:
                     flash(msg, "warning")
 
-                if not saved_ids:
+                if not library_saved_ids and not drawing_ids and not quote_batch_ref:
                     flash("No valid files were uploaded.", "danger")
                     return redirect(url_for("library_add_for_project", project_id=project_id))
 
                 batch_id = uuid.uuid4().hex
-                session[f"lib_batch_{batch_id}"] = {"item_ids": saved_ids, "project_id": project_id}
+                session[f"lib_batch_{batch_id}"] = {
+                    "item_ids": library_saved_ids,
+                    "drawing_ids": drawing_ids,
+                    "quote_batches": [quote_batch_ref] if quote_batch_ref else [],
+                    "project_id": project_id,
+                }
                 return redirect(url_for("library_bulk_review", batch_id=batch_id))
 
             else:
@@ -1909,7 +2081,7 @@ def create_app():
         )
 
     def _batch_item_ids(batch_data):
-        """Extract item_ids from session batch (supports old list format and new dict format)."""
+        """Extract library item_ids from session batch (supports old list and new dict format)."""
         if isinstance(batch_data, dict):
             return batch_data.get("item_ids", [])
         return batch_data or []
@@ -1920,7 +2092,10 @@ def create_app():
     def library_bulk_review(batch_id):
         batch_data = session.get(f"lib_batch_{batch_id}")
         item_ids = _batch_item_ids(batch_data)
-        if not item_ids:
+        drawing_ids = batch_data.get("drawing_ids", []) if isinstance(batch_data, dict) else []
+        quote_batch_refs = batch_data.get("quote_batches", []) if isinstance(batch_data, dict) else []
+
+        if not item_ids and not drawing_ids and not quote_batch_refs:
             flash("Upload session not found or expired. Please upload again.", "warning")
             return redirect(url_for("intelligence_library"))
 
@@ -1931,10 +2106,7 @@ def create_app():
                 IntelligenceItem.uploaded_by == current_user.id,
             )
             .all()
-        )
-        if not items:
-            flash("Batch not found. Please upload again.", "warning")
-            return redirect(url_for("intelligence_library"))
+        ) if item_ids else []
 
         file_sizes = {}
         for item in items:
@@ -1945,6 +2117,8 @@ def create_app():
                 except OSError:
                     file_sizes[item.id] = None
 
+        drawings = [d for did in drawing_ids for d in [db.session.get(Drawing, did)] if d]
+
         context_project_id = batch_data.get("project_id") if isinstance(batch_data, dict) else None
         context_project = db.session.get(Project, context_project_id) if context_project_id else None
         all_projects, include_global = _library_projects_for_user()
@@ -1953,6 +2127,9 @@ def create_app():
             batch_id=batch_id,
             items=items,
             file_sizes=file_sizes,
+            drawings=drawings,
+            quote_batch_refs=quote_batch_refs,
+            context_project_id=context_project_id,
             all_projects=all_projects,
             include_global=include_global,
             scope_options=WORK_SCOPE_OPTIONS,
@@ -1965,9 +2142,6 @@ def create_app():
     def library_bulk_review_save(batch_id):
         batch_data = session.get(f"lib_batch_{batch_id}")
         item_ids = _batch_item_ids(batch_data)
-        if not item_ids:
-            flash("Session expired. Changes could not be saved.", "warning")
-            return redirect(url_for("intelligence_library"))
 
         items = (
             IntelligenceItem.query
@@ -1976,7 +2150,7 @@ def create_app():
                 IntelligenceItem.uploaded_by == current_user.id,
             )
             .all()
-        )
+        ) if item_ids else []
 
         for item in items:
             sid = str(item.id)
@@ -1999,9 +2173,15 @@ def create_app():
             raw_tags = request.form.get(f"tags_{sid}", "")
             _apply_item_tags(item, raw_tags)
 
-        db.session.commit()
+        if items:
+            db.session.commit()
+
         session.pop(f"lib_batch_{batch_id}", None)
-        flash(f"{len(items)} item(s) saved to the Intelligence Library.", "success")
+        n = len(items)
+        if n:
+            flash(f"{n} item{'s' if n != 1 else ''} saved to the Intelligence Library.", "success")
+        else:
+            flash("Files dispatched to their pipelines.", "success")
         return redirect(url_for("intelligence_library"))
 
     @app.route("/library/bulk-review/<batch_id>/discard", methods=["POST"])
@@ -2010,6 +2190,9 @@ def create_app():
     def library_bulk_review_discard(batch_id):
         batch_data = session.get(f"lib_batch_{batch_id}")
         item_ids = _batch_item_ids(batch_data)
+        drawing_ids = batch_data.get("drawing_ids", []) if isinstance(batch_data, dict) else []
+        quote_batch_refs = batch_data.get("quote_batches", []) if isinstance(batch_data, dict) else []
+
         if item_ids:
             items = (
                 IntelligenceItem.query
@@ -2024,11 +2207,20 @@ def create_app():
                     fpath = os.path.join(app.config["LIBRARY_FOLDER"], item.file_path)
                     if os.path.exists(fpath):
                         os.remove(fpath)
-                _apply_item_tags(item, "")  # remove all tags (decrements counts)
+                _apply_item_tags(item, "")
                 db.session.delete(item)
             db.session.commit()
-            session.pop(f"lib_batch_{batch_id}", None)
-        flash("Upload discarded. Files have been removed.", "info")
+
+        session.pop(f"lib_batch_{batch_id}", None)
+        if drawing_ids or quote_batch_refs:
+            flash(
+                "Library entries discarded. "
+                "Drawings and quotes already dispatched cannot be discarded from this screen — "
+                "manage them from their respective cards.",
+                "info",
+            )
+        else:
+            flash("Upload discarded. Files have been removed.", "info")
         return redirect(url_for("intelligence_library"))
 
     @app.route("/library/<int:item_id>/edit", methods=["GET", "POST"])
@@ -3588,24 +3780,24 @@ def create_app():
             client = _anthropic.Anthropic(api_key=api_key)
             resp = client.messages.create(
                 model=CLAUDE_MODEL,
-                max_tokens=20,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
-                        {"type": "text", "text": (
-                            "Classify this construction document page as exactly one of: "
-                            "Drawing, Contract, Specification, Bid Doc, Addendum, Estimation Notes, Other. "
-                            "Estimation Notes are estimating notes, takeoff sheets, or handwritten cost notes. "
-                            "Reply with only the type name, nothing else."
-                        )},
-                    ],
-                }],
+                max_tokens=150,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                    {"type": "text", "text": _CLASSIFY_PIPELINE_PROMPT},
+                ]}],
             )
-            doc_type = resp.content[0].text.strip()
+            raw = resp.content[0].text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            result = json.loads(raw)
+            doc_type = result.get("doc_type", DEFAULT_DOC_TYPE)
             if doc_type not in DOC_TYPES:
                 doc_type = DEFAULT_DOC_TYPE
-            return jsonify({"doc_type": doc_type})
+            result["doc_type"] = doc_type
+            return jsonify(result)
         except Exception as e:
             print(f"[powerscan] classify_file error: {e}", flush=True)
             return jsonify({"doc_type": DEFAULT_DOC_TYPE})

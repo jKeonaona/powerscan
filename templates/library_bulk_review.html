@@ -24,32 +24,53 @@
         </ol>
     </nav>
 
+    {% set n_lib      = items | length %}
+    {% set n_drawings = drawings | length %}
+    {% set _qns = namespace(count=0) %}
+    {% for qbr in quote_batch_refs %}{% set _qns.count = _qns.count + (qbr.filenames | length) %}{% endfor %}
+    {% set n_quotes = _qns.count %}
+    {% set n_total  = n_lib + n_drawings + n_quotes %}
+
     <div class="d-flex justify-content-between align-items-start mb-3">
         <div>
             <h2 class="mb-1"><i class="bi bi-file-earmark-check"></i> Review Uploaded Files</h2>
             <p class="text-muted mb-0">
-                {{ items | length }} file{{ 's' if items | length != 1 else '' }} uploaded.
-                Review and edit metadata for each file, then click <strong>Save All</strong>.
+                Processed <strong>{{ n_total }}</strong> file{{ 's' if n_total != 1 else '' }}:
+                {% if n_lib %}<span class="text-primary">{{ n_lib }} added to Library</span>{% endif %}
+                {% if n_lib and (n_drawings or n_quotes) %},{% endif %}
+                {% if n_drawings %}<span class="text-success">{{ n_drawings }} routed to Drawings</span>{% endif %}
+                {% if n_drawings and n_quotes %},{% endif %}
+                {% if n_quotes %}<span class="text-warning">{{ n_quotes }} routed to Quotes</span>{% endif %}.
             </p>
         </div>
         <form method="POST"
               action="{{ url_for('library_bulk_review_discard', batch_id=batch_id) }}"
-              onsubmit="return confirm('Discard all {{ items | length }} file(s)? The files will be deleted and this cannot be undone.')">
+              onsubmit="return confirm('Discard all {{ n_lib }} library file(s)? The files will be deleted. Drawings and quotes already dispatched stay in their pipelines.')">
             <button type="submit" class="btn btn-outline-danger">
-                <i class="bi bi-trash"></i> Discard &amp; Start Over
+                <i class="bi bi-trash"></i> Discard Library Entries
             </button>
         </form>
     </div>
 
+    {% if n_drawings or n_quotes %}
     <div class="alert alert-info small mb-3">
         <i class="bi bi-info-circle"></i>
-        Changes made here are applied when you click <strong>Save All</strong>.
+        <strong>Drawings and quotes were dispatched immediately</strong> during upload — no further action needed here.
+        Drawings and quotes already dispatched cannot be discarded from this screen; manage them from their respective cards.
+    </div>
+    {% endif %}
+
+    <!-- ══ SECTION 1: Added to Library ══════════════════════════════════════ -->
+    {% if items %}
+    <h5 class="fw-semibold mb-2"><i class="bi bi-journal-bookmark text-primary"></i> Added to Library — {{ n_lib }} entr{{ 'ies' if n_lib != 1 else 'y' }}</h5>
+
+    <div class="alert alert-light border small mb-2">
+        <i class="bi bi-info-circle"></i>
+        Review and edit metadata for each file, then click <strong>Save All</strong>.
         Use Ctrl+click (or Cmd+click) to select multiple work scopes.
-        Discarding will permanently delete the uploaded files.
     </div>
 
     <form method="POST" action="{{ url_for('library_bulk_review_save', batch_id=batch_id) }}">
-
         <div class="table-responsive shadow-sm rounded mb-3">
             <table class="table table-bordered align-middle mb-0" style="min-width:900px;">
                 <thead class="table-light">
@@ -67,10 +88,8 @@
                     {% set sid = item.id | string %}
                     {% set sz  = file_sizes.get(item.id) %}
                     <tr>
-                        <!-- File info (read-only) -->
                         <td class="small">
-                            <div class="fw-medium text-truncate" style="max-width:180px;"
-                                 title="{{ item.original_filename }}">
+                            <div class="fw-medium text-truncate" style="max-width:180px;" title="{{ item.original_filename }}">
                                 {{ item.original_filename }}
                             </div>
                             <div class="text-muted">
@@ -91,59 +110,34 @@
                             </span>
                             {% endif %}
                         </td>
-
-                        <!-- Title -->
                         <td>
                             <input type="text" class="form-control form-control-sm"
-                                   name="title_{{ sid }}"
-                                   value="{{ item.title }}"
-                                   required>
+                                   name="title_{{ sid }}" value="{{ item.title }}" required>
                         </td>
-
-                        <!-- Description -->
                         <td>
                             <input type="text" class="form-control form-control-sm"
-                                   name="description_{{ sid }}"
-                                   value="{{ item.description or '' }}"
-                                   placeholder="optional">
+                                   name="description_{{ sid }}" value="{{ item.description or '' }}" placeholder="optional">
                         </td>
-
-                        <!-- Tags -->
                         <td>
                             <input type="text" class="form-control form-control-sm"
                                    name="tags_{{ sid }}"
                                    value="{{ item.tags | map(attribute='name') | join(', ') }}"
                                    placeholder="comma-separated">
                         </td>
-
-                        <!-- Work Scope -->
                         <td>
-                            <select multiple name="work_scope_{{ sid }}"
-                                    class="form-select form-select-sm"
-                                    style="height:90px;">
+                            <select multiple name="work_scope_{{ sid }}" class="form-select form-select-sm" style="height:90px;">
                                 {% for option in scope_options %}
-                                <option value="{{ option }}"
-                                    {% if option in item.work_scope_list %}selected{% endif %}>
-                                    {{ option }}
-                                </option>
+                                <option value="{{ option }}" {% if option in item.work_scope_list %}selected{% endif %}>{{ option }}</option>
                                 {% endfor %}
                             </select>
                         </td>
-
-                        <!-- Project -->
                         <td>
                             <select class="form-select form-select-sm" name="project_id_{{ sid }}">
                                 {% if include_global %}
-                                <option value=""
-                                    {% if not item.project_id %}selected{% endif %}>
-                                    Global
-                                </option>
+                                <option value="" {% if not item.project_id %}selected{% endif %}>Global</option>
                                 {% endif %}
                                 {% for p in all_projects %}
-                                <option value="{{ p.id }}"
-                                    {% if item.project_id == p.id %}selected{% endif %}>
-                                    {{ p.name }}
-                                </option>
+                                <option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
                                 {% endfor %}
                             </select>
                         </td>
@@ -156,14 +150,84 @@
         <div class="d-flex gap-2 pb-4">
             <button type="submit" class="btn btn-primary btn-lg">
                 <i class="bi bi-floppy"></i> Save All
-                ({{ items | length }} item{{ 's' if items | length != 1 else '' }})
+                ({{ n_lib }} item{{ 's' if n_lib != 1 else '' }})
             </button>
             <a href="{{ url_for('intelligence_library') }}" class="btn btn-outline-secondary">
                 Cancel &amp; Keep Files
             </a>
         </div>
-
     </form>
+
+    {% else %}
+    <!-- No library items — still need a save action to clear the session -->
+    <form method="POST" action="{{ url_for('library_bulk_review_save', batch_id=batch_id) }}" class="mb-4">
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-check-lg"></i> Done
+            </button>
+            <a href="{{ url_for('intelligence_library') }}" class="btn btn-outline-secondary">Go to Library</a>
+        </div>
+    </form>
+    {% endif %}
+
+    <!-- ══ SECTION 2: Routed to Drawings ════════════════════════════════════ -->
+    {% if drawings %}
+    <hr class="my-3">
+    <h5 class="fw-semibold mb-2"><i class="bi bi-layers text-success"></i> Routed to Drawings — {{ n_drawings }} file{{ 's' if n_drawings != 1 else '' }}</h5>
+    <p class="text-muted small mb-2">These files will be rasterized for the Drawings viewer. Check the Documents card for processing status.</p>
+    <div class="table-responsive shadow-sm rounded mb-3">
+        <table class="table table-bordered align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Filename</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for drawing in drawings %}
+                <tr>
+                    <td class="small fw-medium">{{ drawing.original_filename }}</td>
+                    <td><span class="badge bg-secondary">{{ drawing.doc_type }}</span></td>
+                    <td>
+                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
+                            <i class="bi bi-hourglass-split"></i> Queued for processing
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- ══ SECTION 3: Routed to Quotes ══════════════════════════════════════ -->
+    {% if quote_batch_refs %}
+    <hr class="my-3">
+    <h5 class="fw-semibold mb-2"><i class="bi bi-currency-dollar text-warning"></i> Routed to Quotes — {{ n_quotes }} file{{ 's' if n_quotes != 1 else '' }}</h5>
+    <p class="text-muted small mb-2">Vendor quote extraction has been triggered. Review and save the extracted data in Compare Quotes.</p>
+    {% for qbr in quote_batch_refs %}
+    <div class="card border-warning-subtle mb-2">
+        <div class="card-body py-2 px-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    {% for fname in qbr.filenames %}
+                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle me-1">
+                        <i class="bi bi-file-earmark-text"></i> {{ fname }}
+                    </span>
+                    {% endfor %}
+                </div>
+                {% if context_project_id %}
+                <a href="{{ url_for('bulk_quote_review', project_id=context_project_id, batch_id=qbr.batch_id) }}"
+                   class="btn btn-sm btn-outline-warning ms-2 text-nowrap">
+                    <i class="bi bi-arrow-right-circle"></i> Review in Compare Quotes
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
 
 </div>
 {% endblock %}
