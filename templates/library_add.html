@@ -106,7 +106,7 @@
                                 {% if current_user.role != 'user' %}
                                 <div class="col-md-4" id="u_workScopeSection" style="display:none;">
                                     <label class="form-label fw-medium">Work Scope</label>
-                                    <div class="form-text mb-1">Tag this global entry with the work scopes it applies to. Skippy will only surface it for projects with matching scopes.</div>
+                                    <div class="form-text mb-1">Tag this global entry with the work scopes it applies to. Skippy will only surface it for projects with matching scopes.<br><strong>Leave all unchecked</strong> to make this entry relevant to every project regardless of scope. Select specific scopes only if the entry should be filtered.</div>
                                     <div class="border rounded p-2 bg-light" style="max-height:150px;overflow-y:auto;">
                                         {% for option in scope_options %}
                                         <div class="form-check mb-1">
@@ -236,7 +236,7 @@
                                 {% if current_user.role != 'user' %}
                                 <div class="col-md-4" id="t_workScopeSection" style="display:none;">
                                     <label class="form-label fw-medium">Work Scope</label>
-                                    <div class="form-text mb-1">Tag this global entry with the work scopes it applies to. Skippy will only surface it for projects with matching scopes.</div>
+                                    <div class="form-text mb-1">Tag this global entry with the work scopes it applies to. Skippy will only surface it for projects with matching scopes.<br><strong>Leave all unchecked</strong> to make this entry relevant to every project regardless of scope. Select specific scopes only if the entry should be filtered.</div>
                                     <div class="border rounded p-2 bg-light" style="max-height:150px;overflow-y:auto;">
                                         {% for option in scope_options %}
                                         <div class="form-check mb-1">

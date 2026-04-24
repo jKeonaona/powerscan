@@ -1781,7 +1781,12 @@ def create_app():
         if tag_filter:
             q = q.join(IntelligenceItem.tags).filter(IntelligenceTag.name == tag_filter)
         if scope_filter:
-            q = q.filter(IntelligenceItem.work_scope_json.contains(scope_filter))
+            q = q.filter(
+                db.or_(
+                    IntelligenceItem.work_scope_json.is_(None),
+                    IntelligenceItem.work_scope_json.contains(scope_filter),
+                )
+            )
         if project_filter:
             q = q.filter(IntelligenceItem.project_id == int(project_filter))
         if search_q:
