@@ -103,8 +103,10 @@
                                     <div class="form-text">All files in this batch will be saved with these settings. You can override per file on the next screen.</div>
                                 </div>
 
-                                <div class="col-md-4">
-                                    <label class="form-label fw-medium">Work Scope <span class="text-muted fw-normal small">(optional)</span></label>
+                                {% if current_user.role != 'user' %}
+                                <div class="col-md-4" id="u_workScopeSection" style="display:none;">
+                                    <label class="form-label fw-medium">Work Scope</label>
+                                    <div class="form-text mb-1">Tag this global entry with the work scopes it applies to. Skippy will only surface it for projects with matching scopes.</div>
                                     <div class="border rounded p-2 bg-light" style="max-height:150px;overflow-y:auto;">
                                         {% for option in scope_options %}
                                         <div class="form-check mb-1">
@@ -116,6 +118,7 @@
                                         {% endfor %}
                                     </div>
                                 </div>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
@@ -230,8 +233,10 @@
                                     {% endif %}
                                 </div>
 
-                                <div class="col-md-4">
-                                    <label class="form-label fw-medium">Work Scope <span class="text-muted fw-normal">(optional)</span></label>
+                                {% if current_user.role != 'user' %}
+                                <div class="col-md-4" id="t_workScopeSection" style="display:none;">
+                                    <label class="form-label fw-medium">Work Scope</label>
+                                    <div class="form-text mb-1">Tag this global entry with the work scopes it applies to. Skippy will only surface it for projects with matching scopes.</div>
                                     <div class="border rounded p-2 bg-light" style="max-height:150px;overflow-y:auto;">
                                         {% for option in scope_options %}
                                         <div class="form-check mb-1">
@@ -243,6 +248,7 @@
                                         {% endfor %}
                                     </div>
                                 </div>
+                                {% endif %}
                             </div>
 
                             <div class="mt-3">
@@ -275,6 +281,22 @@
 <script>
 (function () {
     'use strict';
+
+    // ── Work Scope visibility (shown only when Scope = Company Global) ────────
+    function setupWorkScopeToggle(globalRadioId, projectRadioId, sectionId) {
+        var globalRadio  = document.getElementById(globalRadioId);
+        var projectRadio = document.getElementById(projectRadioId);
+        var section      = document.getElementById(sectionId);
+        if (!section) return;
+        function update() {
+            section.style.display = (globalRadio && globalRadio.checked) ? '' : 'none';
+        }
+        if (globalRadio)  globalRadio.addEventListener('change', update);
+        if (projectRadio) projectRadio.addEventListener('change', update);
+        update();
+    }
+    setupWorkScopeToggle('u_scopeGlobal', 'u_scopeProject', 'u_workScopeSection');
+    setupWorkScopeToggle('t_scopeGlobal', 't_scopeProject', 't_workScopeSection');
 
     // ── Mode toggle ────────────────────────────────────────────────────────────
     var uploadSection = document.getElementById('uploadSection');

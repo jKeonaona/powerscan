@@ -1848,7 +1848,7 @@ def create_app():
                         original_filename=f.filename,
                         file_mime=f.content_type,
                         project_id=resolved_project_id,
-                        work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
+                        work_scope_json=json.dumps(work_scope_selected) if (resolved_project_id is None and work_scope_selected) else None,
                         auto_include_in_search=True,
                         uploaded_by=current_user.id,
                     )
@@ -1890,7 +1890,7 @@ def create_app():
                     entry_type="text",
                     text_content=text_content,
                     project_id=resolved_project_id,
-                    work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
+                    work_scope_json=json.dumps(work_scope_selected) if (resolved_project_id is None and work_scope_selected) else None,
                     auto_include_in_search=auto_include,
                     uploaded_by=current_user.id,
                 )
@@ -1995,7 +1995,7 @@ def create_app():
             else:
                 item.project_id = None
             work_scope = request.form.getlist(f"work_scope_{sid}")
-            item.work_scope_json = json.dumps(work_scope) if work_scope else None
+            item.work_scope_json = json.dumps(work_scope) if (item.project_id is None and work_scope) else None
             raw_tags = request.form.get(f"tags_{sid}", "")
             _apply_item_tags(item, raw_tags)
 
