@@ -118,11 +118,12 @@
                                 <div class="d-flex gap-1 justify-content-end">
                                     <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
                                     {% if current_user.is_admin %}
-                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                                          class="d-inline"
-                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
-                                    </form>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                            data-delete-project-name="{{ project.name | e }}"
+                                            data-delete-action="{{ url_for('delete_project', project_id=project.id) }}"
+                                            onclick="showDeleteProjectModal(this)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
                                     {% endif %}
                                 </div>
                             </td>
@@ -200,11 +201,12 @@
                                 <div class="d-flex gap-1 justify-content-end">
                                     <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
                                     {% if current_user.is_admin %}
-                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                                          class="d-inline"
-                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
-                                    </form>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                            data-delete-project-name="{{ project.name | e }}"
+                                            data-delete-action="{{ url_for('delete_project', project_id=project.id) }}"
+                                            onclick="showDeleteProjectModal(this)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
                                     {% endif %}
                                 </div>
                             </td>
@@ -264,11 +266,12 @@
                                 <div class="d-flex gap-1 justify-content-end">
                                     <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
                                     {% if current_user.is_admin %}
-                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                                          class="d-inline"
-                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
-                                    </form>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                            data-delete-project-name="{{ project.name | e }}"
+                                            data-delete-action="{{ url_for('delete_project', project_id=project.id) }}"
+                                            onclick="showDeleteProjectModal(this)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
                                     {% endif %}
                                 </div>
                             </td>
@@ -331,11 +334,12 @@
                                 <div class="d-flex gap-1 justify-content-end">
                                     <a href="{{ url_for('project_hub', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary">Open</a>
                                     {% if current_user.is_admin %}
-                                    <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}"
-                                          class="d-inline"
-                                          onsubmit="return confirm('Delete ' + {{ project.name | tojson }} + ' and all its documents?')">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
-                                    </form>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                            data-delete-project-name="{{ project.name | e }}"
+                                            data-delete-action="{{ url_for('delete_project', project_id=project.id) }}"
+                                            onclick="showDeleteProjectModal(this)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
                                     {% endif %}
                                 </div>
                             </td>
@@ -361,6 +365,47 @@
 .group-toggle:hover { opacity: .8; }
 .sort-col:hover { background: rgba(0,0,0,.04); }
 </style>
+
+<!-- Delete Project Confirmation Modal -->
+<div class="modal fade" id="deleteProjectModal" tabindex="-1" aria-labelledby="deleteProjectModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title text-danger" id="deleteProjectModalLabel">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>Delete Project?
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Delete <strong id="deleteProjectModalName"></strong>?</p>
+        <p class="mb-1">This will permanently delete all:</p>
+        <ul class="small mb-2">
+          <li>Takeoffs</li>
+          <li>Drawings and documents</li>
+          <li>Quotes and compare quote data</li>
+          <li>Project-pinned library entries</li>
+          <li>Reports</li>
+        </ul>
+        <p class="mb-1 fw-semibold text-success"><i class="bi bi-shield-check me-1"></i>Company Global entries will NOT be affected.</p>
+        <p class="text-danger small mb-0"><i class="bi bi-exclamation-circle me-1"></i>This cannot be undone.</p>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form id="deleteProjectForm" method="POST" class="d-inline">
+          <button type="submit" class="btn btn-danger">Delete Project</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showDeleteProjectModal(btn) {
+    document.getElementById('deleteProjectModalName').textContent = btn.dataset.deleteProjectName;
+    document.getElementById('deleteProjectForm').action = btn.dataset.deleteAction;
+    new bootstrap.Modal(document.getElementById('deleteProjectModal')).show();
+}
+</script>
 
 <script>
 (function () {

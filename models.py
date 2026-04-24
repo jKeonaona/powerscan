@@ -89,7 +89,7 @@ class Takeoff(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
 
-    project = db.relationship("Project", backref="takeoffs")
+    project = db.relationship("Project", backref=db.backref("takeoffs", cascade="all, delete-orphan"))
     created_by = db.relationship("User", foreign_keys=[created_by_user_id])
 
     # ── Project Parameters ─────────────────────────────────────────────────────
@@ -350,7 +350,7 @@ class ComparisonSummary(db.Model):
     bid_id = db.Column(db.Integer, nullable=True)
     scope_option = db.Column(db.String(100), nullable=True)
 
-    project = db.relationship("Project")
+    project = db.relationship("Project", backref=db.backref("comparison_summaries", cascade="all, delete-orphan"))
     takeoff = db.relationship("Takeoff", backref="comparison_summaries")
 
 
@@ -368,7 +368,7 @@ class QuoteComparisonExport(db.Model):
     bid_id = db.Column(db.Integer, nullable=True)
     scope_option = db.Column(db.String(100), nullable=True)
 
-    project = db.relationship("Project")
+    project = db.relationship("Project", backref=db.backref("quote_comparison_exports", cascade="all, delete-orphan"))
     user = db.relationship("User")
 
 
@@ -385,7 +385,7 @@ class QuoteBatch(db.Model):
 
     takeoff_id = db.Column(db.Integer, db.ForeignKey("takeoff.id"), nullable=True)
 
-    project = db.relationship("Project")
+    project = db.relationship("Project", backref=db.backref("quote_batches", cascade="all, delete-orphan"))
     user = db.relationship("User")
     takeoff = db.relationship("Takeoff", backref="quote_batches")
 

@@ -1325,11 +1325,85 @@ def create_app():
     @login_required
     @admin_required
     def delete_project(project_id):
+        import shutil
         project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        project_name = project.name
         company_id = project.company_id
-        db.session.delete(project)
-        db.session.commit()
-        flash(f"Project '{project.name}' deleted.", "success")
+
+        # Collect disk paths before touching the DB
+        files_to_delete = []
+        dirs_to_delete = []
+
+        drawings = Drawing.query.filter_by(project_id=project_id).all()
+        for d in drawings:
+            files_to_delete.append(os.path.join(app.config["UPLOAD_FOLDER"], d.filename))
+            dirs_to_delete.append(os.path.join(app.config["PROCESSED_FOLDER"], str(d.id)))
+
+        # NEVER modify records with project_id IS NULL — those are Company Global and must survive project deletion
+        lib_items = IntelligenceItem.query.filter(
+            IntelligenceItem.project_id == project_id
+        ).all()
+        for item in lib_items:
+            if item.file_path:
+                files_to_delete.append(os.path.join(app.config["LIBRARY_FOLDER"], item.file_path))
+
+        batches = QuoteBatch.query.filter(QuoteBatch.project_id == project_id).all()
+        for b in batches:
+            dirs_to_delete.append(
+                os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", b.batch_id)
+            )
+
+        reports = Report.query.filter(Report.project_id == project_id).all()
+        for r in reports:
+            if r.file_path:
+                files_to_delete.append(os.path.join(app.config["REPORTS_FOLDER"], r.file_path))
+
+        # Single transaction: explicit deletes for non-ORM-cascade models first,
+        # then cascade from db.session.delete(project) handles the rest.
+        try:
+            # NEVER modify records with project_id IS NULL — those are Company Global and must survive project deletion
+            ComparisonSummary.query.filter(
+                ComparisonSummary.project_id == project_id
+            ).delete(synchronize_session="fetch")
+            QuoteComparisonExport.query.filter(
+                QuoteComparisonExport.project_id == project_id
+            ).delete(synchronize_session="fetch")
+            QuoteBatch.query.filter(
+                QuoteBatch.project_id == project_id
+            ).delete(synchronize_session="fetch")
+            Takeoff.query.filter(
+                Takeoff.project_id == project_id
+            ).delete(synchronize_session="fetch")
+            # Cascade handles: Drawings/DrawingPages, SearchHistory, Reports,
+            # IntelligenceItems (project_id==project_id only — NULL items untouched), Takeoffs
+            db.session.delete(project)
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.error(f"Project delete failed for id={project_id}: {exc}")
+            flash(f"Could not delete '{project_name}' — an error occurred. No data was changed.", "danger")
+            return redirect(url_for("project_hub", project_id=project_id))
+
+        # DB committed — clean up disk (non-fatal: log failures but don't crash)
+        for f in files_to_delete:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+                    app.logger.info(f"Project delete: removed file {f}")
+            except Exception as exc:
+                app.logger.warning(f"Project delete: could not remove file {f}: {exc}")
+        for d in dirs_to_delete:
+            try:
+                if os.path.isdir(d):
+                    shutil.rmtree(d, ignore_errors=True)
+                    app.logger.info(f"Project delete: removed dir {d}")
+            except Exception as exc:
+                app.logger.warning(f"Project delete: could not remove dir {d}: {exc}")
+
+        flash(f"Project '{project_name}' deleted.", "success")
         return redirect(url_for("projects", company_id=company_id))
 
     # ── Project Hub ─────────────────────────────────────────────
