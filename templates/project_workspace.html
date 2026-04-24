@@ -109,6 +109,13 @@
     border-bottom: 1px solid #dee2e6;
     background: #fff;
 }
+/* Content area: thread + input, wraps both for centering control */
+.ws-content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
 .workspace-thread {
     flex: 1;
     overflow-y: auto;
@@ -120,6 +127,30 @@
     padding: 0.6rem 1rem;
     border-top: 1px solid #dee2e6;
     background: #fff;
+}
+
+/* ── Empty-state centering (new-chat mode) ─────────────────── */
+.ws-main.ws-empty .ws-content-area {
+    justify-content: center;
+    align-items: center;
+    overflow: auto;
+    padding: 1.5rem;
+    gap: 0.5rem;
+}
+.ws-main.ws-empty .workspace-thread {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 620px;
+    padding: 0;
+    overflow: visible;
+}
+.ws-main.ws-empty .workspace-input-area {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 620px;
+    border-top: none;
+    background: transparent;
+    padding: 0;
 }
 
 /* ── Message bubbles ───────────────────────────────────────── */
@@ -244,7 +275,7 @@
   </div>
 
   <!-- ── Main panel ──────────────────────────────────────────── -->
-  <div class="ws-main">
+  <div class="ws-main{% if not messages %} ws-empty{% endif %}" id="wsMain">
 
     <!-- Header -->
     <div class="workspace-header d-flex align-items-center justify-content-between gap-3">
@@ -281,6 +312,9 @@
         <i class="bi bi-folder2-open me-1"></i> View drawings
       </button>
     </div>
+
+    <!-- Content area: scrolling thread + sticky input -->
+    <div class="ws-content-area">
 
     <!-- Chat thread -->
     <div class="workspace-thread" id="chatThread">
@@ -362,7 +396,9 @@
         <kbd style="font-size:.65rem;">Enter</kbd> to send &nbsp;&middot;&nbsp;
         <kbd style="font-size:.65rem;">Shift+Enter</kbd> for newline
       </div>
-    </div>
+    </div><!-- end workspace-input-area -->
+
+    </div><!-- end ws-content-area -->
 
   </div><!-- end ws-main -->
 
@@ -446,9 +482,10 @@
 
     let THREAD_ID = {% if active_thread %}{{ active_thread.id }}{% else %}null{% endif %};
 
-    const thread  = document.getElementById('chatThread');
-    const input   = document.getElementById('wsInput');
-    const sendBtn = document.getElementById('wsSendBtn');
+    const wsMain      = document.getElementById('wsMain');
+    const thread      = document.getElementById('chatThread');
+    const input       = document.getElementById('wsInput');
+    const sendBtn     = document.getElementById('wsSendBtn');
     const thinkingRow = document.getElementById('thinkingRow');
     const emptyState  = document.getElementById('emptyState');
 
@@ -537,6 +574,8 @@
         const text = input.value.trim();
         if (!text) return;
 
+        // Switch from centered empty-state layout to active-thread layout before API call
+        wsMain.classList.remove('ws-empty');
         if (emptyState) emptyState.style.display = 'none';
         thread.appendChild(buildUserBubble(text));
         input.value = '';
