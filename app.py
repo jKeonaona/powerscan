@@ -20,7 +20,7 @@ from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report,
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     IntelligenceTag, IntelligenceItem, QuoteBatch,
-    ComparisonSummary, QuoteComparisonExport, Takeoff,
+    ComparisonSummary, QuoteComparisonExport, Takeoff, WorkspaceMessage,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     PROJECT_STATUSES, TAKEOFF_STATUSES,
@@ -357,6 +357,138 @@ def _generate_skippy_recommendation(api_key, project, items, category_tag):
         return json.loads(raw)
     except Exception:
         return None
+
+
+# ── Workspace (conversational project surface) ─────────────────────────────
+
+_WORKSPACE_SYSTEM_PROMPT = (
+    "You are Skippy — a straight-talking construction estimating assistant embedded in PowerScan. "
+    "You're in the Workspace: a conversational surface where estimators ask questions about a "
+    "specific project and get grounded answers from the actual project documents.\n\n"
+    "Read the engineering drawings, specifications, and library references provided and give "
+    "direct, useful answers. No waffling. If you find it in the documents, cite where. "
+    "If it is not in the documents, say so clearly and briefly.\n\n"
+    "When you reference information from a specific drawing, cite it with the index label "
+    "shown before each image (e.g. [INDEX 3]). Users can find those documents via the "
+    "'Project documents' button on this page.\n\n"
+    "You are responding in the Workspace — a conversational project surface. The user may ask "
+    "questions across sessions; treat the conversation history as context they expect you to "
+    "remember. Be concise. Use plain language."
+)
+
+
+def _call_workspace(project, history, user_message, api_key, processed_folder):
+    """Call Claude for a Workspace chat turn.
+
+    Returns dict with 'answer' (str) and 'sources' (list of dicts).
+    history is a list of WorkspaceMessage objects (already alternating user/assistant).
+    """
+    import anthropic
+    from search import CLAUDE_MODEL, _load_and_shrink, MAX_IMAGES_PER_REQUEST, _extract_sources
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Build scope prefix
+    scope_items = project.work_scope_list
+    scope_parts = []
+    if scope_items:
+        prompt_scope = list(scope_items)
+        if _LEAD_TRIGGER_SCOPES.intersection(set(scope_items)) and "Lead Abatement" not in scope_items:
+            prompt_scope.append("Lead Abatement")
+        scope_parts.append("Work scope: " + ", ".join(prompt_scope))
+    if project.scope_details:
+        scope_parts.append("Scope details: " + project.scope_details)
+
+    # Build library context (text only)
+    lib_items = (
+        IntelligenceItem.query
+        .filter_by(auto_include_in_search=True)
+        .filter(
+            db.or_(
+                IntelligenceItem.project_id.is_(None),
+                IntelligenceItem.project_id == project.id,
+            )
+        )
+        .all()
+    )
+    lib_parts = []
+    for it in lib_items:
+        entry = f"- {it.title}"
+        if it.description:
+            entry += f": {it.description}"
+        if it.text_content:
+            entry += f"\n  {it.text_content[:400]}"
+        lib_parts.append(entry)
+
+    # Load up to MAX_IMAGES_PER_REQUEST ready drawing pages as images
+    pages = (
+        db.session.query(DrawingPage, Drawing)
+        .join(Drawing, DrawingPage.drawing_id == Drawing.id)
+        .filter(Drawing.project_id == project.id, Drawing.status == "ready")
+        .order_by(Drawing.original_filename, DrawingPage.page_number)
+        .limit(MAX_IMAGES_PER_REQUEST)
+        .all()
+    )
+    content = []
+    index_map = {}
+    for idx, (page, drawing) in enumerate(pages, start=1):
+        abs_path = os.path.join(processed_folder, page.image_path)
+        try:
+            data = _load_and_shrink(abs_path)
+        except Exception:
+            continue
+        label = f"INDEX {idx}: {drawing.original_filename} — page {page.page_number}"
+        index_map[idx] = {
+            "drawing_id": drawing.id,
+            "filename": drawing.original_filename,
+            "page": page.page_number,
+        }
+        content.append({"type": "text", "text": label})
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": data},
+        })
+
+    # Assemble text context block appended to the user message
+    ctx_lines = [f"Project: {project.name}"]
+    if scope_parts:
+        ctx_lines.extend(scope_parts)
+    if lib_parts:
+        ctx_lines.append("Intelligence Library entries:\n" + "\n".join(lib_parts))
+    if index_map:
+        ctx_lines.append(
+            f"\n{len(index_map)} project drawing page(s) are shown above as images. "
+            "Each is preceded by an INDEX label. Cite relevant drawings with [INDEX N]."
+        )
+    else:
+        ctx_lines.append("\nNo ready drawings found for this project yet.")
+    ctx_lines.append(f"\nUser question: {user_message}")
+    content.append({"type": "text", "text": "\n".join(ctx_lines)})
+
+    # Build messages array: clean history (alternating, end with assistant) + new user turn
+    clean = list(history)
+    while clean and clean[-1].role == "user":
+        clean.pop()   # drop orphaned user msg (assistant response never saved)
+    while clean and clean[0].role == "assistant":
+        clean.pop(0)  # guard: history must start with user
+    clean = clean[-20:]  # cap at last 10 exchanges
+
+    api_messages = [{"role": m.role, "content": m.content} for m in clean]
+    api_messages.append({"role": "user", "content": content})
+
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=2048,
+            system=_WORKSPACE_SYSTEM_PROMPT,
+            messages=api_messages,
+        )
+        answer = response.content[0].text
+        sources = _extract_sources(answer, index_map)
+        return {"answer": answer, "sources": sources}
+    except Exception as exc:
+        print(f"[powerscan] workspace API error: {exc}", flush=True)
+        return {"answer": "I ran into a problem generating a response. Please try again.", "sources": []}
 
 
 def _extract_quote_file(api_key, file_path, original_filename):
@@ -1459,6 +1591,101 @@ def create_app():
             abort(403)
         return render_template("project_previous_bids_placeholder.html", project=project)
 
+    # ── Workspace ───────────────────────────────────────────────
+
+    @app.route("/projects/<int:project_id>/workspace")
+    @login_required
+    def project_workspace(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        raw_messages = (
+            WorkspaceMessage.query
+            .filter_by(project_id=project_id, user_id=current_user.id)
+            .order_by(WorkspaceMessage.created_at.asc())
+            .all()
+        )
+        # Attach parsed sources list to each message for template rendering
+        for msg in raw_messages:
+            try:
+                msg.sources = json.loads(msg.sources_json) if msg.sources_json else []
+            except Exception:
+                msg.sources = []
+
+        drawings_list = (
+            Drawing.query
+            .filter_by(project_id=project_id)
+            .order_by(Drawing.created_at.desc())
+            .all()
+        )
+
+        return render_template(
+            "project_workspace.html",
+            project=project,
+            messages=raw_messages,
+            drawings_list=drawings_list,
+        )
+
+    @app.route("/projects/<int:project_id>/workspace/send", methods=["POST"])
+    @login_required
+    def workspace_send(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+
+        data = request.get_json(silent=True) or {}
+        user_text = data.get("message", "").strip()
+        if not user_text:
+            return jsonify({"error": "Empty message."}), 400
+        if not app.config["ANTHROPIC_API_KEY"]:
+            return jsonify({"error": "Claude API key not configured."}), 500
+
+        # Capture history BEFORE saving the new user message
+        history = (
+            WorkspaceMessage.query
+            .filter_by(project_id=project_id, user_id=current_user.id)
+            .order_by(WorkspaceMessage.created_at.asc())
+            .all()
+        )
+
+        # Save user message
+        user_msg = WorkspaceMessage(
+            project_id=project_id,
+            user_id=current_user.id,
+            role="user",
+            content=user_text,
+        )
+        db.session.add(user_msg)
+        db.session.commit()
+
+        # Call Claude
+        result = _call_workspace(
+            project, history, user_text,
+            app.config["ANTHROPIC_API_KEY"],
+            app.config["PROCESSED_FOLDER"],
+        )
+
+        answer = result.get("answer", "Sorry, I could not generate a response.")
+        sources = result.get("sources", [])
+
+        # Save assistant message
+        asst_msg = WorkspaceMessage(
+            project_id=project_id,
+            user_id=current_user.id,
+            role="assistant",
+            content=answer,
+            sources_json=json.dumps(sources) if sources else None,
+        )
+        db.session.add(asst_msg)
+        db.session.commit()
+
+        return jsonify({
+            "answer": answer,
+            "sources": sources,
+            "created_at": asst_msg.created_at.strftime("%b %d, %Y %H:%M"),
+        })
+
     # ── Takeoff Routes ──────────────────────────────────────────
 
     @app.route("/projects/<int:project_id>/takeoffs")
@@ -1680,6 +1907,11 @@ def create_app():
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
+
+        # Search tab has moved to Workspace
+        if request.method == "GET" and request.args.get("tab", "").strip().lower() == "search":
+            flash("Search has been upgraded — meet Skippy, your new Workspace assistant.", "info")
+            return redirect(url_for("project_workspace", project_id=project_id))
 
         filter_doc_type = request.values.get("filter_doc_type", "").strip()
         if filter_doc_type and filter_doc_type not in DOC_TYPES:

@@ -43,14 +43,14 @@
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link {% if active_tab == 'search' %}active{% endif %}"
-                    id="search-tab" data-bs-toggle="tab" data-bs-target="#tab-search"
-                    type="button" role="tab">
-                <i class="bi bi-search"></i> Search
+            <a class="nav-link" href="{{ url_for('project_workspace', project_id=project.id) }}">
+                <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+                     alt="Skippy" width="16" height="16" style="border-radius:3px; object-fit:cover; vertical-align:text-bottom;">
+                Workspace
                 {% if has_ready_docs %}
                 <span class="badge bg-success ms-1 pulse-badge">Ask Questions Here</span>
                 {% endif %}
-            </button>
+            </a>
         </li>
         <li class="nav-item" role="presentation">
             <button class="nav-link {% if active_tab == 'reports' %}active{% endif %}"
@@ -112,10 +112,10 @@
 
             {% if has_ready_docs %}
             <div class="alert alert-success d-flex align-items-center justify-content-between mb-3 py-2" role="alert">
-                <span><i class="bi bi-check-circle-fill me-2"></i><strong>Documents are ready!</strong> Click the Search tab to ask questions about these documents.</span>
-                <button class="btn btn-success btn-sm ms-3" id="goToSearchBtn">
-                    <i class="bi bi-search"></i> Go to Search
-                </button>
+                <span><i class="bi bi-check-circle-fill me-2"></i><strong>Documents are ready!</strong> Open the Workspace to ask Skippy questions about these documents.</span>
+                <a href="{{ url_for('project_workspace', project_id=project.id) }}" class="btn btn-success btn-sm ms-3">
+                    <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}" alt="" width="14" height="14" style="border-radius:2px; object-fit:cover; vertical-align:text-bottom; margin-right:4px;">Open Workspace
+                </a>
             </div>
             {% endif %}
 
@@ -699,13 +699,5 @@ document.querySelectorAll('.chip-question').forEach(chip => {
     });
 });
 
-// ─── "Go to Search" button on Documents tab banner ───
-const goToSearchBtn = document.getElementById('goToSearchBtn');
-if (goToSearchBtn) {
-    goToSearchBtn.addEventListener('click', () => {
-        const searchTab = document.getElementById('search-tab');
-        if (searchTab) bootstrap.Tab.getOrCreateInstance(searchTab).show();
-    });
-}
 </script>
 {% endblock %}

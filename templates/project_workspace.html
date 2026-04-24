@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — Workspace — PowerScan{% endblock %}
+
+{% block content %}
+<style>
+.workspace-layout {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 57px);
+    overflow: hidden;
+}
+.workspace-header {
+    flex-shrink: 0;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid #dee2e6;
+    background: #fff;
+}
+.workspace-thread {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem 1.25rem;
+    scroll-behavior: smooth;
+}
+.workspace-input-area {
+    flex-shrink: 0;
+    padding: 0.6rem 1rem;
+    border-top: 1px solid #dee2e6;
+    background: #fff;
+}
+.msg-row {
+    display: flex;
+    gap: 0.6rem;
+    margin-bottom: 1.1rem;
+    align-items: flex-end;
+}
+.msg-row-user { justify-content: flex-end; }
+.msg-row-assistant { justify-content: flex-start; }
+.msg-bubble {
+    max-width: 74%;
+    border-radius: 1rem;
+    padding: 0.65rem 0.9rem;
+    line-height: 1.55;
+    word-break: break-word;
+}
+.msg-bubble-user {
+    background: #dbeafe;
+    border-bottom-right-radius: 0.25rem;
+}
+.msg-bubble-assistant {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-bottom-left-radius: 0.25rem;
+}
+.msg-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    object-fit: cover;
+    flex-shrink: 0;
+    margin-bottom: 2px;
+}
+.msg-meta {
+    font-size: 0.68rem;
+    color: #adb5bd;
+    opacity: 0;
+    transition: opacity 0.15s;
+    padding: 0 0.2rem;
+}
+.msg-row:hover .msg-meta { opacity: 1; }
+.msg-meta-user { text-align: right; }
+.source-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 0.12rem 0.45rem;
+    border-radius: 0.3rem;
+    background: #ecfdf5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+    margin: 0.2rem 0.15rem 0 0;
+    text-decoration: none;
+}
+.source-badge:hover { background: #d1fae5; color: #065f46; }
+.thinking-bubble {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #6c757d;
+    font-style: italic;
+    font-size: 0.9rem;
+    padding: 0.6rem 0.85rem;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 1rem;
+    border-bottom-left-radius: 0.25rem;
+}
+#wsInput { resize: none; border-radius: 0.75rem; }
+#wsSendBtn { border-radius: 0.75rem; min-width: 48px; }
+</style>
+
+<div class="workspace-layout">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <div class="workspace-header d-flex align-items-center justify-content-between gap-3">
+    <div class="d-flex align-items-center gap-3 overflow-hidden">
+      <nav aria-label="breadcrumb" class="mb-0 d-none d-md-block flex-shrink-0">
+        <ol class="breadcrumb mb-0 small">
+          {% if current_user.role == 'superadmin' %}
+          <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+          {% endif %}
+          <li class="breadcrumb-item">
+            <a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a>
+          </li>
+          <li class="breadcrumb-item">
+            <a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a>
+          </li>
+          <li class="breadcrumb-item active">Workspace</li>
+        </ol>
+      </nav>
+      <div class="d-flex align-items-center gap-2 flex-shrink-0">
+        <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+             alt="Skippy" width="38" height="38"
+             style="border-radius:8px; object-fit:cover;">
+        <div>
+          <div class="fw-semibold lh-1">Workspace</div>
+          <div class="text-muted small lh-1 mt-1">{{ project.name }}</div>
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm flex-shrink-0"
+            type="button"
+            data-bs-toggle="offcanvas"
+            data-bs-target="#docsDrawer"
+            aria-controls="docsDrawer">
+      <i class="bi bi-folder2-open me-1"></i> Project documents
+    </button>
+  </div>
+
+  <!-- ── Chat thread ─────────────────────────────────────── -->
+  <div class="workspace-thread" id="chatThread">
+
+    {% if not messages %}
+    <div class="text-center py-5" id="emptyState">
+      <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+           alt="Skippy" width="68" height="68"
+           style="border-radius:14px; object-fit:cover; margin-bottom:1rem; opacity:0.9;">
+      <h5 class="fw-bold mb-1">Skippy Workspace</h5>
+      <p class="text-muted mb-3">Ask me anything about <strong>{{ project.name }}</strong>.</p>
+      <div class="d-flex flex-wrap gap-2 justify-content-center">
+        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                data-q="What are the submittal requirements?">Submittal requirements</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                data-q="What are the insurance and bonding requirements?">Insurance &amp; bonding</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                data-q="Summarize the key project milestones and deadlines.">Key milestones</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                data-q="What safety requirements are specified?">Safety requirements</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                data-q="List all materials and specifications mentioned.">Materials &amp; specs</button>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Persisted messages -->
+    {% for msg in messages %}
+    {% if msg.role == 'user' %}
+    <div class="msg-row msg-row-user">
+      <div>
+        <div class="msg-bubble msg-bubble-user">{{ msg.content | e | replace('\n', '<br>') | safe }}</div>
+        <div class="msg-meta msg-meta-user">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</div>
+      </div>
+    </div>
+    {% else %}
+    <div class="msg-row msg-row-assistant">
+      <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+           alt="Skippy" class="msg-avatar">
+      <div>
+        <div class="msg-bubble msg-bubble-assistant">
+          {{ msg.content | e | replace('\n', '<br>') | safe }}
+          {% if msg.sources %}
+          <div class="mt-2">
+            {% for src in msg.sources %}
+            <a href="{{ url_for('drawing_detail', drawing_id=src.drawing_id) }}"
+               class="source-badge"
+               title="Open {{ src.filename }}">
+              <i class="bi bi-file-earmark-pdf"></i> {{ src.filename }} p.{{ src.page }}
+            </a>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        <div class="msg-meta">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+
+    <!-- "Skippy is thinking…" indicator (hidden by default) -->
+    <div class="msg-row msg-row-assistant" id="thinkingRow" style="display:none;">
+      <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+           alt="Skippy" class="msg-avatar">
+      <div class="thinking-bubble">
+        <span class="spinner-border spinner-border-sm"></span>
+        Skippy is thinking&hellip;
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Input area ──────────────────────────────────────── -->
+  <div class="workspace-input-area">
+    <div class="d-flex gap-2 align-items-end">
+      <textarea id="wsInput" class="form-control" rows="2"
+                placeholder="Bask in my magnificence and ask me something."
+                autocomplete="off"></textarea>
+      <button id="wsSendBtn" class="btn btn-primary" title="Send (Enter)">
+        <i class="bi bi-send-fill"></i>
+      </button>
+    </div>
+    <div class="text-muted small mt-1 ps-1">
+      <kbd style="font-size:.65rem;">Enter</kbd> to send &nbsp;&middot;&nbsp;
+      <kbd style="font-size:.65rem;">Shift+Enter</kbd> for newline
+    </div>
+  </div>
+
+</div><!-- end workspace-layout -->
+
+<!-- ── Documents Drawer (Bootstrap Offcanvas) ─────── -->
+<div class="offcanvas offcanvas-end"
+     data-bs-backdrop="false"
+     tabindex="-1"
+     id="docsDrawer"
+     aria-labelledby="docsDrawerLabel"
+     style="width:440px;">
+  <div class="offcanvas-header border-bottom py-2">
+    <h6 class="offcanvas-title mb-0" id="docsDrawerLabel">
+      <i class="bi bi-folder2-open me-2 text-warning"></i>Project Documents
+    </h6>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body p-0 d-flex flex-column">
+    <div class="d-flex justify-content-between align-items-center px-3 py-2 border-bottom bg-light">
+      <span class="text-muted small">
+        {{ drawings_list | length }} document{{ 's' if drawings_list | length != 1 else '' }}
+      </span>
+      <a href="{{ url_for('upload_drawing', project_id=project.id) }}"
+         class="btn btn-primary btn-sm">
+        <i class="bi bi-upload me-1"></i>Upload
+      </a>
+    </div>
+    <div class="flex-grow-1 overflow-y-auto">
+      {% if drawings_list %}
+      <ul class="list-group list-group-flush">
+        {% for drawing in drawings_list %}
+        <li class="list-group-item px-3 py-2">
+          <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-file-earmark-pdf text-danger flex-shrink-0"></i>
+            <div class="overflow-hidden flex-grow-1">
+              <a href="{{ url_for('drawing_detail', drawing_id=drawing.id) }}"
+                 class="d-block text-truncate fw-medium small text-decoration-none"
+                 title="{{ drawing.original_filename }}">{{ drawing.original_filename }}</a>
+              <div class="d-flex gap-1 mt-1 flex-wrap">
+                <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle"
+                      style="font-size:.63rem;">{{ drawing.doc_type }}</span>
+                {% if drawing.status == 'ready' %}
+                <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle"
+                      style="font-size:.63rem;"><i class="bi bi-check-lg"></i> Ready</span>
+                {% elif drawing.status == 'processing' %}
+                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle"
+                      style="font-size:.63rem;"><i class="bi bi-gear-fill"></i> Processing</span>
+                {% else %}
+                <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle"
+                      style="font-size:.63rem;">Pending</span>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="text-center py-5 text-muted">
+        <i class="bi bi-file-earmark-pdf fs-2 d-block mb-2"></i>
+        <p class="small mb-0">No documents uploaded yet.</p>
+      </div>
+      {% endif %}
+    </div>
+    <div class="p-3 border-top">
+      <a href="{{ url_for('drawings', project_id=project.id) }}"
+         class="btn btn-outline-secondary btn-sm w-100">
+        <i class="bi bi-folder2-open me-1"></i>Open full Documents page
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+    const SEND_URL = "{{ url_for('workspace_send', project_id=project.id) }}";
+    const SKIPPY_ICON = "{{ url_for('static', filename='images/skippy-magnificent.png') }}";
+    const thread = document.getElementById('chatThread');
+    const input = document.getElementById('wsInput');
+    const sendBtn = document.getElementById('wsSendBtn');
+    const thinkingRow = document.getElementById('thinkingRow');
+    const emptyState = document.getElementById('emptyState');
+
+    function scrollToBottom() {
+        thread.scrollTop = thread.scrollHeight;
+    }
+    scrollToBottom();
+
+    function setWorking(on) {
+        input.disabled = on;
+        sendBtn.disabled = on;
+        thinkingRow.style.display = on ? 'flex' : 'none';
+        if (on) scrollToBottom();
+    }
+
+    function escHtml(str) {
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/\n/g, '<br>');
+    }
+
+    function buildUserBubble(text) {
+        const row = document.createElement('div');
+        row.className = 'msg-row msg-row-user';
+        row.innerHTML = `
+            <div>
+              <div class="msg-bubble msg-bubble-user">${escHtml(text)}</div>
+              <div class="msg-meta msg-meta-user">Just now</div>
+            </div>`;
+        return row;
+    }
+
+    function buildAssistantBubble(text, sources, ts) {
+        let sourcesHtml = '';
+        if (sources && sources.length) {
+            sourcesHtml = '<div class="mt-2">' + sources.map(s =>
+                `<a href="/drawings/${s.drawing_id}" class="source-badge" title="Open ${escHtml(s.filename)}">` +
+                `<i class="bi bi-file-earmark-pdf"></i> ${escHtml(s.filename)} p.${s.page}</a>`
+            ).join('') + '</div>';
+        }
+        const row = document.createElement('div');
+        row.className = 'msg-row msg-row-assistant';
+        row.innerHTML = `
+            <img src="${SKIPPY_ICON}" alt="Skippy" class="msg-avatar">
+            <div>
+              <div class="msg-bubble msg-bubble-assistant">
+                ${escHtml(text)}${sourcesHtml}
+              </div>
+              <div class="msg-meta">${ts || ''}</div>
+            </div>`;
+        return row;
+    }
+
+    async function sendMessage() {
+        const text = input.value.trim();
+        if (!text) return;
+
+        if (emptyState) emptyState.style.display = 'none';
+        thread.appendChild(buildUserBubble(text));
+        input.value = '';
+        setWorking(true);
+        scrollToBottom();
+
+        try {
+            const res = await fetch(SEND_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: text }),
+            });
+            const data = await res.json();
+            if (data.error) {
+                thread.appendChild(buildAssistantBubble('⚠ ' + data.error, [], ''));
+            } else {
+                thread.appendChild(buildAssistantBubble(data.answer, data.sources || [], data.created_at || ''));
+            }
+        } catch (err) {
+            thread.appendChild(buildAssistantBubble('⚠ Network error. Please try again.', [], ''));
+        } finally {
+            setWorking(false);
+            scrollToBottom();
+            input.focus();
+        }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    document.querySelectorAll('.chip-question').forEach(chip => {
+        chip.addEventListener('click', () => {
+            input.value = chip.dataset.q;
+            input.focus();
+        });
+    });
+})();
+</script>
+{% endblock %}
