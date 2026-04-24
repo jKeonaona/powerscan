@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Review Upload — Intelligence Library - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            {% else %}
+            {% if current_user.company %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=current_user.company_id) }}">{{ current_user.company.name }}</a></li>
+            {% endif %}
+            {% endif %}
+            <li class="breadcrumb-item"><a href="{{ url_for('intelligence_library') }}">Intelligence Library</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('library_add') }}">Add Entry</a></li>
+            <li class="breadcrumb-item active">Review Upload</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-file-earmark-check"></i> Review Uploaded Files</h2>
+            <p class="text-muted mb-0">
+                {{ items | length }} file{{ 's' if items | length != 1 else '' }} uploaded.
+                Review and edit metadata for each file, then click <strong>Save All</strong>.
+            </p>
+        </div>
+        <form method="POST"
+              action="{{ url_for('library_bulk_review_discard', batch_id=batch_id) }}"
+              onsubmit="return confirm('Discard all {{ items | length }} file(s)? The files will be deleted and this cannot be undone.')">
+            <button type="submit" class="btn btn-outline-danger">
+                <i class="bi bi-trash"></i> Discard &amp; Start Over
+            </button>
+        </form>
+    </div>
+
+    <div class="alert alert-info small mb-3">
+        <i class="bi bi-info-circle"></i>
+        Changes made here are applied when you click <strong>Save All</strong>.
+        Use Ctrl+click (or Cmd+click) to select multiple work scopes.
+        Discarding will permanently delete the uploaded files.
+    </div>
+
+    <form method="POST" action="{{ url_for('library_bulk_review_save', batch_id=batch_id) }}">
+
+        <div class="table-responsive shadow-sm rounded mb-3">
+            <table class="table table-bordered align-middle mb-0" style="min-width:900px;">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:200px;">File</th>
+                        <th style="min-width:200px;">Title <span class="text-danger">*</span></th>
+                        <th style="min-width:160px;">Description</th>
+                        <th style="min-width:160px;">Tags</th>
+                        <th style="min-width:160px;">Work Scope</th>
+                        <th style="min-width:160px;">Project</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    {% set sid = item.id | string %}
+                    {% set sz  = file_sizes.get(item.id) %}
+                    <tr>
+                        <!-- File info (read-only) -->
+                        <td class="small">
+                            <div class="fw-medium text-truncate" style="max-width:180px;"
+                                 title="{{ item.original_filename }}">
+                                {{ item.original_filename }}
+                            </div>
+                            <div class="text-muted">
+                                {% if sz is not none %}
+                                    {% if sz < 1024 %}{{ sz }} B
+                                    {% elif sz < 1048576 %}{{ (sz / 1024) | round(1) }} KB
+                                    {% else %}{{ (sz / 1048576) | round(1) }} MB
+                                    {% endif %}
+                                {% else %}—{% endif %}
+                            </div>
+                            {% if item.text_content %}
+                            <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle mt-1 d-inline-block">
+                                <i class="bi bi-check-circle"></i> Text extracted
+                            </span>
+                            {% else %}
+                            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle mt-1 d-inline-block">
+                                <i class="bi bi-exclamation-triangle"></i> No text extracted
+                            </span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Title -->
+                        <td>
+                            <input type="text" class="form-control form-control-sm"
+                                   name="title_{{ sid }}"
+                                   value="{{ item.title }}"
+                                   required>
+                        </td>
+
+                        <!-- Description -->
+                        <td>
+                            <input type="text" class="form-control form-control-sm"
+                                   name="description_{{ sid }}"
+                                   value="{{ item.description or '' }}"
+                                   placeholder="optional">
+                        </td>
+
+                        <!-- Tags -->
+                        <td>
+                            <input type="text" class="form-control form-control-sm"
+                                   name="tags_{{ sid }}"
+                                   value="{{ item.tags | map(attribute='name') | join(', ') }}"
+                                   placeholder="comma-separated">
+                        </td>
+
+                        <!-- Work Scope -->
+                        <td>
+                            <select multiple name="work_scope_{{ sid }}"
+                                    class="form-select form-select-sm"
+                                    style="height:90px;">
+                                {% for option in scope_options %}
+                                <option value="{{ option }}"
+                                    {% if option in item.work_scope_list %}selected{% endif %}>
+                                    {{ option }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </td>
+
+                        <!-- Project -->
+                        <td>
+                            <select class="form-select form-select-sm" name="project_id_{{ sid }}">
+                                {% if include_global %}
+                                <option value=""
+                                    {% if not item.project_id %}selected{% endif %}>
+                                    Global
+                                </option>
+                                {% endif %}
+                                {% for p in all_projects %}
+                                <option value="{{ p.id }}"
+                                    {% if item.project_id == p.id %}selected{% endif %}>
+                                    {{ p.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-flex gap-2 pb-4">
+            <button type="submit" class="btn btn-primary btn-lg">
+                <i class="bi bi-floppy"></i> Save All
+                ({{ items | length }} item{{ 's' if items | length != 1 else '' }})
+            </button>
+            <a href="{{ url_for('intelligence_library') }}" class="btn btn-outline-secondary">
+                Cancel &amp; Keep Files
+            </a>
+        </div>
+
+    </form>
+
+</div>
+{% endblock %}

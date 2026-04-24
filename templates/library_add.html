@@ -1,0 +1,483 @@
+{% extends "base.html" %}
+{% block title %}Add to Intelligence Library - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-xl-9 col-lg-10">
+
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    {% if current_user.role == 'superadmin' %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+                    {% else %}
+                    {% if current_user.company %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=current_user.company_id) }}">{{ current_user.company.name }}</a></li>
+                    {% endif %}
+                    {% endif %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('intelligence_library') }}">Intelligence Library</a></li>
+                    <li class="breadcrumb-item active">Add Entry</li>
+                </ol>
+            </nav>
+
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="mb-0"><i class="bi bi-plus-lg"></i> Add to Intelligence Library</h2>
+            </div>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+            {% endwith %}
+
+            <!-- ── Mode toggle ───────────────────────────────────────────────── -->
+            <div class="mb-4">
+                <div class="btn-group" role="group" aria-label="Add mode">
+                    <input type="radio" class="btn-check" name="modeToggle" id="modeUpload" autocomplete="off" checked>
+                    <label class="btn btn-outline-primary px-4" for="modeUpload">
+                        <i class="bi bi-cloud-upload"></i> Upload Files
+                    </label>
+                    <input type="radio" class="btn-check" name="modeToggle" id="modeType" autocomplete="off">
+                    <label class="btn btn-outline-primary px-4" for="modeType">
+                        <i class="bi bi-keyboard"></i> Type an entry
+                    </label>
+                </div>
+            </div>
+
+            <!-- ══════════════════════════════════════════════════════════════════
+                 UPLOAD FILES MODE (default)
+            ══════════════════════════════════════════════════════════════════ -->
+            <div id="uploadSection">
+                <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                    <input type="hidden" name="mode" value="upload">
+
+                    <!-- Default metadata block -->
+                    <div class="card shadow-sm mb-3">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-sliders"></i> Default settings for this batch
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label fw-medium">Tags</label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control" id="upload_tags"
+                                               name="tags_input"
+                                               placeholder="e.g. Bid Clause, Prevailing Wage"
+                                               autocomplete="off">
+                                        <div id="tagSuggestionsUpload" class="dropdown-menu"
+                                             style="max-height:200px;overflow-y:auto;z-index:9999;"></div>
+                                    </div>
+                                    <div class="form-text">Comma-separated.</div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <label class="form-label fw-medium">Associated Project</label>
+                                    <select class="form-select" name="project_id" id="upload_project">
+                                        {% if include_global %}
+                                        <option value="" {% if not default_project_id %}selected{% endif %}>Global (applies to all projects)</option>
+                                        {% endif %}
+                                        {% for p in all_projects %}
+                                        <option value="{{ p.id }}"
+                                            {% if default_project_id == p.id %}selected{% endif %}>
+                                            {{ p.name }}
+                                        </option>
+                                        {% endfor %}
+                                        {% if not include_global and not all_projects %}
+                                        <option value="" selected disabled>No projects available</option>
+                                        {% endif %}
+                                    </select>
+                                    <div class="form-text">All files in this batch will be saved with these settings. You can override per file on the next screen.</div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <label class="form-label fw-medium">Work Scope <span class="text-muted fw-normal small">(optional)</span></label>
+                                    <div class="border rounded p-2 bg-light" style="max-height:150px;overflow-y:auto;">
+                                        {% for option in scope_options %}
+                                        <div class="form-check mb-1">
+                                            <input class="form-check-input" type="checkbox"
+                                                   name="work_scope" value="{{ option }}"
+                                                   id="uscope_{{ loop.index }}">
+                                            <label class="form-check-label small" for="uscope_{{ loop.index }}">{{ option }}</label>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Drop zone -->
+                    <div class="card shadow-sm mb-3">
+                        <div class="card-body p-4">
+                            <div id="dropZone"
+                                 class="border border-2 rounded-3 p-5 text-center"
+                                 style="border-style:dashed!important;border-color:#0d6efd!important;cursor:pointer;background:#f8f9fa;transition:background 0.15s;">
+                                <i class="bi bi-cloud-upload fs-1 text-primary d-block mb-2"></i>
+                                <p class="mb-1 fw-semibold">Drag and drop files here</p>
+                                <p class="text-muted small mb-3">PDF, DOCX, TXT, MD &mdash; up to 500 MB each</p>
+                                <button type="button" class="btn btn-outline-primary" id="browseBtn">
+                                    <i class="bi bi-folder2-open"></i> Browse Files
+                                </button>
+                                <input type="file" id="fileInput" multiple
+                                       accept=".pdf,.docx,.txt,.md" class="d-none">
+                            </div>
+
+                            <!-- Per-file error messages -->
+                            <div id="fileErrors" class="mt-2"></div>
+
+                            <!-- File queue -->
+                            <div id="fileQueueWrap" class="mt-3 d-none">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span class="fw-medium small text-muted" id="queueLabel"></span>
+                                    <button type="button" class="btn btn-link btn-sm text-danger p-0" id="clearAllBtn">
+                                        <i class="bi bi-x-circle"></i> Clear all
+                                    </button>
+                                </div>
+                                <div id="fileList" class="list-group list-group-flush border rounded"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 align-items-center mb-4">
+                        <button type="button" class="btn btn-primary" id="btnUpload" disabled>
+                            <i class="bi bi-upload"></i> Upload &amp; Review
+                        </button>
+                        <a href="{{ url_for('intelligence_library') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+
+            <!-- ══════════════════════════════════════════════════════════════════
+                 TYPE AN ENTRY MODE
+            ══════════════════════════════════════════════════════════════════ -->
+            <div id="typeSection" class="d-none">
+                <form method="POST">
+                    <input type="hidden" name="mode" value="text">
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+
+                            <div class="mb-3">
+                                <label for="title" class="form-label fw-medium">Title <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="title" name="title">
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="description" class="form-label fw-medium">Description <span class="text-muted fw-normal">(optional)</span></label>
+                                <textarea class="form-control" id="description" name="description" rows="2"></textarea>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="text_content" class="form-label fw-medium">Content</label>
+                                <textarea class="form-control font-monospace" id="text_content" name="text_content"
+                                          rows="8"
+                                          placeholder="Paste clause text, notes, quotes, determinations..."></textarea>
+                            </div>
+
+                            <hr class="my-3">
+
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label for="type_tags" class="form-label fw-medium">Tags</label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control" id="type_tags"
+                                               name="tags_input"
+                                               placeholder="e.g. Bid Clause, Prevailing Wage"
+                                               autocomplete="off">
+                                        <div id="tagSuggestionsType" class="dropdown-menu"
+                                             style="max-height:200px;overflow-y:auto;z-index:9999;"></div>
+                                    </div>
+                                    <div class="form-text">Comma-separated.</div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <label for="type_project" class="form-label fw-medium">Associated Project <span class="text-muted fw-normal">(optional)</span></label>
+                                    <select class="form-select" id="type_project" name="project_id">
+                                        {% if include_global %}
+                                        <option value="" {% if not default_project_id %}selected{% endif %}>Global (applies to all projects)</option>
+                                        {% endif %}
+                                        {% for p in all_projects %}
+                                        <option value="{{ p.id }}"
+                                            {% if default_project_id == p.id %}selected{% endif %}>
+                                            {{ p.name }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <label class="form-label fw-medium">Work Scope <span class="text-muted fw-normal">(optional)</span></label>
+                                    <div class="border rounded p-2 bg-light" style="max-height:150px;overflow-y:auto;">
+                                        {% for option in scope_options %}
+                                        <div class="form-check mb-1">
+                                            <input class="form-check-input" type="checkbox"
+                                                   name="work_scope" value="{{ option }}"
+                                                   id="tscope_{{ loop.index }}">
+                                            <label class="form-check-label small" for="tscope_{{ loop.index }}">{{ option }}</label>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mt-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox"
+                                           name="auto_include_in_search" value="1"
+                                           id="chkAutoInclude" checked>
+                                    <label class="form-check-label" for="chkAutoInclude">
+                                        Auto-include in search &amp; reports
+                                    </label>
+                                    <div class="form-text">When checked, this entry is passed to Claude as context during searches and report generation.</div>
+                                </div>
+                            </div>
+
+                            <div class="d-flex gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-plus-lg"></i> Add Entry
+                                </button>
+                                <a href="{{ url_for('intelligence_library') }}" class="btn btn-outline-secondary">Cancel</a>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+
+    // ── Mode toggle ────────────────────────────────────────────────────────────
+    var uploadSection = document.getElementById('uploadSection');
+    var typeSection   = document.getElementById('typeSection');
+
+    document.getElementById('modeUpload').addEventListener('change', function () {
+        uploadSection.classList.remove('d-none');
+        typeSection.classList.add('d-none');
+    });
+    document.getElementById('modeType').addEventListener('change', function () {
+        typeSection.classList.remove('d-none');
+        uploadSection.classList.add('d-none');
+        document.getElementById('title').focus();
+    });
+
+    // ── Bulk file queue ────────────────────────────────────────────────────────
+    var ALLOWED_EXTS = ['.pdf', '.docx', '.txt', '.md'];
+    var MAX_BYTES    = 500 * 1024 * 1024;
+
+    var fileQueue    = [];
+    var dropZone     = document.getElementById('dropZone');
+    var fileInput    = document.getElementById('fileInput');
+    var fileListEl   = document.getElementById('fileList');
+    var queueWrap    = document.getElementById('fileQueueWrap');
+    var queueLabel   = document.getElementById('queueLabel');
+    var btnUpload    = document.getElementById('btnUpload');
+    var errContainer = document.getElementById('fileErrors');
+
+    // Browse button
+    document.getElementById('browseBtn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        fileInput.click();
+    });
+
+    // Drop zone click → open file picker
+    dropZone.addEventListener('click', function () {
+        fileInput.click();
+    });
+
+    // File input change
+    fileInput.addEventListener('change', function () {
+        Array.from(this.files).forEach(addFile);
+        this.value = '';
+    });
+
+    // Drag and drop
+    dropZone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        dropZone.style.background = '#e7f1ff';
+    });
+    dropZone.addEventListener('dragleave', function () {
+        dropZone.style.background = '#f8f9fa';
+    });
+    dropZone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropZone.style.background = '#f8f9fa';
+        Array.from(e.dataTransfer.files).forEach(addFile);
+    });
+
+    // Clear all
+    document.getElementById('clearAllBtn').addEventListener('click', function () {
+        fileQueue = [];
+        render();
+    });
+
+    function extOf(name) {
+        var i = name.lastIndexOf('.');
+        return i >= 0 ? name.slice(i).toLowerCase() : '';
+    }
+
+    function fmtSize(bytes) {
+        if (bytes < 1024)             return bytes + ' B';
+        if (bytes < 1024 * 1024)      return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function escHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function addFile(file) {
+        var ext = extOf(file.name);
+        if (ALLOWED_EXTS.indexOf(ext) < 0) {
+            showErr(file.name, 'Unsupported file type — only PDF, DOCX, TXT, MD accepted in this build');
+            return;
+        }
+        if (file.size > MAX_BYTES) {
+            showErr(file.name, 'File exceeds 500 MB limit');
+            return;
+        }
+        // Deduplicate by name + size
+        if (fileQueue.some(function (f) { return f.name === file.name && f.size === file.size; })) return;
+        fileQueue.push(file);
+        render();
+    }
+
+    function showErr(filename, msg) {
+        var d = document.createElement('div');
+        d.className = 'alert alert-warning alert-dismissible py-2 small mb-1';
+        d.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>'
+            + '<strong>' + escHtml(filename) + '</strong> — ' + escHtml(msg)
+            + '<button type="button" class="btn-close py-2" data-bs-dismiss="alert"></button>';
+        errContainer.appendChild(d);
+    }
+
+    var iconMap = {'.pdf': 'bi-file-earmark-pdf text-danger', '.docx': 'bi-file-earmark-word text-primary', '.txt': 'bi-file-earmark-text text-secondary', '.md': 'bi-file-earmark-text text-secondary'};
+
+    function render() {
+        fileListEl.innerHTML = '';
+        fileQueue.forEach(function (file, idx) {
+            var ext  = extOf(file.name);
+            var icon = iconMap[ext] || 'bi-file-earmark text-muted';
+            var row  = document.createElement('div');
+            row.className = 'list-group-item d-flex align-items-center gap-2 py-2';
+            row.innerHTML =
+                '<i class="bi ' + icon + ' flex-shrink-0 fs-5"></i>'
+                + '<span class="flex-grow-1 text-truncate small" title="' + escHtml(file.name) + '">' + escHtml(file.name) + '</span>'
+                + '<span class="text-muted small text-nowrap me-1">' + fmtSize(file.size) + '</span>'
+                + '<button type="button" class="btn btn-link btn-sm text-danger p-0 flex-shrink-0" data-idx="' + idx + '" title="Remove">'
+                + '<i class="bi bi-x-lg"></i></button>';
+            fileListEl.appendChild(row);
+        });
+
+        fileListEl.querySelectorAll('[data-idx]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                fileQueue.splice(parseInt(this.dataset.idx, 10), 1);
+                render();
+            });
+        });
+
+        var n = fileQueue.length;
+        if (n > 0) {
+            queueWrap.classList.remove('d-none');
+            btnUpload.disabled = false;
+            queueLabel.textContent = n + (n === 1 ? ' file ready to upload' : ' files ready to upload');
+        } else {
+            queueWrap.classList.add('d-none');
+            btnUpload.disabled = true;
+            queueLabel.textContent = '';
+        }
+    }
+
+    // Submit: inject one hidden file input per queued file (DataTransfer API)
+    document.getElementById('btnUpload').addEventListener('click', function () {
+        if (!fileQueue.length) return;
+
+        var form = document.getElementById('uploadForm');
+        form.querySelectorAll('.dyn-file').forEach(function (el) { el.remove(); });
+
+        var allOk = true;
+        fileQueue.forEach(function (file) {
+            try {
+                var dt  = new DataTransfer();
+                dt.items.add(file);
+                var inp = document.createElement('input');
+                inp.type      = 'file';
+                inp.name      = 'library_files';
+                inp.className = 'dyn-file d-none';
+                inp.files     = dt.files;
+                form.appendChild(inp);
+            } catch (e) {
+                allOk = false;
+            }
+        });
+
+        if (!allOk) {
+            alert('Your browser does not fully support this upload method. Please try a different browser.');
+            return;
+        }
+
+        btnUpload.disabled = true;
+        btnUpload.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Uploading…';
+        form.submit();
+    });
+
+    // ── Tag autocomplete (shared helper) ────────────────────────────────────────
+    function setupTagAutocomplete(inputEl, boxEl) {
+        if (!inputEl || !boxEl) return;
+        inputEl.addEventListener('input', function () {
+            var parts = inputEl.value.split(',');
+            var last  = parts[parts.length - 1].trim();
+            if (!last) { boxEl.classList.remove('show'); return; }
+            fetch('/library/tags?q=' + encodeURIComponent(last))
+                .then(function (r) { return r.json(); })
+                .then(function (names) {
+                    boxEl.innerHTML = '';
+                    if (!names.length) { boxEl.classList.remove('show'); return; }
+                    names.forEach(function (name) {
+                        var a = document.createElement('a');
+                        a.href      = '#';
+                        a.className = 'dropdown-item small';
+                        a.textContent = name;
+                        a.addEventListener('click', function (e) {
+                            e.preventDefault();
+                            var prefix = parts.slice(0, -1).join(', ');
+                            inputEl.value = (prefix ? prefix + ', ' : '') + name + ', ';
+                            boxEl.classList.remove('show');
+                            inputEl.focus();
+                        });
+                        boxEl.appendChild(a);
+                    });
+                    // position relative to input
+                    var rect = inputEl.getBoundingClientRect();
+                    boxEl.style.position  = 'absolute';
+                    boxEl.style.top       = (inputEl.offsetTop + inputEl.offsetHeight) + 'px';
+                    boxEl.style.left      = inputEl.offsetLeft + 'px';
+                    boxEl.style.minWidth  = inputEl.offsetWidth + 'px';
+                    boxEl.classList.add('show');
+                });
+        });
+        document.addEventListener('click', function (e) {
+            if (!boxEl.contains(e.target) && e.target !== inputEl) boxEl.classList.remove('show');
+        });
+    }
+
+    setupTagAutocomplete(
+        document.getElementById('upload_tags'),
+        document.getElementById('tagSuggestionsUpload')
+    );
+    setupTagAutocomplete(
+        document.getElementById('type_tags'),
+        document.getElementById('tagSuggestionsType')
+    );
+
+}());
+</script>
+{% endblock %}
