@@ -13,11 +13,6 @@ ROLES = [ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER]
 DOC_TYPES = ["Drawing", "Contract", "Specification", "Bid Doc", "Addendum", "Estimation Notes", "Other"]
 DEFAULT_DOC_TYPE = "Drawing"
 
-FEEDBACK_TYPES = ["Idea", "Bug Report", "Question", "Feature Request"]
-FEEDBACK_STATUSES = ["Pending", "Reviewed", "Adopted", "Declined"]
-DEFAULT_FEEDBACK_STATUS = "Pending"
-
-
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -224,20 +219,6 @@ class SearchHistory(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     project = db.relationship("Project", backref=db.backref("search_history", cascade="all, delete-orphan"))
-    user = db.relationship("User")
-
-
-class Feedback(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    type = db.Column(db.String(40), nullable=False)
-    page = db.Column(db.String(500), nullable=True)
-    description = db.Column(db.Text, nullable=False)
-    status = db.Column(db.String(20), nullable=False, default=DEFAULT_FEEDBACK_STATUS)
-    admin_notes = db.Column(db.Text, nullable=True)
-    admin_reply = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-
     user = db.relationship("User")
 
 

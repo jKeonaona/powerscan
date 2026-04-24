@@ -17,18 +17,15 @@ from flask_login import (
 
 from config import Config
 from models import (
-    db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report, Feedback,
+    db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report,
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     IntelligenceTag, IntelligenceItem, QuoteBatch,
     ComparisonSummary, QuoteComparisonExport, Takeoff,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
-    FEEDBACK_TYPES, FEEDBACK_STATUSES, DEFAULT_FEEDBACK_STATUS,
     PROJECT_STATUSES, TAKEOFF_STATUSES,
 )
-from email_notify import (
-    send_feedback_email_async, send_reply_email_async, send_password_reset_email_async,
-)
+from email_notify import send_password_reset_email_async
 from apscheduler.schedulers.background import BackgroundScheduler
 from pipeline import start_worker
 from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
@@ -113,7 +110,7 @@ def _run_migrations(database):
         ("drawing", "doc_type", "VARCHAR(40) DEFAULT 'Drawing'"),
         ("report", "file_path", "VARCHAR(300)"),
         ("user", "must_change_password", "BOOLEAN DEFAULT 0 NOT NULL"),
-        ("feedback", "admin_reply", "TEXT"),
+
         ("project", "work_scope", "TEXT"),
         ("project", "scope_details", "TEXT"),
         ("intelligence_item", "pricing_items_json", "TEXT"),
@@ -610,6 +607,17 @@ def backfill_content_hashes(library_folder):
     print(f"[backfill_content_hashes] hashed {hashed} of {total} items")
 
 
+def _drop_feedback_table():
+    """Idempotent: drop the legacy feedback table if it still exists in the database."""
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(db.text("DROP TABLE IF EXISTS feedback"))
+            conn.commit()
+        print("[powerscan] feedback table removed (or was already absent)", flush=True)
+    except Exception as exc:
+        print(f"[powerscan] could not drop feedback table: {exc}", flush=True)
+
+
 def migrate_projects_to_takeoffs():
     """Idempotent: create one Draft takeoff per project that has no takeoffs yet."""
     projects = Project.query.all()
@@ -832,6 +840,8 @@ def create_app():
         backfill_takeoff_scopes()
         # Compute SHA-256 content hashes for existing library files
         backfill_content_hashes(app.config["LIBRARY_FOLDER"])
+        # Drop the legacy feedback table (Share Idea feature removed)
+        _drop_feedback_table()
 
     # ── CLI commands ────────────────────────────────────────────────────────
     @app.cli.command("backfill-library-text")
@@ -4175,204 +4185,6 @@ def create_app():
         db.session.commit()
         flash(f"User '{user.username}' deleted.", "success")
         return redirect(url_for("admin_users"))
-
-    # ── Feedback ────────────────────────────────────────────────
-
-    @app.route("/feedback/new", methods=["POST"])
-    @login_required
-    def submit_feedback():
-        fb_type = (request.form.get("type") or "").strip()
-        page = (request.form.get("page") or "").strip()[:500] or None
-        description = (request.form.get("description") or "").strip()
-
-        if fb_type not in FEEDBACK_TYPES:
-            return jsonify({"ok": False, "error": "Please choose a feedback type."}), 400
-        if not description:
-            return jsonify({"ok": False, "error": "Description is required."}), 400
-        if len(description) > 10000:
-            return jsonify({"ok": False, "error": "Description is too long (max 10,000 characters)."}), 400
-
-        entry = Feedback(
-            user_id=current_user.id,
-            type=fb_type,
-            page=page,
-            description=description,
-            status=DEFAULT_FEEDBACK_STATUS,
-        )
-        db.session.add(entry)
-        db.session.commit()
-
-        # Fire-and-forget email notification — failures are logged but never block submission.
-        send_feedback_email_async(app, entry.id)
-
-        return jsonify({"ok": True, "id": entry.id})
-
-    @app.route("/admin/feedback")
-    @login_required
-    @admin_required
-    def admin_feedback():
-        filter_type = (request.args.get("type") or "").strip()
-        q = db.session.query(Feedback)
-        if filter_type in FEEDBACK_TYPES:
-            q = q.filter(Feedback.type == filter_type)
-        entries = q.order_by(Feedback.created_at.desc()).all()
-
-        counts = {
-            "All": db.session.query(Feedback).count(),
-        }
-        for t in FEEDBACK_TYPES:
-            counts[t] = db.session.query(Feedback).filter_by(type=t).count()
-
-        status_counts = {}
-        for s in FEEDBACK_STATUSES:
-            status_counts[s] = db.session.query(Feedback).filter_by(status=s).count()
-
-        return render_template(
-            "admin/feedback.html",
-            entries=entries,
-            filter_type=filter_type,
-            feedback_types=FEEDBACK_TYPES,
-            feedback_statuses=FEEDBACK_STATUSES,
-            counts=counts,
-            status_counts=status_counts,
-        )
-
-    @app.route("/admin/feedback/<int:feedback_id>/update", methods=["POST"])
-    @login_required
-    @superadmin_required
-    def update_feedback(feedback_id):
-        entry = db.session.get(Feedback, feedback_id) or abort(404)
-        new_status = (request.form.get("status") or "").strip()
-        if new_status not in FEEDBACK_STATUSES:
-            flash("Invalid status.", "danger")
-            return redirect(url_for("admin_feedback"))
-        entry.status = new_status
-        entry.admin_notes = (request.form.get("admin_notes") or "").strip() or None
-        db.session.commit()
-        flash("Feedback updated.", "success")
-        return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
-
-    @app.route("/admin/feedback/<int:feedback_id>/reply", methods=["POST"])
-    @login_required
-    @superadmin_required
-    def reply_feedback(feedback_id):
-        entry = db.session.get(Feedback, feedback_id) or abort(404)
-        reply_text = (request.form.get("admin_reply") or "").strip()
-        if not reply_text:
-            flash("Reply cannot be empty.", "danger")
-            return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
-        entry.admin_reply = reply_text
-        entry.status = "Reviewed"
-        db.session.commit()
-        send_reply_email_async(app, feedback_id)
-        flash("Reply sent and status set to Reviewed.", "success")
-        return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
-
-    @app.route("/admin/feedback/<int:feedback_id>/delete", methods=["POST"])
-    @login_required
-    @superadmin_required
-    def delete_feedback(feedback_id):
-        entry = db.session.get(Feedback, feedback_id) or abort(404)
-        db.session.delete(entry)
-        db.session.commit()
-        flash("Feedback deleted.", "success")
-        return redirect(url_for("admin_feedback", type=request.args.get("type", "")))
-
-    @app.route("/admin/feedback/export")
-    @login_required
-    @admin_required
-    def export_feedback():
-        from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
-        from reportlab.platypus import (
-            SimpleDocTemplate, Paragraph, Spacer, HRFlowable,
-        )
-        from reportlab.lib import colors
-        from xml.sax.saxutils import escape as xml_escape
-
-        entries = (
-            db.session.query(Feedback)
-            .order_by(Feedback.type, Feedback.created_at.desc())
-            .all()
-        )
-
-        grouped = {t: [] for t in FEEDBACK_TYPES}
-        for e in entries:
-            grouped.setdefault(e.type, []).append(e)
-
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buf, pagesize=letter,
-            leftMargin=0.75 * inch, rightMargin=0.75 * inch,
-            topMargin=0.75 * inch, bottomMargin=0.75 * inch,
-            title="PowerScan — User Feedback & Feature Ideas",
-        )
-        styles = getSampleStyleSheet()
-        h_title = styles["Title"]
-        h_meta = ParagraphStyle("meta", parent=styles["Normal"], textColor=colors.grey, fontSize=9, spaceAfter=12)
-        h_group = ParagraphStyle(
-            "group", parent=styles["Heading1"],
-            textColor=colors.HexColor("#0d6efd"), fontSize=16, spaceBefore=14, spaceAfter=6,
-        )
-        h_entry_q = ParagraphStyle(
-            "eq", parent=styles["Heading3"],
-            textColor=colors.HexColor("#212529"), fontSize=11, spaceAfter=3,
-        )
-        h_entry_meta = ParagraphStyle(
-            "em", parent=styles["Normal"], textColor=colors.grey, fontSize=8, spaceAfter=4,
-        )
-        h_body = ParagraphStyle("b", parent=styles["BodyText"], leading=13, spaceAfter=4)
-        h_notes = ParagraphStyle(
-            "n", parent=styles["BodyText"], leading=13, spaceAfter=8,
-            textColor=colors.HexColor("#555555"), leftIndent=12,
-        )
-
-        def p(text, style):
-            return Paragraph(xml_escape(text or "").replace("\n", "<br/>"), style)
-
-        story = [
-            Paragraph("PowerScan — User Feedback &amp; Feature Ideas", h_title),
-            Paragraph(
-                f"Exported {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} &middot; "
-                f"{len(entries)} total submission(s)",
-                h_meta,
-            ),
-            HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey, spaceAfter=10),
-        ]
-
-        if not entries:
-            story.append(Paragraph("No feedback has been submitted yet.", styles["Italic"]))
-        else:
-            for group_type in FEEDBACK_TYPES:
-                items = grouped.get(group_type) or []
-                if not items:
-                    continue
-                story.append(Paragraph(f"{group_type} ({len(items)})", h_group))
-                story.append(HRFlowable(width="100%", thickness=0.3, color=colors.HexColor("#cfe2ff"), spaceAfter=6))
-                for i, e in enumerate(items, start=1):
-                    who = e.user.username if e.user else "unknown"
-                    when = e.created_at.strftime("%Y-%m-%d %H:%M UTC")
-                    status_line = f"Status: {e.status}"
-                    if e.page:
-                        status_line += f" &middot; Page: {xml_escape(e.page)}"
-                    story.append(p(f"{i}. {e.description[:120]}{'…' if len(e.description) > 120 else ''}", h_entry_q))
-                    story.append(Paragraph(f"{xml_escape(who)} &middot; {when} &middot; {status_line}", h_entry_meta))
-                    story.append(p(e.description, h_body))
-                    if e.admin_notes:
-                        story.append(p(f"Admin notes: {e.admin_notes}", h_notes))
-                    story.append(Spacer(1, 4))
-                story.append(Spacer(1, 8))
-
-        doc.build(story)
-        buf.seek(0)
-        fname = f"powerscan-feedback-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
-        return send_file(
-            buf,
-            mimetype="application/pdf",
-            as_attachment=True,
-            download_name=fname,
-        )
 
     # ── Admin Rates ─────────────────────────────────────────────
 
