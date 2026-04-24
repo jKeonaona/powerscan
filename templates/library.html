@@ -130,6 +130,11 @@
                     <td>
                         {% if item.entry_type == 'file' %}
                         <span class="badge bg-secondary"><i class="bi bi-paperclip"></i> File</span>
+                        {% if item.text_content %}
+                        <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-1">Text extracted</span>
+                        {% else %}
+                        <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle ms-1">No text extracted</span>
+                        {% endif %}
                         {% else %}
                         <span class="badge bg-light text-dark border"><i class="bi bi-text-left"></i> Text</span>
                         {% endif %}

@@ -35,6 +35,7 @@ from reports import REPORT_TEMPLATES, enqueue_report, start_report_worker
 from search import search_drawings
 from calculations import calculate_painting_quantities, has_any_inputs
 from xlsm_importer import parse_estimate_workbook
+from library_text_extractor import extract_text_from_file, backfill_library_text_content
 
 
 CCC_ADMIN_SEEDS = [
@@ -830,6 +831,12 @@ def create_app():
         backfill_takeoff_scopes()
         # Compute SHA-256 content hashes for existing library files
         backfill_content_hashes(app.config["LIBRARY_FOLDER"])
+
+    # ── CLI commands ────────────────────────────────────────────────────────
+    @app.cli.command("backfill-library-text")
+    def _backfill_library_text_cmd():
+        """Extract and store text_content for existing file-type Library entries."""
+        backfill_library_text_content(app.config["LIBRARY_FOLDER"])
 
     # Start background conversion worker thread
     start_worker(app)
@@ -1776,6 +1783,7 @@ def create_app():
             file_path = None
             original_filename = None
             file_mime = None
+            extracted_text = None
 
             if entry_type == "file":
                 f = request.files.get("library_file")
@@ -1787,6 +1795,7 @@ def create_app():
                     file_path = safe_name
                     original_filename = f.filename
                     file_mime = f.content_type
+                    extracted_text = extract_text_from_file(dest, ext or file_mime or "")
                 else:
                     flash("Please select a file to upload.", "danger")
                     return redirect(url_for("library_add"))
@@ -1795,7 +1804,7 @@ def create_app():
                 title=title,
                 description=description,
                 entry_type=entry_type,
-                text_content=text_content if entry_type == "text" else None,
+                text_content=text_content if entry_type == "text" else extracted_text,
                 file_path=file_path,
                 original_filename=original_filename,
                 file_mime=file_mime,
