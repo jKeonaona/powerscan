@@ -3,10 +3,104 @@
 
 {% block content %}
 <style>
-.workspace-layout {
+/* ── Outer two-panel shell ─────────────────────────────────── */
+.ws-outer {
+    display: flex;
+    height: calc(100vh - 57px);
+    overflow: hidden;
+}
+
+/* ── Left sidebar ──────────────────────────────────────────── */
+.ws-sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    border-right: 1px solid #dee2e6;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 57px);
+    background: #f8f9fa;
+    overflow: hidden;
+}
+.ws-sidebar-hdr {
+    flex-shrink: 0;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+.ws-new-chat-btn {
+    font-size: 0.8rem;
+    border-radius: 0.5rem;
+    padding: 0.3rem 0.65rem;
+    white-space: nowrap;
+}
+.ws-thread-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.25rem 0;
+}
+.ws-thread-item {
+    position: relative;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    border-bottom: 1px solid #e9ecef;
+    transition: background 0.1s;
+}
+.ws-thread-item:hover { background: #e9ecef; }
+.ws-thread-item.active {
+    background: #dbeafe;
+    border-left-color: #0d6efd;
+}
+.ws-thread-title {
+    font-size: 0.82rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #212529;
+    display: block;
+    padding-right: 2.5rem;
+}
+.ws-thread-time {
+    font-size: 0.68rem;
+    color: #adb5bd;
+    margin-top: 0.1rem;
+}
+.ws-thread-actions {
+    position: absolute;
+    right: 0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    gap: 0.15rem;
+}
+.ws-thread-item:hover .ws-thread-actions { display: flex; }
+.ws-thread-action-btn {
+    background: none;
+    border: none;
+    padding: 0.2rem 0.3rem;
+    cursor: pointer;
+    border-radius: 0.3rem;
+    color: #6c757d;
+    font-size: 0.78rem;
+    line-height: 1;
+}
+.ws-thread-action-btn:hover { background: #dee2e6; color: #212529; }
+.ws-thread-empty {
+    padding: 1.5rem 0.75rem;
+    font-size: 0.8rem;
+    color: #adb5bd;
+    text-align: center;
+    font-style: italic;
+}
+
+/* ── Main panel ────────────────────────────────────────────── */
+.ws-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
 }
 .workspace-header {
@@ -27,6 +121,8 @@
     border-top: 1px solid #dee2e6;
     background: #fff;
 }
+
+/* ── Message bubbles ───────────────────────────────────────── */
 .msg-row {
     display: flex;
     gap: 0.6rem;
@@ -50,14 +146,6 @@
     background: #f8f9fa;
     border: 1px solid #e9ecef;
     border-bottom-left-radius: 0.25rem;
-}
-.msg-avatar {
-    width: 30px;
-    height: 30px;
-    border-radius: 7px;
-    object-fit: cover;
-    flex-shrink: 0;
-    margin-bottom: 2px;
 }
 .msg-meta {
     font-size: 0.68rem;
@@ -93,6 +181,8 @@
     border-radius: 1rem;
     border-bottom-left-radius: 0.25rem;
 }
+
+/* ── Input ─────────────────────────────────────────────────── */
 #wsInput {
     resize: none;
     border-radius: 0.75rem;
@@ -115,133 +205,170 @@
 }
 </style>
 
-<div class="workspace-layout">
+<div class="ws-outer">
 
-  <!-- ── Header ─────────────────────────────────────────── -->
-  <div class="workspace-header d-flex align-items-center justify-content-between gap-3">
-    <div class="d-flex align-items-center gap-3 overflow-hidden">
-      <nav aria-label="breadcrumb" class="mb-0 d-none d-md-block flex-shrink-0">
-        <ol class="breadcrumb mb-0 small">
-          {% if current_user.role == 'superadmin' %}
-          <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
-          {% endif %}
-          <li class="breadcrumb-item">
-            <a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a>
-          </li>
-          <li class="breadcrumb-item">
-            <a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a>
-          </li>
-          <li class="breadcrumb-item active">Workspace</li>
-        </ol>
-      </nav>
-      <div class="d-flex align-items-center gap-2 flex-shrink-0">
-        <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
-             alt="Skippy" width="38" height="38"
-             style="border-radius:8px; object-fit:cover;">
-        <div>
-          <div class="fw-semibold lh-1">Workspace</div>
-          <div class="text-muted small lh-1 mt-1">{{ project.name }}</div>
-        </div>
-      </div>
+  <!-- ── Sidebar ─────────────────────────────────────────────── -->
+  <div class="ws-sidebar">
+    <div class="ws-sidebar-hdr">
+      <span class="fw-semibold small text-muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;">Conversations</span>
+      <a href="{{ url_for('project_workspace', project_id=project.id) }}"
+         class="btn btn-primary ws-new-chat-btn">
+        <i class="bi bi-plus-lg me-1"></i>New Chat
+      </a>
     </div>
-    <button class="btn btn-outline-secondary btn-sm flex-shrink-0"
-            type="button"
-            data-bs-toggle="offcanvas"
-            data-bs-target="#docsDrawer"
-            aria-controls="docsDrawer">
-      <i class="bi bi-folder2-open me-1"></i> View drawings
-    </button>
-  </div>
-
-  <!-- ── Chat thread ─────────────────────────────────────── -->
-  <div class="workspace-thread" id="chatThread">
-
-    {% if not messages %}
-    <div class="text-center py-3" id="emptyState">
-      <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
-           alt="Skippy" width="80" height="80"
-           style="border-radius:14px; object-fit:cover; margin-bottom:0.75rem; opacity:0.9;">
-      <h5 class="fw-bold mb-2">Skippy Workspace</h5>
-      <div class="d-flex flex-wrap gap-2 justify-content-center">
-        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
-                data-q="What are the submittal requirements?">Submittal requirements</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
-                data-q="What are the insurance and bonding requirements?">Insurance &amp; bonding</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
-                data-q="Summarize the key project milestones and deadlines.">Key milestones</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
-                data-q="What safety requirements are specified?">Safety requirements</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
-                data-q="List all materials and specifications mentioned.">Materials &amp; specs</button>
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- Persisted messages -->
-    {% for msg in messages %}
-    {% if msg.role == 'user' %}
-    <div class="msg-row msg-row-user">
-      <div>
-        <div class="msg-bubble msg-bubble-user">{{ msg.content | e | replace('\n', '<br>') | safe }}</div>
-        <div class="msg-meta msg-meta-user">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</div>
-      </div>
-    </div>
-    {% else %}
-    <div class="msg-row msg-row-assistant">
-      <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
-           alt="Skippy" class="msg-avatar">
-      <div>
-        <div class="msg-bubble msg-bubble-assistant">
-          {{ msg.content | e | replace('\n', '<br>') | safe }}
-          {% if msg.sources %}
-          <div class="mt-2">
-            {% for src in msg.sources %}
-            <a href="{{ url_for('drawing_detail', drawing_id=src.drawing_id) }}"
-               class="source-badge"
-               title="Open {{ src.filename }}">
-              <i class="bi bi-file-earmark-pdf"></i> {{ src.filename }} p.{{ src.page }}
-            </a>
-            {% endfor %}
+    <div class="ws-thread-list" id="threadList">
+      {% if threads %}
+        {% for t in threads %}
+        <div class="ws-thread-item{% if active_thread and active_thread.id == t.id %} active{% endif %}"
+             data-thread-id="{{ t.id }}"
+             data-thread-url="{{ url_for('project_workspace_thread', project_id=project.id, thread_id=t.id) }}"
+             onclick="if (!event.target.closest('.ws-thread-action-btn')) window.location.href = this.dataset.threadUrl">
+          <span class="ws-thread-title" title="{{ t.title or 'Untitled' }}">{{ t.title or 'Untitled' }}</span>
+          <div class="ws-thread-time">{{ t.relative_time }}</div>
+          <div class="ws-thread-actions">
+            <button class="ws-thread-action-btn" title="Rename"
+                    onclick="event.stopPropagation(); renameThread({{ t.id }}, this)">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <button class="ws-thread-action-btn" title="Delete"
+                    onclick="event.stopPropagation(); deleteThread({{ t.id }}, this)">
+              <i class="bi bi-trash3"></i>
+            </button>
           </div>
-          {% endif %}
         </div>
-        <div class="msg-meta">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</div>
-      </div>
+        {% endfor %}
+      {% else %}
+        <div class="ws-thread-empty">No conversations yet</div>
+      {% endif %}
     </div>
-    {% endif %}
-    {% endfor %}
-
-    <!-- "Skippy is thinking…" indicator (hidden by default) -->
-    <div class="msg-row msg-row-assistant" id="thinkingRow" style="display:none;">
-      <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
-           alt="Skippy" class="msg-avatar">
-      <div class="thinking-bubble">
-        <span class="spinner-border spinner-border-sm"></span>
-        Skippy is thinking&hellip;
-      </div>
-    </div>
-
   </div>
 
-  <!-- ── Input area ──────────────────────────────────────── -->
-  <div class="workspace-input-area">
-    <div class="d-flex gap-2 align-items-end">
-      <textarea id="wsInput" class="form-control" rows="2"
-                placeholder="Bask in my magnificence and ask me something."
-                autocomplete="off"></textarea>
-      <button id="wsSendBtn" class="btn btn-primary" title="Send (Enter)">
-        <i class="bi bi-send-fill me-1"></i> Send
+  <!-- ── Main panel ──────────────────────────────────────────── -->
+  <div class="ws-main">
+
+    <!-- Header -->
+    <div class="workspace-header d-flex align-items-center justify-content-between gap-3">
+      <div class="d-flex align-items-center gap-3 overflow-hidden">
+        <nav aria-label="breadcrumb" class="mb-0 d-none d-md-block flex-shrink-0">
+          <ol class="breadcrumb mb-0 small">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            {% endif %}
+            <li class="breadcrumb-item">
+              <a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a>
+            </li>
+            <li class="breadcrumb-item">
+              <a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a>
+            </li>
+            <li class="breadcrumb-item active">Workspace</li>
+          </ol>
+        </nav>
+        <div class="d-flex align-items-center gap-2 flex-shrink-0">
+          <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+               alt="Skippy" width="38" height="38"
+               style="border-radius:8px; object-fit:cover;">
+          <div>
+            <div class="fw-semibold lh-1">Workspace</div>
+            <div class="text-muted small lh-1 mt-1">{{ project.name }}</div>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-outline-secondary btn-sm flex-shrink-0"
+              type="button"
+              data-bs-toggle="offcanvas"
+              data-bs-target="#docsDrawer"
+              aria-controls="docsDrawer">
+        <i class="bi bi-folder2-open me-1"></i> View drawings
       </button>
     </div>
-    <div class="text-muted small mt-1 ps-1">
-      <kbd style="font-size:.65rem;">Enter</kbd> to send &nbsp;&middot;&nbsp;
-      <kbd style="font-size:.65rem;">Shift+Enter</kbd> for newline
+
+    <!-- Chat thread -->
+    <div class="workspace-thread" id="chatThread">
+
+      {% if not messages %}
+      <div class="text-center py-3" id="emptyState">
+        <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
+             alt="Skippy" width="80" height="80"
+             style="border-radius:14px; object-fit:cover; margin-bottom:0.75rem; opacity:0.9;">
+        <h5 class="fw-bold mb-2">Skippy Workspace</h5>
+        <div class="d-flex flex-wrap gap-2 justify-content-center">
+          <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                  data-q="What are the submittal requirements?">Submittal requirements</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                  data-q="What are the insurance and bonding requirements?">Insurance &amp; bonding</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                  data-q="Summarize the key project milestones and deadlines.">Key milestones</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                  data-q="What safety requirements are specified?">Safety requirements</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
+                  data-q="List all materials and specifications mentioned.">Materials &amp; specs</button>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Persisted messages -->
+      {% for msg in messages %}
+      {% if msg.role == 'user' %}
+      <div class="msg-row msg-row-user">
+        <div>
+          <div class="msg-bubble msg-bubble-user">{{ msg.content | e | replace('\n', '<br>') | safe }}</div>
+          <div class="msg-meta msg-meta-user">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</div>
+        </div>
+      </div>
+      {% else %}
+      <div class="msg-row msg-row-assistant">
+        <div>
+          <div class="msg-bubble msg-bubble-assistant">
+            {{ msg.content | e | replace('\n', '<br>') | safe }}
+            {% if msg.sources %}
+            <div class="mt-2">
+              {% for src in msg.sources %}
+              <a href="{{ url_for('drawing_detail', drawing_id=src.drawing_id) }}"
+                 class="source-badge"
+                 title="Open {{ src.filename }}">
+                <i class="bi bi-file-earmark-pdf"></i> {{ src.filename }} p.{{ src.page }}
+              </a>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <div class="msg-meta">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</div>
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+
+      <!-- "Skippy is thinking…" indicator -->
+      <div class="msg-row msg-row-assistant" id="thinkingRow" style="display:none;">
+        <div class="thinking-bubble">
+          <span class="spinner-border spinner-border-sm"></span>
+          Skippy is thinking&hellip;
+        </div>
+      </div>
+
     </div>
-  </div>
 
-</div><!-- end workspace-layout -->
+    <!-- Input area -->
+    <div class="workspace-input-area">
+      <div class="d-flex gap-2 align-items-end">
+        <textarea id="wsInput" class="form-control" rows="2"
+                  placeholder="Bask in my magnificence and ask me something."
+                  autocomplete="off"></textarea>
+        <button id="wsSendBtn" class="btn btn-primary" title="Send (Enter)">
+          <i class="bi bi-send-fill me-1"></i> Send
+        </button>
+      </div>
+      <div class="text-muted small mt-1 ps-1">
+        <kbd style="font-size:.65rem;">Enter</kbd> to send &nbsp;&middot;&nbsp;
+        <kbd style="font-size:.65rem;">Shift+Enter</kbd> for newline
+      </div>
+    </div>
 
-<!-- ── Documents Drawer (Bootstrap Offcanvas) ─────── -->
+  </div><!-- end ws-main -->
+
+</div><!-- end ws-outer -->
+
+<!-- ── Documents Drawer ────────────────────────────────────── -->
 <div class="offcanvas offcanvas-end"
      data-bs-backdrop="false"
      tabindex="-1"
@@ -312,17 +439,20 @@
 
 <script>
 (function () {
-    const SEND_URL = "{{ url_for('workspace_send', project_id=project.id) }}";
-    const SKIPPY_ICON = "{{ url_for('static', filename='images/skippy-magnificent.png') }}";
-    const thread = document.getElementById('chatThread');
-    const input = document.getElementById('wsInput');
+    const SEND_URL     = "{{ url_for('workspace_send', project_id=project.id) }}";
+    const DELETE_BASE  = "{{ url_for('project_workspace', project_id=project.id) }}".replace(/\/workspace$/, "/workspace/thread/");
+    const PROJECT_ID   = {{ project.id }};
+    const THREAD_URL_BASE = DELETE_BASE;
+
+    let THREAD_ID = {% if active_thread %}{{ active_thread.id }}{% else %}null{% endif %};
+
+    const thread  = document.getElementById('chatThread');
+    const input   = document.getElementById('wsInput');
     const sendBtn = document.getElementById('wsSendBtn');
     const thinkingRow = document.getElementById('thinkingRow');
-    const emptyState = document.getElementById('emptyState');
+    const emptyState  = document.getElementById('emptyState');
 
-    function scrollToBottom() {
-        thread.scrollTop = thread.scrollHeight;
-    }
+    function scrollToBottom() { thread.scrollTop = thread.scrollHeight; }
     scrollToBottom();
 
     function setWorking(on) {
@@ -363,7 +493,6 @@
         const row = document.createElement('div');
         row.className = 'msg-row msg-row-assistant';
         row.innerHTML = `
-            <img src="${SKIPPY_ICON}" alt="Skippy" class="msg-avatar">
             <div>
               <div class="msg-bubble msg-bubble-assistant">
                 ${escHtml(text)}${sourcesHtml}
@@ -371,6 +500,37 @@
               <div class="msg-meta">${ts || ''}</div>
             </div>`;
         return row;
+    }
+
+    function prependThreadToSidebar(threadId, title) {
+        const list = document.getElementById('threadList');
+        // Remove "no conversations" placeholder if present
+        const empty = list.querySelector('.ws-thread-empty');
+        if (empty) empty.remove();
+
+        // Deactivate any currently active item
+        list.querySelectorAll('.ws-thread-item.active').forEach(el => el.classList.remove('active'));
+
+        const threadUrl = THREAD_URL_BASE + threadId;
+        const div = document.createElement('div');
+        div.className = 'ws-thread-item active';
+        div.dataset.threadId = threadId;
+        div.dataset.threadUrl = threadUrl;
+        div.setAttribute('onclick', "if (!event.target.closest('.ws-thread-action-btn')) window.location.href = this.dataset.threadUrl");
+        div.innerHTML = `
+            <span class="ws-thread-title" title="${escHtml(title)}">${escHtml(title)}</span>
+            <div class="ws-thread-time">just now</div>
+            <div class="ws-thread-actions">
+              <button class="ws-thread-action-btn" title="Rename"
+                      onclick="event.stopPropagation(); renameThread(${threadId}, this)">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="ws-thread-action-btn" title="Delete"
+                      onclick="event.stopPropagation(); deleteThread(${threadId}, this)">
+                <i class="bi bi-trash3"></i>
+              </button>
+            </div>`;
+        list.insertAdjacentElement('afterbegin', div);
     }
 
     async function sendMessage() {
@@ -384,16 +544,26 @@
         scrollToBottom();
 
         try {
+            const body = { message: text };
+            if (THREAD_ID) body.thread_id = THREAD_ID;
+
             const res = await fetch(SEND_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text }),
+                body: JSON.stringify(body),
             });
             const data = await res.json();
             if (data.error) {
                 thread.appendChild(buildAssistantBubble('⚠ ' + data.error, [], ''));
             } else {
                 thread.appendChild(buildAssistantBubble(data.answer, data.sources || [], data.created_at || ''));
+                // Handle new thread creation
+                if (!THREAD_ID && data.thread_id) {
+                    THREAD_ID = data.thread_id;
+                    const newUrl = THREAD_URL_BASE + THREAD_ID;
+                    history.replaceState({}, '', newUrl);
+                    prependThreadToSidebar(THREAD_ID, data.thread_title || text.slice(0, 50));
+                }
             }
         } catch (err) {
             thread.appendChild(buildAssistantBubble('⚠ Network error. Please try again.', [], ''));
@@ -419,6 +589,51 @@
             input.focus();
         });
     });
+
+    // ── Thread rename ───────────────────────────────────────────
+    window.renameThread = function(threadId, btn) {
+        const item  = btn.closest('.ws-thread-item');
+        const titleEl = item.querySelector('.ws-thread-title');
+        const current = titleEl.textContent.trim();
+        const newTitle = prompt('Rename conversation:', current);
+        if (!newTitle || !newTitle.trim() || newTitle.trim() === current) return;
+        fetch(THREAD_URL_BASE + threadId + '/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle.trim() }),
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                titleEl.textContent = data.title;
+                titleEl.title = data.title;
+            }
+        })
+        .catch(() => {});
+    };
+
+    // ── Thread delete ───────────────────────────────────────────
+    window.deleteThread = function(threadId, btn) {
+        if (!confirm('Delete this conversation and all its messages? This cannot be undone.')) return;
+        fetch(THREAD_URL_BASE + threadId + '/delete', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                const item = btn.closest('.ws-thread-item');
+                item.remove();
+                // If we deleted the active thread, go to workspace root
+                if (THREAD_ID && THREAD_ID === threadId) {
+                    window.location.href = "{{ url_for('project_workspace', project_id=project.id) }}";
+                }
+                // If sidebar is now empty, show placeholder
+                const list = document.getElementById('threadList');
+                if (!list.querySelector('.ws-thread-item')) {
+                    list.innerHTML = '<div class="ws-thread-empty">No conversations yet</div>';
+                }
+            }
+        })
+        .catch(() => {});
+    };
 })();
 </script>
 {% endblock %}

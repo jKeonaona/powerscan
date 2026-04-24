@@ -410,11 +410,44 @@ class Report(db.Model):
     takeoff = db.relationship("Takeoff", backref="reports")
 
 
+class WorkspaceThread(db.Model):
+    __tablename__ = "workspace_thread"
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    project = db.relationship("Project", backref=db.backref("workspace_threads", cascade="all, delete-orphan"))
+    user = db.relationship("User", backref="workspace_threads")
+    messages = db.relationship("WorkspaceMessage", backref="thread", cascade="all, delete-orphan",
+                               foreign_keys="WorkspaceMessage.thread_id",
+                               order_by="WorkspaceMessage.created_at")
+
+    @property
+    def relative_time(self):
+        dt = self.updated_at or self.created_at
+        if dt is None:
+            return ""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        diff = (datetime.now(timezone.utc) - dt).total_seconds()
+        if diff < 60:
+            return "just now"
+        if diff < 3600:
+            return f"{int(diff / 60)}m ago"
+        if diff < 86400:
+            return f"{int(diff / 3600)}h ago"
+        return f"{int(diff / 86400)}d ago"
+
+
 class WorkspaceMessage(db.Model):
     __tablename__ = "workspace_message"
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    thread_id = db.Column(db.Integer, db.ForeignKey("workspace_thread.id"), nullable=True)
     role = db.Column(db.String(20), nullable=False)  # "user" or "assistant"
     content = db.Column(db.Text, nullable=False)
     sources_json = db.Column(db.Text, nullable=True)

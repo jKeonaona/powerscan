@@ -20,7 +20,7 @@ from models import (
     db, User, Company, Project, Drawing, DrawingPage, SearchHistory, Report,
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     IntelligenceTag, IntelligenceItem, QuoteBatch,
-    ComparisonSummary, QuoteComparisonExport, Takeoff, WorkspaceMessage,
+    ComparisonSummary, QuoteComparisonExport, Takeoff, WorkspaceMessage, WorkspaceThread,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     PROJECT_STATUSES, TAKEOFF_STATUSES,
@@ -214,6 +214,8 @@ def _run_migrations(database):
         ("takeoff", "shift_days_total", "NUMERIC"),
         ("takeoff", "crew_size", "INTEGER"),
         ("takeoff", "shifts_per_day", "INTEGER"),
+        # Workspace threads
+        ("workspace_message", "thread_id", "INTEGER"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -230,6 +232,48 @@ def _run_migrations(database):
         pass
     conn.commit()
     conn.close()
+
+
+def _run_workspace_thread_migration(database):
+    """Create one WorkspaceThread per user+project pair for any orphaned WorkspaceMessages."""
+    conn = database.engine.raw_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT DISTINCT project_id, user_id FROM workspace_message WHERE thread_id IS NULL"
+        )
+        pairs = cursor.fetchall()
+        for project_id, user_id in pairs:
+            cursor.execute(
+                "SELECT MIN(created_at), MAX(created_at) FROM workspace_message "
+                "WHERE project_id=? AND user_id=? AND thread_id IS NULL",
+                (project_id, user_id),
+            )
+            row = cursor.fetchone()
+            min_dt, max_dt = (row[0], row[1]) if row else (None, None)
+            cursor.execute(
+                "INSERT INTO workspace_thread (project_id, user_id, title, created_at, updated_at) "
+                "VALUES (?, ?, 'Imported conversation', ?, ?)",
+                (project_id, user_id, min_dt, max_dt),
+            )
+            thread_id = cursor.lastrowid
+            cursor.execute(
+                "UPDATE workspace_message SET thread_id=? "
+                "WHERE project_id=? AND user_id=? AND thread_id IS NULL",
+                (thread_id, project_id, user_id),
+            )
+        conn.commit()
+    except Exception as exc:
+        print(f"[powerscan] workspace thread migration error: {exc}", flush=True)
+    finally:
+        conn.close()
+
+
+def _auto_title(text: str) -> str:
+    text = text.strip()
+    if len(text) <= 50:
+        return text
+    return text[:50].rstrip() + "…"
 
 
 _QUOTE_EXTRACTION_PROMPT = """You are an expert construction estimating assistant. Extract structured information from this vendor quote document.
@@ -1034,6 +1078,8 @@ def create_app():
         db.create_all()
         # Migrate: add columns that may be missing from older databases
         _run_migrations(db)
+        # Migrate: create WorkspaceThreads for any orphaned WorkspaceMessages
+        _run_workspace_thread_migration(db)
         # Create default superadmin if none exists
         if not User.query.filter_by(role=ROLE_SUPERADMIN).first():
             admin = User(
@@ -1509,8 +1555,14 @@ def create_app():
             Takeoff.query.filter(
                 Takeoff.project_id == project_id
             ).delete(synchronize_session="fetch")
+            WorkspaceMessage.query.filter(
+                WorkspaceMessage.project_id == project_id
+            ).delete(synchronize_session="fetch")
+            WorkspaceThread.query.filter(
+                WorkspaceThread.project_id == project_id
+            ).delete(synchronize_session="fetch")
             # Cascade handles: Drawings/DrawingPages, SearchHistory, Reports,
-            # IntelligenceItems (project_id==project_id only — NULL items untouched), Takeoffs
+            # IntelligenceItems (project_id==project_id only — NULL items untouched)
             db.session.delete(project)
             db.session.commit()
         except Exception as exc:
@@ -1593,38 +1645,64 @@ def create_app():
 
     # ── Workspace ───────────────────────────────────────────────
 
-    @app.route("/projects/<int:project_id>/workspace")
-    @login_required
-    def project_workspace(project_id):
-        project = db.session.get(Project, project_id) or abort(404)
-        if not current_user.is_superadmin and current_user.company_id != project.company_id:
-            abort(403)
-
-        raw_messages = (
-            WorkspaceMessage.query
-            .filter_by(project_id=project_id, user_id=current_user.id)
-            .order_by(WorkspaceMessage.created_at.asc())
-            .all()
-        )
-        # Attach parsed sources list to each message for template rendering
-        for msg in raw_messages:
-            try:
-                msg.sources = json.loads(msg.sources_json) if msg.sources_json else []
-            except Exception:
-                msg.sources = []
-
-        drawings_list = (
+    def _ws_drawings_list(project_id):
+        return (
             Drawing.query
             .filter_by(project_id=project_id)
             .order_by(Drawing.created_at.desc())
             .all()
         )
 
+    def _ws_thread_list(project_id, user_id):
+        return (
+            WorkspaceThread.query
+            .filter_by(project_id=project_id, user_id=user_id)
+            .order_by(WorkspaceThread.updated_at.desc())
+            .all()
+        )
+
+    @app.route("/projects/<int:project_id>/workspace")
+    @login_required
+    def project_workspace(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
         return render_template(
             "project_workspace.html",
             project=project,
+            threads=_ws_thread_list(project_id, current_user.id),
+            messages=[],
+            active_thread=None,
+            drawings_list=_ws_drawings_list(project_id),
+        )
+
+    @app.route("/projects/<int:project_id>/workspace/thread/<int:thread_id>")
+    @login_required
+    def project_workspace_thread(project_id, thread_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        thread = db.session.get(WorkspaceThread, thread_id) or abort(404)
+        if thread.project_id != project_id or thread.user_id != current_user.id:
+            abort(403)
+        raw_messages = (
+            WorkspaceMessage.query
+            .filter_by(thread_id=thread_id)
+            .order_by(WorkspaceMessage.created_at.asc())
+            .all()
+        )
+        for msg in raw_messages:
+            try:
+                msg.sources = json.loads(msg.sources_json) if msg.sources_json else []
+            except Exception:
+                msg.sources = []
+        return render_template(
+            "project_workspace.html",
+            project=project,
+            threads=_ws_thread_list(project_id, current_user.id),
             messages=raw_messages,
-            drawings_list=drawings_list,
+            active_thread=thread,
+            drawings_list=_ws_drawings_list(project_id),
         )
 
     @app.route("/projects/<int:project_id>/workspace/send", methods=["POST"])
@@ -1641,18 +1719,39 @@ def create_app():
         if not app.config["ANTHROPIC_API_KEY"]:
             return jsonify({"error": "Claude API key not configured."}), 500
 
+        thread_id = data.get("thread_id")
+        thread = None
+        if thread_id:
+            thread = db.session.get(WorkspaceThread, int(thread_id))
+            if not thread or thread.project_id != project_id or thread.user_id != current_user.id:
+                return jsonify({"error": "Thread not found."}), 404
+
         # Capture history BEFORE saving the new user message
-        history = (
-            WorkspaceMessage.query
-            .filter_by(project_id=project_id, user_id=current_user.id)
-            .order_by(WorkspaceMessage.created_at.asc())
-            .all()
-        )
+        if thread:
+            history = (
+                WorkspaceMessage.query
+                .filter_by(thread_id=thread.id)
+                .order_by(WorkspaceMessage.created_at.asc())
+                .all()
+            )
+        else:
+            now = datetime.now(timezone.utc)
+            thread = WorkspaceThread(
+                project_id=project_id,
+                user_id=current_user.id,
+                title=_auto_title(user_text),
+                created_at=now,
+                updated_at=now,
+            )
+            db.session.add(thread)
+            db.session.flush()
+            history = []
 
         # Save user message
         user_msg = WorkspaceMessage(
             project_id=project_id,
             user_id=current_user.id,
+            thread_id=thread.id,
             role="user",
             content=user_text,
         )
@@ -1669,22 +1768,56 @@ def create_app():
         answer = result.get("answer", "Sorry, I could not generate a response.")
         sources = result.get("sources", [])
 
-        # Save assistant message
+        # Save assistant message and bump thread timestamp
         asst_msg = WorkspaceMessage(
             project_id=project_id,
             user_id=current_user.id,
+            thread_id=thread.id,
             role="assistant",
             content=answer,
             sources_json=json.dumps(sources) if sources else None,
         )
         db.session.add(asst_msg)
+        thread.updated_at = datetime.now(timezone.utc)
         db.session.commit()
 
         return jsonify({
             "answer": answer,
             "sources": sources,
+            "thread_id": thread.id,
+            "thread_title": thread.title,
             "created_at": asst_msg.created_at.strftime("%b %d, %Y %H:%M"),
         })
+
+    @app.route("/projects/<int:project_id>/workspace/thread/<int:thread_id>/delete", methods=["POST"])
+    @login_required
+    def workspace_thread_delete(project_id, thread_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        thread = db.session.get(WorkspaceThread, thread_id) or abort(404)
+        if thread.project_id != project_id or thread.user_id != current_user.id:
+            abort(403)
+        db.session.delete(thread)
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    @app.route("/projects/<int:project_id>/workspace/thread/<int:thread_id>/rename", methods=["POST"])
+    @login_required
+    def workspace_thread_rename(project_id, thread_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        thread = db.session.get(WorkspaceThread, thread_id) or abort(404)
+        if thread.project_id != project_id or thread.user_id != current_user.id:
+            abort(403)
+        data = request.get_json(silent=True) or {}
+        title = data.get("title", "").strip()
+        if not title:
+            return jsonify({"error": "Title cannot be empty."}), 400
+        thread.title = title[:200]
+        db.session.commit()
+        return jsonify({"ok": True, "title": thread.title})
 
     # ── Takeoff Routes ──────────────────────────────────────────
 
