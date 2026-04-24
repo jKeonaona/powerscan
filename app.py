@@ -1792,6 +1792,18 @@ def create_app():
             False,
         )
 
+    def _resolve_library_scope(form):
+        """Resolve project_id from the binary scope control in library_add form."""
+        raw = (form.get("current_project_id") or "").strip()
+        current_pid = int(raw) if raw.isdigit() else None
+        if current_pid and not current_user.is_superadmin:
+            proj = db.session.get(Project, current_pid)
+            if not proj or proj.company_id != current_user.company_id:
+                current_pid = None
+        if current_user.role == ROLE_USER:
+            return current_pid
+        return None if form.get("scope", "project") == "global" else current_pid
+
     @app.route("/library/add", methods=["GET", "POST"])
     @login_required
     @admin_required
@@ -1804,8 +1816,7 @@ def create_app():
                 files = request.files.getlist("library_files")
                 raw_tags = request.form.get("tags_input", "")
                 work_scope_selected = request.form.getlist("work_scope")
-                project_id_raw = request.form.get("project_id", "").strip()
-                project_id = int(project_id_raw) if project_id_raw.isdigit() else None
+                project_id = _resolve_library_scope(request.form)
 
                 saved_ids = []
                 skipped = []
@@ -1863,8 +1874,7 @@ def create_app():
                 text_content = request.form.get("text_content", "").strip() or None
                 work_scope_selected = request.form.getlist("work_scope")
                 auto_include = request.form.get("auto_include_in_search") == "1"
-                project_id_raw = request.form.get("project_id", "").strip()
-                project_id = int(project_id_raw) if project_id_raw.isdigit() else None
+                project_id = _resolve_library_scope(request.form)
                 raw_tags = request.form.get("tags_input", "")
 
                 item = IntelligenceItem(
@@ -1885,15 +1895,16 @@ def create_app():
                 return redirect(url_for("intelligence_library"))
 
         # GET
-        all_projects, include_global = _library_projects_for_user()
-        default_project_id_raw = request.args.get("project_id", "").strip()
-        default_project_id = int(default_project_id_raw) if default_project_id_raw.isdigit() else None
+        current_project = None
+        pid_raw = request.args.get("project_id", "").strip()
+        if pid_raw.isdigit():
+            proj = db.session.get(Project, int(pid_raw))
+            if proj and (current_user.is_superadmin or proj.company_id == current_user.company_id):
+                current_project = proj
 
         return render_template(
             "library_add.html",
-            all_projects=all_projects,
-            include_global=include_global,
-            default_project_id=default_project_id,
+            current_project=current_project,
             scope_options=WORK_SCOPE_OPTIONS,
         )
 
@@ -1963,7 +1974,15 @@ def create_app():
                 item.title = title
             item.description = request.form.get(f"description_{sid}", "").strip() or None
             project_id_raw = request.form.get(f"project_id_{sid}", "").strip()
-            item.project_id = int(project_id_raw) if project_id_raw.isdigit() else None
+            if project_id_raw.isdigit():
+                pid = int(project_id_raw)
+                if current_user.is_superadmin:
+                    item.project_id = pid
+                else:
+                    proj = db.session.get(Project, pid)
+                    item.project_id = pid if (proj and proj.company_id == current_user.company_id) else None
+            else:
+                item.project_id = None
             work_scope = request.form.getlist(f"work_scope_{sid}")
             item.work_scope_json = json.dumps(work_scope) if work_scope else None
             raw_tags = request.form.get(f"tags_{sid}", "")

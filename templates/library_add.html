@@ -53,6 +53,7 @@
             <div id="uploadSection">
                 <form method="POST" enctype="multipart/form-data" id="uploadForm">
                     <input type="hidden" name="mode" value="upload">
+                    <input type="hidden" name="current_project_id" value="{{ current_project.id if current_project else '' }}">
 
                     <!-- Default metadata block -->
                     <div class="card shadow-sm mb-3">
@@ -75,21 +76,33 @@
                                 </div>
 
                                 <div class="col-md-4">
-                                    <label class="form-label fw-medium">Associated Project</label>
-                                    <select class="form-select" name="project_id" id="upload_project">
-                                        {% if include_global %}
-                                        <option value="" {% if not default_project_id %}selected{% endif %}>Global (applies to all projects)</option>
-                                        {% endif %}
-                                        {% for p in all_projects %}
-                                        <option value="{{ p.id }}"
-                                            {% if default_project_id == p.id %}selected{% endif %}>
-                                            {{ p.name }}
-                                        </option>
-                                        {% endfor %}
-                                        {% if not include_global and not all_projects %}
-                                        <option value="" selected disabled>No projects available</option>
-                                        {% endif %}
-                                    </select>
+                                    <label class="form-label fw-medium">Scope</label>
+                                    {% if current_user.role == 'user' %}
+                                    <p class="mb-1 small text-muted">
+                                        Saved to: <strong>{{ current_project.name if current_project else '(no project context)' }}</strong>
+                                    </p>
+                                    <input type="hidden" name="scope" value="project">
+                                    {% elif current_project %}
+                                    <div class="d-flex flex-column gap-1 mt-1">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input" type="radio" name="scope"
+                                                   id="u_scopeProject" value="project" checked>
+                                            <label class="form-check-label small" for="u_scopeProject">
+                                                <strong>This Project</strong> — {{ current_project.name }}
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input" type="radio" name="scope"
+                                                   id="u_scopeGlobal" value="global">
+                                            <label class="form-check-label small" for="u_scopeGlobal">
+                                                <strong>Company Global</strong>{% if current_user.company %} — all {{ current_user.company.name }} projects{% endif %}
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {% else %}
+                                    <p class="mb-1 small text-muted">Company Global (no project in context)</p>
+                                    <input type="hidden" name="scope" value="global">
+                                    {% endif %}
                                     <div class="form-text">All files in this batch will be saved with these settings. You can override per file on the next screen.</div>
                                 </div>
 
@@ -157,6 +170,7 @@
             <div id="typeSection" class="d-none">
                 <form method="POST">
                     <input type="hidden" name="mode" value="text">
+                    <input type="hidden" name="current_project_id" value="{{ current_project.id if current_project else '' }}">
                     <div class="card shadow-sm">
                         <div class="card-body">
 
@@ -194,18 +208,33 @@
                                 </div>
 
                                 <div class="col-md-4">
-                                    <label for="type_project" class="form-label fw-medium">Associated Project <span class="text-muted fw-normal">(optional)</span></label>
-                                    <select class="form-select" id="type_project" name="project_id">
-                                        {% if include_global %}
-                                        <option value="" {% if not default_project_id %}selected{% endif %}>Global (applies to all projects)</option>
-                                        {% endif %}
-                                        {% for p in all_projects %}
-                                        <option value="{{ p.id }}"
-                                            {% if default_project_id == p.id %}selected{% endif %}>
-                                            {{ p.name }}
-                                        </option>
-                                        {% endfor %}
-                                    </select>
+                                    <label class="form-label fw-medium">Scope</label>
+                                    {% if current_user.role == 'user' %}
+                                    <p class="mb-1 small text-muted">
+                                        Saved to: <strong>{{ current_project.name if current_project else '(no project context)' }}</strong>
+                                    </p>
+                                    <input type="hidden" name="scope" value="project">
+                                    {% elif current_project %}
+                                    <div class="d-flex flex-column gap-1 mt-1">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input" type="radio" name="scope"
+                                                   id="t_scopeProject" value="project" checked>
+                                            <label class="form-check-label small" for="t_scopeProject">
+                                                <strong>This Project</strong> — {{ current_project.name }}
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input" type="radio" name="scope"
+                                                   id="t_scopeGlobal" value="global">
+                                            <label class="form-check-label small" for="t_scopeGlobal">
+                                                <strong>Company Global</strong>{% if current_user.company %} — all {{ current_user.company.name }} projects{% endif %}
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {% else %}
+                                    <p class="mb-1 small text-muted">Company Global (no project in context)</p>
+                                    <input type="hidden" name="scope" value="global">
+                                    {% endif %}
                                 </div>
 
                                 <div class="col-md-4">
