@@ -2483,6 +2483,7 @@ def create_app():
                     "drawing_ids": drawing_ids,
                     "quote_batches": [quote_batch_ref] if quote_batch_ref else [],
                     "project_id": project_id,
+                    "default_scope": request.form.get("scope", "project"),
                 }
                 return redirect(url_for("library_bulk_review", batch_id=batch_id))
 
@@ -2660,6 +2661,8 @@ def create_app():
                 "suggested_category": suggested_cat,
             })
 
+        default_scope = batch_data.get("default_scope", "project") if isinstance(batch_data, dict) else "project"
+
         return render_template(
             "library_bulk_review.html",
             batch_id=batch_id,
@@ -2672,6 +2675,7 @@ def create_app():
             context_project=context_project,
             project_categories=project_categories,
             scope_suggestions=scope_suggestions,
+            default_scope=default_scope,
         )
 
     @app.route("/library/bulk-review/<batch_id>/save", methods=["POST"])

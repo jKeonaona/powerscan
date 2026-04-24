@@ -142,14 +142,14 @@
                             <div class="form-check">
                                 <input class="form-check-input scope-radio" type="radio"
                                        name="scope_{{ sid }}" id="scope_proj_{{ sid }}"
-                                       value="project" checked
+                                       value="project" {% if default_scope != 'global' %}checked{% endif %}
                                        data-sid="{{ sid }}">
                                 <label class="form-check-label small" for="scope_proj_{{ sid }}">This Project</label>
                             </div>
                             <div class="form-check">
                                 <input class="form-check-input scope-radio" type="radio"
                                        name="scope_{{ sid }}" id="scope_global_{{ sid }}"
-                                       value="global"
+                                       value="global" {% if default_scope == 'global' %}checked{% endif %}
                                        data-sid="{{ sid }}">
                                 <label class="form-check-label small" for="scope_global_{{ sid }}">Company Global</label>
                             </div>
@@ -381,19 +381,23 @@
 <script>
 (function () {
     // ── Scope radio → work scope toggle (Library section) ─────────────────
+    function applyWorkScopeVisibility(radio) {
+        var sid = radio.dataset.sid;
+        var wsDiv  = document.getElementById('ws_'      + sid);
+        var wsHint = document.getElementById('ws_hint_' + sid);
+        if (radio.value === 'global') {
+            if (wsDiv)  wsDiv.style.display  = '';
+            if (wsHint) wsHint.style.display = 'none';
+        } else {
+            if (wsDiv)  wsDiv.style.display  = 'none';
+            if (wsHint) wsHint.style.display = '';
+        }
+    }
+
     document.querySelectorAll('.scope-radio').forEach(function (radio) {
-        radio.addEventListener('change', function () {
-            var sid = this.dataset.sid;
-            var wsDiv = document.getElementById('ws_' + sid);
-            var wsHint = document.getElementById('ws_hint_' + sid);
-            if (this.value === 'global') {
-                if (wsDiv) wsDiv.style.display = '';
-                if (wsHint) wsHint.style.display = 'none';
-            } else {
-                if (wsDiv) wsDiv.style.display = 'none';
-                if (wsHint) wsHint.style.display = '';
-            }
-        });
+        radio.addEventListener('change', function () { applyWorkScopeVisibility(this); });
+        // Initialise on page load so pre-selected "global" rows show work-scope column
+        if (radio.checked) applyWorkScopeVisibility(radio);
     });
 
     // ── Quote category select logic ────────────────────────────────────────
