@@ -79,8 +79,10 @@
                         <th style="min-width:200px;">Title <span class="text-danger">*</span></th>
                         <th style="min-width:160px;">Description</th>
                         <th style="min-width:160px;">Tags</th>
-                        <th style="min-width:160px;">Work Scope</th>
-                        <th style="min-width:160px;">Project</th>
+                        <th style="min-width:160px;" id="workScopeHeader">Work Scope</th>
+                        {% if current_user.role != 'user' %}
+                        <th style="min-width:140px;">Scope</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -125,22 +127,34 @@
                                    placeholder="comma-separated">
                         </td>
                         <td>
-                            <select multiple name="work_scope_{{ sid }}" class="form-select form-select-sm" style="height:90px;">
-                                {% for option in scope_options %}
-                                <option value="{{ option }}" {% if option in item.work_scope_list %}selected{% endif %}>{{ option }}</option>
-                                {% endfor %}
-                            </select>
+                            <div id="ws_{{ sid }}" style="display:none;">
+                                <select multiple name="work_scope_{{ sid }}" class="form-select form-select-sm" style="height:90px;">
+                                    {% for option in scope_options %}
+                                    <option value="{{ option }}" {% if option in item.work_scope_list %}selected{% endif %}>{{ option }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text small text-muted">Global only</div>
+                            </div>
+                            <span id="ws_hint_{{ sid }}" class="text-muted small fst-italic">N/A (project-pinned)</span>
                         </td>
+                        {% if current_user.role != 'user' %}
                         <td>
-                            <select class="form-select form-select-sm" name="project_id_{{ sid }}">
-                                {% if include_global %}
-                                <option value="" {% if not item.project_id %}selected{% endif %}>Global</option>
-                                {% endif %}
-                                {% for p in all_projects %}
-                                <option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
-                                {% endfor %}
-                            </select>
+                            <div class="form-check">
+                                <input class="form-check-input scope-radio" type="radio"
+                                       name="scope_{{ sid }}" id="scope_proj_{{ sid }}"
+                                       value="project" checked
+                                       data-sid="{{ sid }}">
+                                <label class="form-check-label small" for="scope_proj_{{ sid }}">This Project</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input scope-radio" type="radio"
+                                       name="scope_{{ sid }}" id="scope_global_{{ sid }}"
+                                       value="global"
+                                       data-sid="{{ sid }}">
+                                <label class="form-check-label small" for="scope_global_{{ sid }}">Company Global</label>
+                            </div>
                         </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -205,29 +219,121 @@
     {% if quote_batch_refs %}
     <hr class="my-3">
     <h5 class="fw-semibold mb-2"><i class="bi bi-currency-dollar text-warning"></i> Routed to Quotes — {{ n_quotes }} file{{ 's' if n_quotes != 1 else '' }}</h5>
-    <p class="text-muted small mb-2">Vendor quote extraction has been triggered. Review and save the extracted data in Compare Quotes.</p>
+
+    {% set reviewing_count = quote_batch_refs | selectattr('status', 'equalto', 'reviewing') | list | length %}
+    {% if reviewing_count > 1 %}
+    <div class="d-flex justify-content-end mb-2">
+        <form method="POST" action="{{ url_for('library_bulk_review_quotes_accept_all', lib_batch_id=batch_id) }}">
+            <button type="submit" class="btn btn-sm btn-warning">
+                <i class="bi bi-check-all"></i> Accept All Quotes
+            </button>
+        </form>
+    </div>
+    {% endif %}
+
     {% for qbr in quote_batch_refs %}
-    <div class="card border-warning-subtle mb-2">
-        <div class="card-body py-2 px-3">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    {% for fname in qbr.filenames %}
-                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle me-1">
-                        <i class="bi bi-file-earmark-text"></i> {{ fname }}
-                    </span>
-                    {% endfor %}
+    <div class="card mb-3 {% if qbr.status == 'saved' %}border-success{% elif qbr.status == 'cancelled' %}border-secondary{% else %}border-warning-subtle{% endif %}">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center
+            {% if qbr.status == 'saved' %}bg-success-subtle{% elif qbr.status == 'cancelled' %}bg-light{% else %}bg-warning-subtle{% endif %}">
+            <div class="d-flex flex-wrap gap-1 align-items-center">
+                {% for fname in qbr.filenames %}
+                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                    <i class="bi bi-file-earmark-text"></i> {{ fname }}
+                </span>
+                {% endfor %}
+            </div>
+            <div class="ms-3 flex-shrink-0">
+                {% if qbr.status == 'saved' %}
+                <span class="badge bg-success"><i class="bi bi-check-circle"></i> Accepted</span>
+                {% elif qbr.status == 'cancelled' %}
+                <span class="badge bg-secondary"><i class="bi bi-x-circle"></i> Discarded</span>
+                {% else %}
+                <div class="d-flex gap-2">
+                    <form method="POST" action="{{ url_for('library_bulk_review_quote_accept', lib_batch_id=batch_id, quote_batch_id=qbr.batch_id) }}">
+                        <button type="submit" class="btn btn-sm btn-success text-nowrap">
+                            <i class="bi bi-check-lg"></i> Accept
+                        </button>
+                    </form>
+                    <form method="POST" action="{{ url_for('library_bulk_review_quote_discard', lib_batch_id=batch_id, quote_batch_id=qbr.batch_id) }}"
+                          onsubmit="return confirm('Discard these quote files? Extracted data will be lost.')">
+                        <button type="submit" class="btn btn-sm btn-outline-danger text-nowrap">
+                            <i class="bi bi-x-lg"></i> Discard
+                        </button>
+                    </form>
+                    {% if context_project_id %}
+                    <a href="{{ url_for('bulk_quote_review', project_id=context_project_id, batch_id=qbr.batch_id) }}"
+                       class="btn btn-sm btn-outline-warning text-nowrap">
+                        <i class="bi bi-pencil-square"></i> Review &amp; Edit
+                    </a>
+                    {% endif %}
                 </div>
-                {% if context_project_id %}
-                <a href="{{ url_for('bulk_quote_review', project_id=context_project_id, batch_id=qbr.batch_id) }}"
-                   class="btn btn-sm btn-outline-warning ms-2 text-nowrap">
-                    <i class="bi bi-arrow-right-circle"></i> Review in Compare Quotes
-                </a>
                 {% endif %}
             </div>
         </div>
+        {% if qbr.status == 'reviewing' and qbr.entries %}
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-3">Vendor</th>
+                            <th>Quote Date</th>
+                            <th>Line Items</th>
+                            <th>Flags</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in qbr.entries %}
+                        {% if not entry.get('error') %}
+                        <tr>
+                            <td class="ps-3 small fw-medium">{{ entry.get('vendor_name') or '—' }}</td>
+                            <td class="small">{{ entry.get('quote_date') or '—' }}</td>
+                            <td class="small">
+                                {% set n_items = (entry.get('pricing_items') or []) | length %}
+                                {% if n_items %}{{ n_items }} item{{ 's' if n_items != 1 else '' }}{% else %}<span class="text-muted">—</span>{% endif %}
+                            </td>
+                            <td>
+                                {% for flag in (entry.get('flags') or []) %}
+                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle small">{{ flag }}</span>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="ps-3 small text-danger">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                Extraction failed: {{ entry.get('error', 'Unknown error') }}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
     </div>
     {% endfor %}
     {% endif %}
 
 </div>
+
+<script>
+(function () {
+    document.querySelectorAll('.scope-radio').forEach(function (radio) {
+        radio.addEventListener('change', function () {
+            var sid = this.dataset.sid;
+            var wsDiv = document.getElementById('ws_' + sid);
+            var wsHint = document.getElementById('ws_hint_' + sid);
+            if (this.value === 'global') {
+                if (wsDiv) wsDiv.style.display = '';
+                if (wsHint) wsHint.style.display = 'none';
+            } else {
+                if (wsDiv) wsDiv.style.display = 'none';
+                if (wsHint) wsHint.style.display = '';
+            }
+        });
+    });
+})();
+</script>
 {% endblock %}

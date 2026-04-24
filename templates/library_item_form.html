@@ -91,8 +91,8 @@
                             <div class="form-text">Comma-separated. Start typing for suggestions.</div>
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label fw-medium">Work Scope <span class="text-muted fw-normal">(optional)</span></label>
+                        <div id="workScopeSection" class="mb-3" {% if item and item.project_id %}style="display:none;"{% endif %}>
+                            <label class="form-label fw-medium">Work Scope <span class="text-muted fw-normal">(optional, global only)</span></label>
                             <div class="border rounded p-3 bg-light">
                                 <div class="row row-cols-1 row-cols-sm-2 g-2">
                                     {% for option in scope_options %}
@@ -110,17 +110,34 @@
                             </div>
                         </div>
 
+                        <input type="hidden" name="current_project_id" value="{{ item.project_id if item and item.project_id else '' }}">
+
                         <div class="mb-3">
-                            <label for="project_id" class="form-label fw-medium">Associated Project <span class="text-muted fw-normal">(optional)</span></label>
-                            <select class="form-select" id="project_id" name="project_id">
-                                <option value="">Global (applies to all projects)</option>
-                                {% for p in all_projects %}
-                                <option value="{{ p.id }}"
-                                    {% if item and item.project_id == p.id %}selected{% endif %}>
-                                    {{ p.name }}
-                                </option>
-                                {% endfor %}
-                            </select>
+                            <label class="form-label fw-medium">Scope</label>
+                            {% if current_user.role == 'user' %}
+                            <p class="form-control-plaintext text-muted small mb-0">
+                                {% if item and item.project %}{{ item.project.name }}{% else %}Company Global{% endif %}
+                            </p>
+                            {% else %}
+                            <div class="d-flex gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="scope" id="scopeProject"
+                                           value="project"
+                                           {% if item and item.project_id %}checked{% endif %}
+                                           {% if not item or not item.project_id %}disabled{% endif %}>
+                                    <label class="form-check-label" for="scopeProject">
+                                        This Project
+                                        {% if item and item.project %}<span class="text-muted small">({{ item.project.name }})</span>{% endif %}
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="scope" id="scopeGlobal"
+                                           value="global"
+                                           {% if not item or not item.project_id %}checked{% endif %}>
+                                    <label class="form-check-label" for="scopeGlobal">Company Global</label>
+                                </div>
+                            </div>
+                            {% endif %}
                         </div>
 
                         <div class="mb-4">
@@ -151,6 +168,17 @@
 
 <script>
 (function () {
+    // Scope toggle — show work scope only when Company Global
+    var scopeRadios = document.querySelectorAll('input[name="scope"]');
+    var workScopeSection = document.getElementById('workScopeSection');
+    function updateWorkScope() {
+        var selected = document.querySelector('input[name="scope"]:checked');
+        if (!workScopeSection || !selected) return;
+        workScopeSection.style.display = (selected.value === 'global') ? '' : 'none';
+    }
+    scopeRadios.forEach(function (r) { r.addEventListener('change', updateWorkScope); });
+    updateWorkScope();
+
     var typeInputs = document.querySelectorAll('input[name="entry_type"]');
     var textSection = document.getElementById('textSection');
     var fileSection = document.getElementById('fileSection');

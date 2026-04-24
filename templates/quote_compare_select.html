@@ -19,7 +19,7 @@
             <h2 class="mb-1"><i class="bi bi-columns-gap"></i> Compare Quotes</h2>
             <p class="text-muted mb-0">{{ project.name }} — select a category to open the comparison view</p>
         </div>
-        <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}"
+        <a href="{{ url_for('library_add_for_project', project_id=project.id) }}"
            class="btn btn-sm btn-outline-primary flex-shrink-0 ms-3">
             <i class="bi bi-plus-lg"></i> Add more quotes
         </a>
@@ -155,9 +155,9 @@
     <div class="text-center py-5">
         <i class="bi bi-columns-gap fs-1 text-muted"></i>
         <p class="text-muted mt-3 mb-1">No saved quote batches for this project yet.</p>
-        <p class="text-muted small mb-4">Use Bulk Quote Intake to upload and extract vendor quote PDFs, then save the batch.</p>
-        <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="btn btn-primary">
-            <i class="bi bi-card-list"></i> Go to Bulk Quote Intake
+        <p class="text-muted small mb-4">Upload vendor quote PDFs through the Intelligence Library — PowerScan will extract and route them automatically.</p>
+        <a href="{{ url_for('library_add_for_project', project_id=project.id) }}" class="btn btn-primary">
+            <i class="bi bi-upload"></i> Upload Quotes via Library
         </a>
     </div>
     {% endif %}

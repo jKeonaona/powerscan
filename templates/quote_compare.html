@@ -126,7 +126,7 @@
     <div class="alert alert-info mb-3">
         <i class="bi bi-info-circle me-2"></i>
         Only one quote in this category — comparison requires at least 2 vendors.
-        <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}" class="alert-link ms-2">Add more quotes</a>
+        <a href="{{ url_for('library_add_for_project', project_id=project.id) }}" class="alert-link ms-2">Add more quotes</a>
     </div>
     {% endif %}
 

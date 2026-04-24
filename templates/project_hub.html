@@ -47,21 +47,6 @@
 
     <div class="row g-3 mt-1">
 
-        <!-- Bulk Upload Quotes -->
-        <div class="col-6 col-md-4 col-lg-3">
-            <a href="{{ url_for('bulk_quote_intake', project_id=project.id) }}"
-               class="card hub-card h-100 text-decoration-none">
-                <div class="card-body d-flex flex-column align-items-start p-3">
-                    <i class="bi bi-cloud-upload fs-2 text-primary mb-2"></i>
-                    <div class="fw-semibold">Bulk Upload Quotes</div>
-                    <div class="text-muted small mt-1 flex-grow-1">Drop in vendor quotes — PowerScan extracts the details</div>
-                    {% if reviewing_batches > 0 %}
-                    <span class="badge bg-warning text-dark mt-2">{{ reviewing_batches }} awaiting review</span>
-                    {% endif %}
-                </div>
-            </a>
-        </div>
-
         <!-- Compare Quotes -->
         <div class="col-6 col-md-4 col-lg-3">
             <a href="{{ url_for('quote_compare_select', project_id=project.id) }}"

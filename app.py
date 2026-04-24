@@ -2086,6 +2086,78 @@ def create_app():
             return batch_data.get("item_ids", [])
         return batch_data or []
 
+    def _auto_accept_quote_batch(batch, project_id):
+        """Create IntelligenceItems from a QuoteBatch without form data, then mark saved."""
+        import shutil as _shutil
+
+        def _parse_d(val):
+            if not val:
+                return None
+            try:
+                from datetime import date as _date
+                return _date.fromisoformat(str(val)[:10])
+            except Exception:
+                return None
+
+        staging_dir = os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", batch.batch_id)
+        raw = json.loads(batch.entries_json or "[]")
+        entries = raw.get("entries", raw) if isinstance(raw, dict) else raw
+        saved = 0
+        for entry in entries:
+            if entry.get("error"):
+                continue
+            staged_fn = entry.get("staged_filename", "")
+            original_fn = entry.get("original_filename", staged_fn)
+            title = (entry.get("title") or "").strip() or original_fn or "Untitled Quote"
+            new_file_path = None
+            file_mime = None
+            if staged_fn:
+                src = os.path.join(staging_dir, staged_fn)
+                if os.path.exists(src):
+                    ext = os.path.splitext(staged_fn)[1]
+                    dest_name = uuid.uuid4().hex + ext
+                    dest = os.path.join(app.config["LIBRARY_FOLDER"], dest_name)
+                    os.rename(src, dest)
+                    new_file_path = dest_name
+                    ext_lower = ext.lower()
+                    if ext_lower == ".pdf":
+                        file_mime = "application/pdf"
+                    elif ext_lower == ".png":
+                        file_mime = "image/png"
+                    elif ext_lower in (".jpg", ".jpeg"):
+                        file_mime = "image/jpeg"
+            pricing_rows = entry.get("pricing_items") or []
+            valid_flags = [f for f in (entry.get("flags") or []) if f in _ALLOWED_FLAGS]
+            intel_item = IntelligenceItem(
+                title=title,
+                description=entry.get("description") or None,
+                entry_type="file",
+                file_path=new_file_path,
+                original_filename=original_fn,
+                file_mime=file_mime,
+                project_id=project_id,
+                auto_include_in_search=True,
+                uploaded_by=current_user.id,
+                vendor_name=entry.get("vendor_name") or None,
+                quote_date=_parse_d(entry.get("quote_date")),
+                expiration_date=_parse_d(entry.get("expiration_date")),
+                conditions_text=entry.get("conditions_text") or None,
+                pricing_items_json=json.dumps(pricing_rows) if pricing_rows else None,
+                flags_json=json.dumps(valid_flags) if valid_flags else None,
+                extraction_status="auto-extracted",
+                content_hash=entry.get("content_hash"),
+            )
+            db.session.add(intel_item)
+            db.session.flush()
+            if batch.category_tag:
+                _apply_item_tags(intel_item, batch.category_tag)
+            saved += 1
+        batch.status = "saved"
+        db.session.commit()
+        if os.path.isdir(staging_dir):
+            _shutil.rmtree(staging_dir, ignore_errors=True)
+        return saved
+
     @app.route("/library/bulk-review/<batch_id>")
     @login_required
     @admin_required
@@ -2121,17 +2193,27 @@ def create_app():
 
         context_project_id = batch_data.get("project_id") if isinstance(batch_data, dict) else None
         context_project = db.session.get(Project, context_project_id) if context_project_id else None
-        all_projects, include_global = _library_projects_for_user()
+
+        enriched_quotes = []
+        for qbr in quote_batch_refs:
+            qb = QuoteBatch.query.filter_by(batch_id=qbr["batch_id"]).first()
+            qb_raw = json.loads(qb.entries_json or "[]") if qb else {}
+            qb_entries = qb_raw.get("entries", qb_raw) if isinstance(qb_raw, dict) else qb_raw
+            enriched_quotes.append({
+                "batch_id": qbr["batch_id"],
+                "filenames": qbr["filenames"],
+                "status": qb.status if qb else "unknown",
+                "entries": qb_entries,
+            })
+
         return render_template(
             "library_bulk_review.html",
             batch_id=batch_id,
             items=items,
             file_sizes=file_sizes,
             drawings=drawings,
-            quote_batch_refs=quote_batch_refs,
+            quote_batch_refs=enriched_quotes,
             context_project_id=context_project_id,
-            all_projects=all_projects,
-            include_global=include_global,
             scope_options=WORK_SCOPE_OPTIONS,
             context_project=context_project,
         )
@@ -2142,6 +2224,7 @@ def create_app():
     def library_bulk_review_save(batch_id):
         batch_data = session.get(f"lib_batch_{batch_id}")
         item_ids = _batch_item_ids(batch_data)
+        context_project_id = batch_data.get("project_id") if isinstance(batch_data, dict) else None
 
         items = (
             IntelligenceItem.query
@@ -2158,16 +2241,11 @@ def create_app():
             if title:
                 item.title = title
             item.description = request.form.get(f"description_{sid}", "").strip() or None
-            project_id_raw = request.form.get(f"project_id_{sid}", "").strip()
-            if project_id_raw.isdigit():
-                pid = int(project_id_raw)
-                if current_user.is_superadmin:
-                    item.project_id = pid
-                else:
-                    proj = db.session.get(Project, pid)
-                    item.project_id = pid if (proj and proj.company_id == current_user.company_id) else None
+            scope_val = request.form.get(f"scope_{sid}", "project")
+            if current_user.role == ROLE_USER:
+                item.project_id = context_project_id
             else:
-                item.project_id = None
+                item.project_id = None if scope_val == "global" else context_project_id
             work_scope = request.form.getlist(f"work_scope_{sid}")
             item.work_scope_json = json.dumps(work_scope) if (item.project_id is None and work_scope) else None
             raw_tags = request.form.get(f"tags_{sid}", "")
@@ -2242,10 +2320,15 @@ def create_app():
             item.title = title
             item.description = request.form.get("description", "").strip() or None
             item.auto_include_in_search = request.form.get("auto_include_in_search") == "1"
-            project_id_raw = request.form.get("project_id", "").strip()
-            item.project_id = int(project_id_raw) if project_id_raw.isdigit() else None
+            if current_user.role != ROLE_USER:
+                scope_val = request.form.get("scope", "project")
+                current_proj_id_raw = request.form.get("current_project_id", "").strip()
+                if scope_val == "global":
+                    item.project_id = None
+                elif current_proj_id_raw.isdigit():
+                    item.project_id = int(current_proj_id_raw)
             work_scope_selected = request.form.getlist("work_scope")
-            item.work_scope_json = json.dumps(work_scope_selected) if work_scope_selected else None
+            item.work_scope_json = json.dumps(work_scope_selected) if (item.project_id is None and work_scope_selected) else None
 
             if item.entry_type == "text":
                 item.text_content = request.form.get("text_content", "").strip() or None
@@ -2272,19 +2355,9 @@ def create_app():
             flash("Item updated.", "success")
             return redirect(url_for("intelligence_library"))
 
-        if current_user.is_superadmin:
-            all_projects = Project.query.order_by(Project.name).all()
-        else:
-            all_projects = (
-                Project.query
-                .filter_by(company_id=current_user.company_id)
-                .order_by(Project.name)
-                .all()
-            )
         return render_template(
             "library_item_form.html",
             item=item,
-            all_projects=all_projects,
             scope_options=WORK_SCOPE_OPTIONS,
             current_tags=", ".join(t.name for t in item.tags),
             current_scope=item.work_scope_list,
@@ -2338,109 +2411,28 @@ def create_app():
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        return render_template("bulk_quote_intake.html", project=project,
-                               max_files=QUOTE_BATCH_MAX_FILES)
+        flash(
+            "The standalone Quotes uploader has moved. Drop quote files into the Library — "
+            "PowerScan will route them automatically.",
+            "info",
+        )
+        return redirect(url_for("library_add_for_project", project_id=project_id))
 
     @app.route("/projects/<int:project_id>/quotes/bulk-intake", methods=["POST"])
     @login_required
     @admin_required
     def bulk_quote_intake_post(project_id):
-        import hashlib
-        project = db.session.get(Project, project_id) or abort(404)
-        if not current_user.is_superadmin and current_user.company_id != project.company_id:
-            abort(403)
+        return redirect(url_for("bulk_quote_intake", project_id=project_id))
 
-        files = request.files.getlist("quote_files")
-        files = [f for f in files if f and f.filename]
-        if not files:
-            flash("Please select at least one file to upload.", "danger")
-            return redirect(url_for("bulk_quote_intake", project_id=project_id))
-        if len(files) > QUOTE_BATCH_MAX_FILES:
-            flash(
-                f"Please upload {QUOTE_BATCH_MAX_FILES} or fewer files per batch. "
-                "You can do multiple batches.",
-                "danger",
-            )
-            return redirect(url_for("bulk_quote_intake", project_id=project_id))
-
-        category_tag = request.form.get("category_tag", "").strip()
-        batch_id = str(uuid.uuid4())
-        staging_dir = os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", batch_id)
-        os.makedirs(staging_dir, exist_ok=True)
-
-        api_key = app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
-
-        # Save all files to staging and compute SHA-256 hashes
-        staged = []
-        for f in files:
-            ext = os.path.splitext(f.filename)[1].lower()
-            safe_name = uuid.uuid4().hex + ext
-            dest = os.path.join(staging_dir, safe_name)
-            f.save(dest)
-            with open(dest, "rb") as fh:
-                content_hash = hashlib.sha256(fh.read()).hexdigest()
-            staged.append({
-                "safe_name": safe_name,
-                "original_filename": f.filename,
-                "content_hash": content_hash,
-                "dest": dest,
-            })
-
-        # Layer 1: within-session dedup — keep first occurrence of each hash
-        seen_hashes = {}
-        deduped = []
-        duplicates_within_session = 0
-        for s in staged:
-            h = s["content_hash"]
-            if h in seen_hashes:
-                os.remove(s["dest"])
-                duplicates_within_session += 1
-            else:
-                seen_hashes[h] = True
-                deduped.append(s)
-
-        # Run AI extraction and Layer 2 project-level duplicate check
-        entries = []
-        for s in deduped:
-            entry = _extract_quote_file(api_key, s["dest"], s["original_filename"])
-            entry["staged_filename"] = s["safe_name"]
-            entry["content_hash"] = s["content_hash"]
-
-            # Layer 2: check for matching hash in this project's library
-            existing = IntelligenceItem.query.filter_by(
-                project_id=project_id,
-                content_hash=s["content_hash"],
-            ).first()
-            if existing:
-                existing_category = existing.tags[0].name if existing.tags else ""
-                existing_by = ""
-                if existing.uploader:
-                    existing_by = existing.uploader.username or existing.uploader.email
-                entry["is_duplicate_of_existing"] = True
-                entry["existing_item_id"] = existing.id
-                entry["existing_item_title"] = existing.title
-                entry["existing_item_uploaded_date"] = existing.created_at.strftime("%b %d, %Y")
-                entry["existing_item_uploaded_by"] = existing_by
-                entry["existing_item_category"] = existing_category
-
-            entries.append(entry)
-
-        active_takeoff = _get_active_takeoff(project_id)
-        batch = QuoteBatch(
-            batch_id=batch_id,
-            project_id=project_id,
-            user_id=current_user.id,
-            status="reviewing",
-            category_tag=category_tag or None,
-            entries_json=json.dumps({
-                "duplicates_within_session": duplicates_within_session,
-                "entries": entries,
-            }),
-            takeoff_id=active_takeoff.id,
+    @app.route("/quotes/bulk-upload")
+    @login_required
+    def quotes_bulk_upload_redirect():
+        flash(
+            "The standalone Quotes uploader has moved. Drop quote files into the Library — "
+            "PowerScan will route them automatically.",
+            "info",
         )
-        db.session.add(batch)
-        db.session.commit()
-        return redirect(url_for("bulk_quote_review", project_id=project_id, batch_id=batch_id))
+        return redirect(url_for("intelligence_library"))
 
     @app.route("/projects/<int:project_id>/quotes/bulk-intake/review/<batch_id>", methods=["GET"])
     @login_required
@@ -2680,6 +2672,65 @@ def create_app():
         db.session.commit()
         flash("Batch cancelled.", "info")
         return redirect(url_for("project_hub", project_id=project_id))
+
+    # ── Library bulk-review: inline quote accept/discard ──────────────────────
+
+    @app.route("/library/bulk-review/<lib_batch_id>/quote/<quote_batch_id>/accept", methods=["POST"])
+    @login_required
+    @admin_required
+    def library_bulk_review_quote_accept(lib_batch_id, quote_batch_id):
+        batch = QuoteBatch.query.filter_by(batch_id=quote_batch_id).first() or abort(404)
+        if not current_user.is_superadmin:
+            proj = db.session.get(Project, batch.project_id)
+            if not proj or proj.company_id != current_user.company_id:
+                abort(403)
+        if batch.status == "reviewing":
+            n = _auto_accept_quote_batch(batch, batch.project_id)
+            flash(f"{n} quote{'s' if n != 1 else ''} accepted and saved to the Intelligence Library.", "success")
+        return redirect(url_for("library_bulk_review", batch_id=lib_batch_id))
+
+    @app.route("/library/bulk-review/<lib_batch_id>/quote/<quote_batch_id>/discard", methods=["POST"])
+    @login_required
+    @admin_required
+    def library_bulk_review_quote_discard(lib_batch_id, quote_batch_id):
+        batch = QuoteBatch.query.filter_by(batch_id=quote_batch_id).first() or abort(404)
+        if not current_user.is_superadmin:
+            proj = db.session.get(Project, batch.project_id)
+            if not proj or proj.company_id != current_user.company_id:
+                abort(403)
+        if batch.status == "reviewing":
+            import shutil
+            staging_dir = os.path.join(app.config["LIBRARY_FOLDER"], "quotes_staging", quote_batch_id)
+            if os.path.isdir(staging_dir):
+                shutil.rmtree(staging_dir, ignore_errors=True)
+            batch.status = "cancelled"
+            db.session.commit()
+            flash("Quote batch discarded.", "info")
+        return redirect(url_for("library_bulk_review", batch_id=lib_batch_id))
+
+    @app.route("/library/bulk-review/<lib_batch_id>/quotes/accept-all", methods=["POST"])
+    @login_required
+    @admin_required
+    def library_bulk_review_quotes_accept_all(lib_batch_id):
+        batch_data = session.get(f"lib_batch_{lib_batch_id}")
+        if not batch_data:
+            flash("Session expired.", "warning")
+            return redirect(url_for("intelligence_library"))
+        total_saved = 0
+        for qbr in batch_data.get("quote_batches", []):
+            qb = QuoteBatch.query.filter_by(batch_id=qbr["batch_id"]).first()
+            if not qb or qb.status != "reviewing":
+                continue
+            if not current_user.is_superadmin:
+                proj = db.session.get(Project, qb.project_id)
+                if not proj or proj.company_id != current_user.company_id:
+                    continue
+            total_saved += _auto_accept_quote_batch(qb, qb.project_id)
+        flash(
+            f"{total_saved} quote{'s' if total_saved != 1 else ''} accepted and saved to the Intelligence Library.",
+            "success",
+        )
+        return redirect(url_for("library_bulk_review", batch_id=lib_batch_id))
 
     # ── Quote Comparison ──────────────────────────────────────────────────────
 
