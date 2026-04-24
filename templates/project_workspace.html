@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ project.name }} — Workspace — PowerScan{% endblock %}
 
+{% block head %}
+<link rel="preload" as="image" href="{{ url_for('static', filename='images/skippy-magnificent.png') }}">
+{% endblock %}
+
 {% block content %}
 <style>
 /* ── Outer two-panel shell ─────────────────────────────────── */
@@ -322,8 +326,8 @@
       {% if not messages %}
       <div class="text-center py-3" id="emptyState">
         <img src="{{ url_for('static', filename='images/skippy-magnificent.png') }}"
-             alt="Skippy" width="80" height="80"
-             style="border-radius:14px; object-fit:cover; margin-bottom:0.75rem; opacity:0.9;">
+             alt="Skippy" width="120" height="120"
+             style="border-radius:18px; object-fit:cover; margin-bottom:1rem; opacity:0.95;">
         <h5 class="fw-bold mb-2">Skippy Workspace</h5>
         <div class="d-flex flex-wrap gap-2 justify-content-center">
           <button type="button" class="btn btn-outline-secondary btn-sm chip-question rounded-pill"
