@@ -81,6 +81,21 @@
             </a>
         </div>
 
+        <!-- Drawings -->
+        <div class="col-6 col-md-4 col-lg-3">
+            <a href="{{ url_for('drawings', project_id=project.id) }}"
+               class="card hub-card h-100 text-decoration-none">
+                <div class="card-body d-flex flex-column align-items-start p-3">
+                    <i class="bi bi-file-earmark-ruled fs-2 text-primary mb-2"></i>
+                    <div class="fw-semibold">Drawings</div>
+                    <div class="text-muted small mt-1 flex-grow-1">Browse engineering drawings, specs, and as-builts page by page.</div>
+                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle mt-2">
+                        {{ doc_count }} document{{ 's' if doc_count != 1 else '' }}
+                    </span>
+                </div>
+            </a>
+        </div>
+
         <!-- Intelligence Library -->
         <div class="col-6 col-md-4 col-lg-3">
             <a href="{{ url_for('library_add_for_project', project_id=project.id) }}"
