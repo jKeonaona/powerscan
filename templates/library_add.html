@@ -15,6 +15,7 @@
                     <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=current_user.company_id) }}">{{ current_user.company.name }}</a></li>
                     {% endif %}
                     {% endif %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=current_project.id) }}">{{ current_project.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('intelligence_library') }}">Intelligence Library</a></li>
                     <li class="breadcrumb-item active">Add Entry</li>
                 </ol>
@@ -53,7 +54,6 @@
             <div id="uploadSection">
                 <form method="POST" enctype="multipart/form-data" id="uploadForm">
                     <input type="hidden" name="mode" value="upload">
-                    <input type="hidden" name="current_project_id" value="{{ current_project.id if current_project else '' }}">
 
                     <!-- Default metadata block -->
                     <div class="card shadow-sm mb-3">
@@ -79,10 +79,10 @@
                                     <label class="form-label fw-medium">Scope</label>
                                     {% if current_user.role == 'user' %}
                                     <p class="mb-1 small text-muted">
-                                        Saved to: <strong>{{ current_project.name if current_project else '(no project context)' }}</strong>
+                                        Saved to: <strong>{{ current_project.name }}</strong>
                                     </p>
                                     <input type="hidden" name="scope" value="project">
-                                    {% elif current_project %}
+                                    {% else %}
                                     <div class="d-flex flex-column gap-1 mt-1">
                                         <div class="form-check mb-0">
                                             <input class="form-check-input" type="radio" name="scope"
@@ -99,9 +99,6 @@
                                             </label>
                                         </div>
                                     </div>
-                                    {% else %}
-                                    <p class="mb-1 small text-muted">Company Global (no project in context)</p>
-                                    <input type="hidden" name="scope" value="global">
                                     {% endif %}
                                     <div class="form-text">All files in this batch will be saved with these settings. You can override per file on the next screen.</div>
                                 </div>
@@ -170,7 +167,6 @@
             <div id="typeSection" class="d-none">
                 <form method="POST">
                     <input type="hidden" name="mode" value="text">
-                    <input type="hidden" name="current_project_id" value="{{ current_project.id if current_project else '' }}">
                     <div class="card shadow-sm">
                         <div class="card-body">
 
@@ -211,10 +207,10 @@
                                     <label class="form-label fw-medium">Scope</label>
                                     {% if current_user.role == 'user' %}
                                     <p class="mb-1 small text-muted">
-                                        Saved to: <strong>{{ current_project.name if current_project else '(no project context)' }}</strong>
+                                        Saved to: <strong>{{ current_project.name }}</strong>
                                     </p>
                                     <input type="hidden" name="scope" value="project">
-                                    {% elif current_project %}
+                                    {% else %}
                                     <div class="d-flex flex-column gap-1 mt-1">
                                         <div class="form-check mb-0">
                                             <input class="form-check-input" type="radio" name="scope"
@@ -231,9 +227,6 @@
                                             </label>
                                         </div>
                                     </div>
-                                    {% else %}
-                                    <p class="mb-1 small text-muted">Company Global (no project in context)</p>
-                                    <input type="hidden" name="scope" value="global">
                                     {% endif %}
                                 </div>
 

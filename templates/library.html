@@ -25,9 +25,13 @@
 
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2><i class="bi bi-lightbulb"></i> Intelligence Library</h2>
-        <a href="{{ url_for('library_add') }}" class="btn btn-primary">
-            <i class="bi bi-plus-lg"></i> Add Entry
+        {% if filtered_project and current_user.is_admin %}
+        <a href="{{ url_for('library_add_for_project', project_id=filtered_project.id) }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> Add to Library
         </a>
+        {% else %}
+        <span class="text-muted small fst-italic">To add entries, open a project and use its Library card.</span>
+        {% endif %}
     </div>
 
     {% if tag_cloud %}

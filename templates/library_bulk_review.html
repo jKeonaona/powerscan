@@ -13,8 +13,13 @@
             <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=current_user.company_id) }}">{{ current_user.company.name }}</a></li>
             {% endif %}
             {% endif %}
+            {% if context_project %}
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=context_project.id) }}">{{ context_project.name }}</a></li>
+            {% endif %}
             <li class="breadcrumb-item"><a href="{{ url_for('intelligence_library') }}">Intelligence Library</a></li>
-            <li class="breadcrumb-item"><a href="{{ url_for('library_add') }}">Add Entry</a></li>
+            {% if context_project %}
+            <li class="breadcrumb-item"><a href="{{ url_for('library_add_for_project', project_id=context_project.id) }}">Add Entry</a></li>
+            {% endif %}
             <li class="breadcrumb-item active">Review Upload</li>
         </ol>
     </nav>

@@ -1792,22 +1792,29 @@ def create_app():
             False,
         )
 
-    def _resolve_library_scope(form):
-        """Resolve project_id from the binary scope control in library_add form."""
-        raw = (form.get("current_project_id") or "").strip()
-        current_pid = int(raw) if raw.isdigit() else None
-        if current_pid and not current_user.is_superadmin:
-            proj = db.session.get(Project, current_pid)
-            if not proj or proj.company_id != current_user.company_id:
-                current_pid = None
+    def _resolve_library_scope(form, project_id):
+        """Resolve final project_id given URL project context and scope radio."""
         if current_user.role == ROLE_USER:
-            return current_pid
-        return None if form.get("scope", "project") == "global" else current_pid
+            return project_id
+        return None if form.get("scope", "project") == "global" else project_id
 
-    @app.route("/library/add", methods=["GET", "POST"])
+    @app.route("/library/add")
     @login_required
     @admin_required
     def library_add():
+        flash("Open a project to add entries to its library.", "info")
+        return redirect(url_for("intelligence_library"))
+
+    @app.route("/projects/<int:project_id>/library/add", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def library_add_for_project(project_id):
+        project = db.session.get(Project, project_id)
+        if not project:
+            abort(404)
+        if not current_user.is_superadmin and project.company_id != current_user.company_id:
+            abort(403)
+
         if request.method == "POST":
             mode = request.form.get("mode", "text")
 
@@ -1816,7 +1823,7 @@ def create_app():
                 files = request.files.getlist("library_files")
                 raw_tags = request.form.get("tags_input", "")
                 work_scope_selected = request.form.getlist("work_scope")
-                project_id = _resolve_library_scope(request.form)
+                resolved_project_id = _resolve_library_scope(request.form, project_id)
 
                 saved_ids = []
                 skipped = []
@@ -1840,7 +1847,7 @@ def create_app():
                         file_path=safe_name,
                         original_filename=f.filename,
                         file_mime=f.content_type,
-                        project_id=project_id,
+                        project_id=resolved_project_id,
                         work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
                         auto_include_in_search=True,
                         uploaded_by=current_user.id,
@@ -1857,10 +1864,10 @@ def create_app():
 
                 if not saved_ids:
                     flash("No valid files were uploaded.", "danger")
-                    return redirect(url_for("library_add"))
+                    return redirect(url_for("library_add_for_project", project_id=project_id))
 
                 batch_id = uuid.uuid4().hex
-                session[f"lib_batch_{batch_id}"] = saved_ids
+                session[f"lib_batch_{batch_id}"] = {"item_ids": saved_ids, "project_id": project_id}
                 return redirect(url_for("library_bulk_review", batch_id=batch_id))
 
             else:
@@ -1868,13 +1875,13 @@ def create_app():
                 title = request.form.get("title", "").strip()
                 if not title:
                     flash("Title is required.", "danger")
-                    return redirect(url_for("library_add"))
+                    return redirect(url_for("library_add_for_project", project_id=project_id))
 
                 description = request.form.get("description", "").strip() or None
                 text_content = request.form.get("text_content", "").strip() or None
                 work_scope_selected = request.form.getlist("work_scope")
                 auto_include = request.form.get("auto_include_in_search") == "1"
-                project_id = _resolve_library_scope(request.form)
+                resolved_project_id = _resolve_library_scope(request.form, project_id)
                 raw_tags = request.form.get("tags_input", "")
 
                 item = IntelligenceItem(
@@ -1882,7 +1889,7 @@ def create_app():
                     description=description,
                     entry_type="text",
                     text_content=text_content,
-                    project_id=project_id,
+                    project_id=resolved_project_id,
                     work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
                     auto_include_in_search=auto_include,
                     uploaded_by=current_user.id,
@@ -1895,27 +1902,27 @@ def create_app():
                 return redirect(url_for("intelligence_library"))
 
         # GET
-        current_project = None
-        pid_raw = request.args.get("project_id", "").strip()
-        if pid_raw.isdigit():
-            proj = db.session.get(Project, int(pid_raw))
-            if proj and (current_user.is_superadmin or proj.company_id == current_user.company_id):
-                current_project = proj
-
         return render_template(
             "library_add.html",
-            current_project=current_project,
+            current_project=project,
             scope_options=WORK_SCOPE_OPTIONS,
         )
+
+    def _batch_item_ids(batch_data):
+        """Extract item_ids from session batch (supports old list format and new dict format)."""
+        if isinstance(batch_data, dict):
+            return batch_data.get("item_ids", [])
+        return batch_data or []
 
     @app.route("/library/bulk-review/<batch_id>")
     @login_required
     @admin_required
     def library_bulk_review(batch_id):
-        item_ids = session.get(f"lib_batch_{batch_id}", [])
+        batch_data = session.get(f"lib_batch_{batch_id}")
+        item_ids = _batch_item_ids(batch_data)
         if not item_ids:
             flash("Upload session not found or expired. Please upload again.", "warning")
-            return redirect(url_for("library_add"))
+            return redirect(url_for("intelligence_library"))
 
         items = (
             IntelligenceItem.query
@@ -1927,7 +1934,7 @@ def create_app():
         )
         if not items:
             flash("Batch not found. Please upload again.", "warning")
-            return redirect(url_for("library_add"))
+            return redirect(url_for("intelligence_library"))
 
         file_sizes = {}
         for item in items:
@@ -1938,6 +1945,8 @@ def create_app():
                 except OSError:
                     file_sizes[item.id] = None
 
+        context_project_id = batch_data.get("project_id") if isinstance(batch_data, dict) else None
+        context_project = db.session.get(Project, context_project_id) if context_project_id else None
         all_projects, include_global = _library_projects_for_user()
         return render_template(
             "library_bulk_review.html",
@@ -1947,13 +1956,15 @@ def create_app():
             all_projects=all_projects,
             include_global=include_global,
             scope_options=WORK_SCOPE_OPTIONS,
+            context_project=context_project,
         )
 
     @app.route("/library/bulk-review/<batch_id>/save", methods=["POST"])
     @login_required
     @admin_required
     def library_bulk_review_save(batch_id):
-        item_ids = session.get(f"lib_batch_{batch_id}", [])
+        batch_data = session.get(f"lib_batch_{batch_id}")
+        item_ids = _batch_item_ids(batch_data)
         if not item_ids:
             flash("Session expired. Changes could not be saved.", "warning")
             return redirect(url_for("intelligence_library"))
@@ -1997,7 +2008,8 @@ def create_app():
     @login_required
     @admin_required
     def library_bulk_review_discard(batch_id):
-        item_ids = session.get(f"lib_batch_{batch_id}", [])
+        batch_data = session.get(f"lib_batch_{batch_id}")
+        item_ids = _batch_item_ids(batch_data)
         if item_ids:
             items = (
                 IntelligenceItem.query
@@ -2017,7 +2029,7 @@ def create_app():
             db.session.commit()
             session.pop(f"lib_batch_{batch_id}", None)
         flash("Upload discarded. Files have been removed.", "info")
-        return redirect(url_for("library_add"))
+        return redirect(url_for("intelligence_library"))
 
     @app.route("/library/<int:item_id>/edit", methods=["GET", "POST"])
     @login_required

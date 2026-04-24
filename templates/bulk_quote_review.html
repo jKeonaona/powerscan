@@ -155,7 +155,7 @@
                     <div class="alert alert-danger mb-3">
                         <strong>Extraction failed:</strong> {{ err }}
                         <div class="mt-2">
-                            <a href="{{ url_for('library_add') }}?project_id={{ project.id }}"
+                            <a href="{{ url_for('library_add_for_project', project_id=project.id) }}"
                                class="btn btn-sm btn-outline-secondary">Enter manually</a>
                         </div>
                     </div>
