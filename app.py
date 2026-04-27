@@ -33,6 +33,7 @@ from search import search_drawings
 from calculations import calculate_painting_quantities, has_any_inputs
 from xlsm_importer import parse_estimate_workbook
 from library_text_extractor import extract_text_from_file, backfill_library_text_content
+from synonyms import expand_query_terms
 
 
 CCC_ADMIN_SEEDS = [
@@ -418,42 +419,108 @@ _WORKSPACE_SYSTEM_PROMPT = (
     "You are Skippy — a straight-talking construction estimating assistant embedded in PowerScan. "
     "You're in the Workspace: a conversational surface where estimators ask questions about a "
     "specific project and get grounded answers from the actual project documents.\n\n"
-    "Read the engineering drawings, specifications, and library references provided and give "
-    "direct, useful answers. No waffling. If you find it in the documents, cite where. "
-    "If it is not in the documents, say so clearly and briefly.\n\n"
-    "When you reference information from a specific drawing, cite it with the index label "
-    "shown before each image (e.g. [INDEX 3]). Users can find those documents via the "
-    "'Project documents' button on this page.\n\n"
-    "You are responding in the Workspace — a conversational project surface. The user may ask "
-    "questions across sessions; treat the conversation history as context they expect you to "
-    "remember. Be concise. Use plain language."
+    "CRITICAL — answer using ONLY the documents and project information provided in this message's "
+    "context block. The context is curated specifically for this question. If you cannot find the "
+    "answer in what you've been given, say so plainly: name what you checked and that the answer "
+    "wasn't there. Do not guess, invent, or reference documents that weren't provided to you.\n\n"
+    "Read the specifications, library references, and engineering drawings provided and give "
+    "direct, useful answers. No waffling.\n\n"
+    "Citation format: cite inline immediately after the sentence, using [filename.pdf p.47] for "
+    "page-specific text references or [filename.pdf] for general document references. "
+    "For drawing images shown above, use the INDEX label: [INDEX 3]. "
+    "Put citations right after the sentence they support, not at the end of a paragraph.\n\n"
+    "The user may ask questions across sessions; treat conversation history as context they expect "
+    "you to remember. Be concise. Use plain language. These are working professionals — clarity "
+    "and directness over hedging."
 )
 
+# ── Context assembly constants ────────────────────────────────────────────────
 
-def _call_workspace(project, history, user_message, api_key, processed_folder):
-    """Call Claude for a Workspace chat turn.
+_CTX_MAX_TEXT_ITEMS = 10       # max Library items included in text context
+_CTX_MAX_SMART_IMAGES = 10     # max drawing pages for query-targeted inclusion
+_CTX_MAX_FALLBACK_IMAGES = 6   # max drawing pages for fallback (untargeted)
+_CTX_SNIPPET_CHARS_TOP = 3000  # chars per item for top-ranked text matches
+_CTX_SNIPPET_CHARS_LOW = 400   # chars for lower-priority items (title + opening)
+_CTX_FALLBACK_THRESHOLD = 4    # min score to bypass fallback; below this → generic load
 
-    Returns dict with 'answer' (str) and 'sources' (list of dicts).
-    history is a list of WorkspaceMessage objects (already alternating user/assistant).
+
+def _score_item(item, direct_terms: set[str], synonym_terms: set[str]) -> int:
+    """Score an IntelligenceItem for relevance to the query terms."""
+    score = 0
+
+    def _hits(text: str, terms: set[str], weight: int) -> int:
+        t = text.lower()
+        return sum(weight for term in terms if term in t)
+
+    # Title
+    score += _hits(item.title, direct_terms, 10)
+    score += _hits(item.title, synonym_terms, 4)
+
+    # Tags
+    for tag in item.tags:
+        score += _hits(tag.name, direct_terms, 8)
+        score += _hits(tag.name, synonym_terms, 3)
+
+    # Description
+    if item.description:
+        score += _hits(item.description, direct_terms, 5)
+        score += _hits(item.description, synonym_terms, 2)
+
+    # Text content (count occurrences, cap to avoid noise from repeated words)
+    if item.text_content:
+        tl = item.text_content.lower()
+        for term in direct_terms:
+            count = min(tl.count(term), 20)
+            if count:
+                score += count  # 1 pt per hit
+                if term in tl[:1000]:
+                    score += 2   # position bonus
+        for term in synonym_terms:
+            count = min(tl.count(term), 10)
+            if count:
+                score += max(1, count // 2)
+                if term in tl[:1000]:
+                    score += 1
+
+    return score
+
+
+def _extract_snippet(text: str, terms: set[str], window: int = 2000) -> str:
+    """Return a text window centred on the first keyword hit."""
+    tl = text.lower()
+    best = len(text)
+    for term in terms:
+        pos = tl.find(term)
+        if 0 <= pos < best:
+            best = pos
+    if best == len(text):
+        best = 0  # no match — start from beginning
+    start = max(0, best - 200)
+    end = min(len(text), start + window)
+    snippet = text[start:end]
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(text):
+        snippet += "…"
+    return snippet
+
+
+def build_workspace_context(project, query: str, processed_folder: str) -> dict:
+    """Assemble context for a Workspace Claude call driven by the user's query.
+
+    Returns:
+        content_blocks  — list of image dicts ready to prepend to the Claude user message
+        index_map       — {idx: {drawing_id, filename, page}} for citation extraction
+        text_context    — assembled text block describing loaded documents
+        used_fallback   — True if no strong matches found and generic context was used
     """
-    import anthropic
-    from search import CLAUDE_MODEL, _load_and_shrink, MAX_IMAGES_PER_REQUEST, _extract_sources
+    from search import _load_and_shrink
 
-    client = anthropic.Anthropic(api_key=api_key)
+    # 1. Synonym expansion
+    direct_terms, synonym_terms = expand_query_terms(query)
 
-    # Build scope prefix
-    scope_items = project.work_scope_list
-    scope_parts = []
-    if scope_items:
-        prompt_scope = list(scope_items)
-        if _LEAD_TRIGGER_SCOPES.intersection(set(scope_items)) and "Lead Abatement" not in scope_items:
-            prompt_scope.append("Lead Abatement")
-        scope_parts.append("Work scope: " + ", ".join(prompt_scope))
-    if project.scope_details:
-        scope_parts.append("Scope details: " + project.scope_details)
-
-    # Build library context (text only)
-    lib_items = (
+    # 2. Fetch all candidate items (project-scoped + global)
+    candidates = (
         IntelligenceItem.query
         .filter_by(auto_include_in_search=True)
         .filter(
@@ -464,67 +531,170 @@ def _call_workspace(project, history, user_message, api_key, processed_folder):
         )
         .all()
     )
-    lib_parts = []
-    for it in lib_items:
-        entry = f"- {it.title}"
-        if it.description:
-            entry += f": {it.description}"
-        if it.text_content:
-            entry += f"\n  {it.text_content[:400]}"
-        lib_parts.append(entry)
 
-    # Load up to MAX_IMAGES_PER_REQUEST ready drawing pages as images
-    pages = (
-        db.session.query(DrawingPage, Drawing)
-        .join(Drawing, DrawingPage.drawing_id == Drawing.id)
-        .filter(Drawing.project_id == project.id, Drawing.status == "ready")
-        .order_by(Drawing.original_filename, DrawingPage.page_number)
-        .limit(MAX_IMAGES_PER_REQUEST)
-        .all()
+    # 3. Score and rank
+    scored = sorted(
+        [(item, _score_item(item, direct_terms, synonym_terms)) for item in candidates],
+        key=lambda x: -x[1],
     )
-    content = []
-    index_map = {}
-    for idx, (page, drawing) in enumerate(pages, start=1):
-        abs_path = os.path.join(processed_folder, page.image_path)
-        try:
-            data = _load_and_shrink(abs_path)
-        except Exception:
-            continue
-        label = f"INDEX {idx}: {drawing.original_filename} — page {page.page_number}"
-        index_map[idx] = {
-            "drawing_id": drawing.id,
-            "filename": drawing.original_filename,
-            "page": page.page_number,
-        }
-        content.append({"type": "text", "text": label})
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": "image/jpeg", "data": data},
-        })
+    top_scored = [(item, s) for item, s in scored if s > 0][:_CTX_MAX_TEXT_ITEMS]
+    max_score = top_scored[0][1] if top_scored else 0
 
-    # Assemble text context block appended to the user message
+    # 4. Drawing inclusion heuristic
+    drawing_matches = [(item, s) for item, s in top_scored if item.drawing_id]
+    text_matches    = [(item, s) for item, s in top_scored if not item.drawing_id]
+    used_fallback = max_score < _CTX_FALLBACK_THRESHOLD
+
+    content_blocks: list[dict] = []
+    index_map: dict[int, dict] = {}
+    idx = 0
+
+    if used_fallback:
+        # No strong signal — load first N generic drawing pages + recent library items
+        pages = (
+            db.session.query(DrawingPage, Drawing)
+            .join(Drawing, DrawingPage.drawing_id == Drawing.id)
+            .filter(Drawing.project_id == project.id, Drawing.status == "ready")
+            .order_by(Drawing.original_filename, DrawingPage.page_number)
+            .limit(_CTX_MAX_FALLBACK_IMAGES)
+            .all()
+        )
+        for page, drawing in pages:
+            abs_path = os.path.join(processed_folder, page.image_path)
+            try:
+                data = _load_and_shrink(abs_path)
+            except Exception:
+                continue
+            idx += 1
+            label = f"INDEX {idx}: {drawing.original_filename} — page {page.page_number}"
+            index_map[idx] = {"drawing_id": drawing.id, "filename": drawing.original_filename, "page": page.page_number}
+            content_blocks.append({"type": "text", "text": label})
+            content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+        # Use all scored items for text context when falling back (top 6, any score)
+        fallback_text_items = [item for item, _ in scored[:6]]
+    else:
+        fallback_text_items = []
+        # Load JPEGs for drawing-linked matches
+        if drawing_matches:
+            target_ids = {item.drawing_id for item, _ in drawing_matches if item.drawing_id}
+            draw_pages = (
+                db.session.query(DrawingPage, Drawing)
+                .join(Drawing, DrawingPage.drawing_id == Drawing.id)
+                .filter(Drawing.id.in_(target_ids), Drawing.status == "ready")
+                .order_by(Drawing.original_filename, DrawingPage.page_number)
+                .all()
+            )
+            for page, drawing in draw_pages:
+                if idx >= _CTX_MAX_SMART_IMAGES:
+                    break
+                abs_path = os.path.join(processed_folder, page.image_path)
+                try:
+                    data = _load_and_shrink(abs_path)
+                except Exception:
+                    continue
+                idx += 1
+                label = f"INDEX {idx}: {drawing.original_filename} — page {page.page_number}"
+                index_map[idx] = {"drawing_id": drawing.id, "filename": drawing.original_filename, "page": page.page_number}
+                content_blocks.append({"type": "text", "text": label})
+                content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+
+    images_count = idx
+
+    # 5. Build text context block
+    scope_items = project.work_scope_list
+    scope_line = ""
+    if scope_items:
+        prompt_scope = list(scope_items)
+        if _LEAD_TRIGGER_SCOPES.intersection(set(scope_items)) and "Lead Abatement" not in scope_items:
+            prompt_scope.append("Lead Abatement")
+        scope_line = "Work scope: " + ", ".join(prompt_scope)
+
     ctx_lines = [f"Project: {project.name}"]
-    if scope_parts:
-        ctx_lines.extend(scope_parts)
-    if lib_parts:
-        ctx_lines.append("Intelligence Library entries:\n" + "\n".join(lib_parts))
+    if scope_line:
+        ctx_lines.append(scope_line)
+    if project.scope_details:
+        ctx_lines.append(f"Scope details: {project.scope_details}")
+
+    search_terms_str = ", ".join(sorted(direct_terms)[:8])
+    if not used_fallback:
+        ctx_lines.append(f"\nCONTEXT — loaded for query terms: {search_terms_str}")
+    else:
+        ctx_lines.append(f"\nCONTEXT — generic load (no strong keyword match for: {search_terms_str})")
+
+    text_items_for_ctx = [item for item, _ in top_scored] if not used_fallback else fallback_text_items
+    if text_items_for_ctx:
+        ctx_lines.append("")
+        all_terms = direct_terms | synonym_terms
+        for rank, item in enumerate(text_items_for_ctx):
+            scope_tag = "GLOBAL" if item.project_id is None else "PROJECT"
+            header = f"[{scope_tag}] {item.original_filename or item.title}"
+            if item.drawing_id and index_map:
+                # Find the INDEX number for this drawing
+                img_indices = [str(k) for k, v in index_map.items() if v["drawing_id"] == item.drawing_id]
+                img_ref = f" — image{'s' if len(img_indices) > 1 else ''} INDEX {', '.join(img_indices)}" if img_indices else ""
+                header += img_ref
+            ctx_lines.append(header)
+            if item.text_content:
+                max_chars = _CTX_SNIPPET_CHARS_TOP if rank < 5 else _CTX_SNIPPET_CHARS_LOW
+                snippet = _extract_snippet(item.text_content, all_terms, max_chars)
+                ctx_lines.append(snippet)
+            elif item.description:
+                ctx_lines.append(item.description[:300])
+            ctx_lines.append("")
+    else:
+        ctx_lines.append("\n(No matching documents found in this project's library.)")
+
     if index_map:
         ctx_lines.append(
-            f"\n{len(index_map)} project drawing page(s) are shown above as images. "
-            "Each is preceded by an INDEX label. Cite relevant drawings with [INDEX N]."
+            f"{images_count} drawing page(s) shown as images above. "
+            "Cite with [INDEX N] format."
         )
     else:
-        ctx_lines.append("\nNo ready drawings found for this project yet.")
-    ctx_lines.append(f"\nUser question: {user_message}")
-    content.append({"type": "text", "text": "\n".join(ctx_lines)})
+        ctx_lines.append("No drawing images loaded for this question.")
 
-    # Build messages array: clean history (alternating, end with assistant) + new user turn
+    text_context = "\n".join(ctx_lines)
+
+    # 6. Log
+    items_count = len(text_items_for_ctx)
+    print(
+        f"[workspace_ctx] project={project.name!r} query={query[:60]!r} → "
+        f"{items_count} text items + {images_count} images (fallback={used_fallback})",
+        flush=True,
+    )
+
+    return {
+        "content_blocks": content_blocks,
+        "index_map": index_map,
+        "text_context": text_context,
+        "used_fallback": used_fallback,
+    }
+
+
+def _call_workspace(project, history, user_message, api_key, processed_folder):
+    """Call Claude for a Workspace chat turn.
+
+    Returns dict with 'answer' (str) and 'sources' (list of dicts).
+    history is a list of WorkspaceMessage objects (already alternating user/assistant).
+    """
+    import anthropic
+    from search import CLAUDE_MODEL, _extract_sources
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Build context driven by the user's query
+    ctx = build_workspace_context(project, user_message, processed_folder)
+
+    # User message content: images first (if any), then text context + question
+    content = list(ctx["content_blocks"])
+    content.append({"type": "text", "text": ctx["text_context"] + f"\n\nUser question: {user_message}"})
+
+    # Build messages array: clean history (alternating, start with user) + new turn
     clean = list(history)
     while clean and clean[-1].role == "user":
-        clean.pop()   # drop orphaned user msg (assistant response never saved)
+        clean.pop()
     while clean and clean[0].role == "assistant":
-        clean.pop(0)  # guard: history must start with user
-    clean = clean[-20:]  # cap at last 10 exchanges
+        clean.pop(0)
+    clean = clean[-20:]
 
     api_messages = [{"role": m.role, "content": m.content} for m in clean]
     api_messages.append({"role": "user", "content": content})
@@ -537,7 +707,7 @@ def _call_workspace(project, history, user_message, api_key, processed_folder):
             messages=api_messages,
         )
         answer = response.content[0].text
-        sources = _extract_sources(answer, index_map)
+        sources = _extract_sources(answer, ctx["index_map"])
         return {"answer": answer, "sources": sources}
     except Exception as exc:
         print(f"[powerscan] workspace API error: {exc}", flush=True)
