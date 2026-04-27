@@ -877,61 +877,102 @@ def backfill_content_hashes(library_folder):
     print(f"[backfill_content_hashes] hashed {hashed} of {total} items")
 
 
-def backfill_drawings_to_library(upload_folder):
+def backfill_drawings_to_library(upload_folder, api_key):
     """Idempotent: create a paired IntelligenceItem for every Drawing that lacks one.
 
-    Attempts text extraction from the source PDF in UPLOAD_FOLDER. For actual
-    drawings where extraction yields nothing, the item is still created so users
-    can see all drawings via Library browse and so the backfill doesn't re-run them.
+    Classifies each Drawing's source PDF first (same classifier used by Library bulk
+    upload) then branches:
+      - TEXT pipeline  → run pypdf extraction, store text_content
+      - DRAWING pipeline → create item with text_content=None (vision-only)
+      - QUOTE or unexpected → skip with warning
+
+    Per-drawing transactions ensure partial success survives errors or restarts.
     """
+    if not api_key:
+        print("[backfill] no ANTHROPIC_API_KEY configured — drawings backfill skipped (will retry on next startup with key set)", flush=True)
+        return
+
+    # Load orphans and immediately snapshot to plain dicts so SQLAlchemy session
+    # expiry / rollback across iterations cannot cause DetachedInstanceError.
     linked_ids = (
         db.session.query(IntelligenceItem.drawing_id)
         .filter(IntelligenceItem.drawing_id.isnot(None))
         .subquery()
     )
-    orphans = Drawing.query.filter(Drawing.id.notin_(linked_ids)).all()
+    orphan_rows = Drawing.query.filter(Drawing.id.notin_(linked_ids)).all()
+    orphans = [
+        {
+            "id": d.id,
+            "original_filename": d.original_filename,
+            "src_filename": d.filename,
+            "project_id": d.project_id,
+            "uploaded_by": d.uploaded_by,
+        }
+        for d in orphan_rows
+    ]
+    del orphan_rows  # free ORM objects; we work from plain dicts below
 
-    if not orphans:
-        return
+    total = len(orphans)
+    print(f"[backfill] starting: {total} drawings to process", flush=True)
 
-    print(f"[powerscan] backfill_drawings_to_library: {len(orphans)} drawings to process", flush=True)
-    created = 0
-    missing = 0
+    text_count = 0
+    drawing_count = 0
+    quote_skipped = 0
+    error_count = 0
 
-    for drawing in orphans:
-        file_path = os.path.join(upload_folder, drawing.filename)
-        ext = os.path.splitext(drawing.filename)[1].lower()
-        if os.path.isfile(file_path):
-            text = extract_text_from_file(file_path, ext)
-        else:
-            text = None
-            missing += 1
-            print(
-                f"[powerscan] backfill_drawings_to_library: PDF missing on disk "
-                f"for drawing {drawing.id} ({drawing.original_filename})",
-                flush=True,
+    for n, d in enumerate(orphans, start=1):
+        label = f"{n}/{total} {d['original_filename']}"
+        try:
+            file_path = os.path.join(upload_folder, d["src_filename"])
+            if not os.path.isfile(file_path):
+                print(f"[backfill] {label} → ERROR: source PDF not found at {file_path}", flush=True)
+                error_count += 1
+                continue
+
+            classification = _classify_file_pipeline(api_key, file_path, d["original_filename"])
+            pipeline = classification.get("processing_pipeline", "text")
+
+            if pipeline == "quote":
+                print(f"[backfill] {label} → QUOTE-skipped (unexpected in drawings pipeline)", flush=True)
+                quote_skipped += 1
+                continue
+
+            if pipeline == "drawing":
+                text_content = None
+                print(f"[backfill] {label} → DRAWING → vision-only", flush=True)
+                drawing_count += 1
+            else:
+                ext = os.path.splitext(d["src_filename"])[1].lower()
+                text_content = extract_text_from_file(file_path, ext)
+                chars = len(text_content) if text_content else 0
+                print(f"[backfill] {label} → TEXT → extracted {chars} chars", flush=True)
+                text_count += 1
+
+            item = IntelligenceItem(
+                title=os.path.splitext(d["original_filename"])[0],
+                entry_type="text",
+                text_content=text_content,
+                original_filename=d["original_filename"],
+                project_id=d["project_id"],
+                auto_include_in_search=True,
+                uploaded_by=d["uploaded_by"],
+                drawing_id=d["id"],
             )
-
-        item = IntelligenceItem(
-            title=os.path.splitext(drawing.original_filename)[0],
-            entry_type="text",
-            text_content=text,
-            original_filename=drawing.original_filename,
-            project_id=drawing.project_id,
-            auto_include_in_search=True,
-            uploaded_by=drawing.uploaded_by,
-            drawing_id=drawing.id,
-        )
-        db.session.add(item)
-        created += 1
-
-        if created % 50 == 0:
+            db.session.add(item)
             db.session.commit()
 
-    db.session.commit()
+        except Exception as exc:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            print(f"[backfill] {label} → ERROR: {type(exc).__name__}: {exc}", flush=True)
+            error_count += 1
+
     print(
-        f"[powerscan] backfill_drawings_to_library: created {created} library items "
-        f"({missing} source PDFs not found on disk)",
+        f"[backfill] complete: {total} drawings processed → "
+        f"{text_count} TEXT (extracted) + {drawing_count} DRAWING (vision-only) + "
+        f"{quote_skipped} QUOTE-skipped + {error_count} errors",
         flush=True,
     )
 
@@ -1172,7 +1213,7 @@ def create_app():
         # Compute SHA-256 content hashes for existing library files
         backfill_content_hashes(app.config["LIBRARY_FOLDER"])
         # Create paired Library items for any drawings that lack one (Phase 3C Part A)
-        backfill_drawings_to_library(app.config["UPLOAD_FOLDER"])
+        backfill_drawings_to_library(app.config["UPLOAD_FOLDER"], app.config.get("ANTHROPIC_API_KEY", ""))
         # Drop the legacy feedback table (Share Idea feature removed)
         _drop_feedback_table()
 
@@ -2465,12 +2506,13 @@ def create_app():
                         db.session.flush()
                         drawing_ids.append(drawing.id)
                         # Silently create a paired Library item for text search.
+                        # Classifier already identified this as a drawing so pypdf
+                        # would yield nothing useful — store vision-only (text_content=None).
                         # Not added to library_saved_ids so it doesn't appear in bulk review.
-                        _extracted = extract_text_from_file(drawing_dest, ext)
                         _lib_item = IntelligenceItem(
                             title=os.path.splitext(f.filename)[0],
                             entry_type="text",
-                            text_content=_extracted,
+                            text_content=None,
                             original_filename=f.filename,
                             project_id=project_id,
                             auto_include_in_search=True,
