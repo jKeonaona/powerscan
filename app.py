@@ -220,6 +220,8 @@ def _run_migrations(database):
         ("workspace_message", "thread_id", "INTEGER"),
         # Phase 3C Part A: drawings linked to Library
         ("intelligence_item", "drawing_id", "INTEGER"),
+        # Backfill tombstone: skip resurrecting Library entries the user deliberately deleted
+        ("drawing", "library_backfill_skip", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -1207,7 +1209,10 @@ def backfill_drawings_to_library(upload_folder, api_key):
         .filter(IntelligenceItem.drawing_id.isnot(None))
         .subquery()
     )
-    orphan_rows = Drawing.query.filter(Drawing.id.notin_(linked_ids)).all()
+    orphan_rows = Drawing.query.filter(
+        Drawing.id.notin_(linked_ids),
+        Drawing.library_backfill_skip == False,  # noqa: E712
+    ).all()
     orphans = [
         {
             "id": d.id,
@@ -3317,6 +3322,10 @@ def create_app():
             proj = db.session.get(Project, item.project_id)
             if proj and proj.company_id != current_user.company_id:
                 abort(403)
+        if item.drawing_id:
+            drawing = db.session.get(Drawing, item.drawing_id)
+            if drawing:
+                drawing.library_backfill_skip = True
         if item.file_path:
             fpath = os.path.join(app.config["LIBRARY_FOLDER"], item.file_path)
             if os.path.exists(fpath):

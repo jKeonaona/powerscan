@@ -196,6 +196,9 @@ class Drawing(db.Model):
     pages_processed = db.Column(db.Integer, default=0)
     status = db.Column(db.String(20), default="pending")  # pending, processing, ready, failed
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # When True, backfill_drawings_to_library skips this drawing (its Library entry was deliberately deleted).
+    # To un-tombstone: UPDATE drawing SET library_backfill_skip = 0 WHERE id = <id>;
+    library_backfill_skip = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
 
     uploader = db.relationship("User", backref="drawings")
     pages = db.relationship("DrawingPage", backref="drawing", cascade="all, delete-orphan")
