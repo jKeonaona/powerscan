@@ -81,3 +81,13 @@ def expand_query_terms(query: str) -> tuple[set[str], set[str]]:
                 break
 
     return direct, synonyms - direct
+
+
+STOPWORDS: set[str] = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "should",
+    "could", "what", "who", "where", "when", "why", "how", "of", "in",
+    "on", "for", "to", "and", "or", "but", "by", "with", "from", "at",
+    "as", "this", "that", "these", "those", "i", "you", "he", "she", "it",
+    "we", "they", "me", "him", "her", "us", "them",
+}

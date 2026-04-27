@@ -33,7 +33,7 @@ from search import search_drawings
 from calculations import calculate_painting_quantities, has_any_inputs
 from xlsm_importer import parse_estimate_workbook
 from library_text_extractor import extract_text_from_file, backfill_library_text_content
-from synonyms import expand_query_terms
+from synonyms import expand_query_terms, STOPWORDS
 
 
 CCC_ADMIN_SEEDS = [
@@ -427,7 +427,7 @@ _WORKSPACE_SYSTEM_PROMPT = (
     "direct, useful answers. No waffling.\n\n"
     "Citation format: cite inline immediately after the sentence, using [filename.pdf p.47] for "
     "page-specific text references or [filename.pdf] for general document references. "
-    "For drawing images shown above, use the INDEX label: [INDEX 3]. "
+    "For drawing images shown above, cite using [filename p.N] format (e.g. [bridge-plans.pdf p.3]). "
     "Put citations right after the sentence they support, not at the end of a paragraph.\n\n"
     "The user may ask questions across sessions; treat conversation history as context they expect "
     "you to remember. Be concise. Use plain language. These are working professionals — clarity "
@@ -441,7 +441,7 @@ _CTX_MAX_SMART_IMAGES = 10     # max drawing pages for query-targeted inclusion
 _CTX_MAX_FALLBACK_IMAGES = 6   # max drawing pages for fallback (untargeted)
 _CTX_SNIPPET_CHARS_TOP = 3000  # chars per item for top-ranked text matches
 _CTX_SNIPPET_CHARS_LOW = 400   # chars for lower-priority items (title + opening)
-_CTX_FALLBACK_THRESHOLD = 4    # min score to bypass fallback; below this → generic load
+_CTX_FALLBACK_THRESHOLD = 8    # min score to bypass fallback; below this → generic load
 
 
 def _score_item(item, direct_terms: set[str], synonym_terms: set[str]) -> int:
@@ -516,13 +516,21 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
     """
     from search import _load_and_shrink
 
-    # 1. Synonym expansion
+    # 1. Synonym expansion + stopword filter
     direct_terms, synonym_terms = expand_query_terms(query)
+    direct_terms = {t for t in direct_terms if t not in STOPWORDS}
+    synonym_terms = {t for t in synonym_terms if t not in STOPWORDS}
+
+    # If the query contained only stopwords there are no real keywords to match on
+    if not direct_terms:
+        # Skip scoring; go straight to fallback path below
+        _empty_query_fallback = True
+    else:
+        _empty_query_fallback = False
 
     # 2. Fetch all candidate items (project-scoped + global)
     candidates = (
         IntelligenceItem.query
-        .filter_by(auto_include_in_search=True)
         .filter(
             db.or_(
                 IntelligenceItem.project_id.is_(None),
@@ -543,7 +551,7 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
     # 4. Drawing inclusion heuristic
     drawing_matches = [(item, s) for item, s in top_scored if item.drawing_id]
     text_matches    = [(item, s) for item, s in top_scored if not item.drawing_id]
-    used_fallback = max_score < _CTX_FALLBACK_THRESHOLD
+    used_fallback = _empty_query_fallback or max_score < _CTX_FALLBACK_THRESHOLD
 
     content_blocks: list[dict] = []
     index_map: dict[int, dict] = {}
@@ -566,7 +574,7 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
             except Exception:
                 continue
             idx += 1
-            label = f"INDEX {idx}: {drawing.original_filename} — page {page.page_number}"
+            label = f"{drawing.original_filename} — page {page.page_number}"
             index_map[idx] = {"drawing_id": drawing.id, "filename": drawing.original_filename, "page": page.page_number}
             content_blocks.append({"type": "text", "text": label})
             content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
@@ -593,7 +601,7 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
                 except Exception:
                     continue
                 idx += 1
-                label = f"INDEX {idx}: {drawing.original_filename} — page {page.page_number}"
+                label = f"{drawing.original_filename} — page {page.page_number}"
                 index_map[idx] = {"drawing_id": drawing.id, "filename": drawing.original_filename, "page": page.page_number}
                 content_blocks.append({"type": "text", "text": label})
                 content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
@@ -629,10 +637,14 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
             scope_tag = "GLOBAL" if item.project_id is None else "PROJECT"
             header = f"[{scope_tag}] {item.original_filename or item.title}"
             if item.drawing_id and index_map:
-                # Find the INDEX number for this drawing
-                img_indices = [str(k) for k, v in index_map.items() if v["drawing_id"] == item.drawing_id]
-                img_ref = f" — image{'s' if len(img_indices) > 1 else ''} INDEX {', '.join(img_indices)}" if img_indices else ""
-                header += img_ref
+                # Find the pages loaded for this drawing and build citation hints
+                pages_for_drawing = sorted(
+                    v["page"] for v in index_map.values() if v["drawing_id"] == item.drawing_id
+                )
+                if pages_for_drawing:
+                    fname = item.original_filename or item.title
+                    cite_refs = ", ".join(f"[{fname} p.{p}]" for p in pages_for_drawing)
+                    header += f" — images loaded: {cite_refs}"
             ctx_lines.append(header)
             if item.text_content:
                 max_chars = _CTX_SNIPPET_CHARS_TOP if rank < 5 else _CTX_SNIPPET_CHARS_LOW
@@ -647,7 +659,7 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
     if index_map:
         ctx_lines.append(
             f"{images_count} drawing page(s) shown as images above. "
-            "Cite with [INDEX N] format."
+            "Cite drawings using [filename p.N] format."
         )
     else:
         ctx_lines.append("No drawing images loaded for this question.")
