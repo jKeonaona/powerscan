@@ -170,11 +170,11 @@
                             <i class="bi bi-download"></i>
                         </a>
                         {% endif %}
-                        {% if current_user.is_admin and (item.project_id is not none or current_user.role in ('admin', 'superadmin')) %}
                         <a href="{{ url_for('library_edit', item_id=item.id) }}"
                            class="btn btn-sm btn-outline-primary me-1">
                             <i class="bi bi-pencil"></i>
                         </a>
+                        {% if item.project_id is not none or current_user.role in ('admin', 'superadmin') %}
                         <form method="POST" action="{{ url_for('library_delete', item_id=item.id) }}"
                               class="d-inline" onsubmit="return confirm('Delete this entry?')">
                             <button type="submit" class="btn btn-sm btn-outline-danger">

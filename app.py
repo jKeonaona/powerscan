@@ -3250,11 +3250,8 @@ def create_app():
 
     @app.route("/library/<int:item_id>/edit", methods=["GET", "POST"])
     @login_required
-    @admin_required
     def library_edit(item_id):
         item = db.session.get(IntelligenceItem, item_id) or abort(404)
-        if item.project_id is None and current_user.role not in (ROLE_ADMIN, ROLE_SUPERADMIN):
-            abort(403)
         if not current_user.is_superadmin and item.project_id:
             proj = db.session.get(Project, item.project_id)
             if proj and proj.company_id != current_user.company_id:
@@ -3312,7 +3309,6 @@ def create_app():
 
     @app.route("/library/<int:item_id>/delete", methods=["POST"])
     @login_required
-    @admin_required
     def library_delete(item_id):
         item = db.session.get(IntelligenceItem, item_id) or abort(404)
         if item.project_id is None and current_user.role not in (ROLE_ADMIN, ROLE_SUPERADMIN):
