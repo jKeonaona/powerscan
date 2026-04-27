@@ -25,7 +25,7 @@
 
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2><i class="bi bi-lightbulb"></i> Intelligence Library</h2>
-        {% if filtered_project and current_user.is_admin %}
+        {% if filtered_project %}
         <a href="{{ url_for('library_add_for_project', project_id=filtered_project.id) }}" class="btn btn-primary">
             <i class="bi bi-plus-lg"></i> Add to Library
         </a>
@@ -132,7 +132,14 @@
                         {% if item.project %}{{ item.project.name }}{% else %}<span class="text-muted">Global</span>{% endif %}
                     </td>
                     <td>
-                        {% if item.entry_type == 'file' %}
+                        {% if item.drawing_id %}
+                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle"><i class="bi bi-file-image"></i> Drawing</span>
+                        {% if item.text_content %}
+                        <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-1">Text extracted</span>
+                        {% else %}
+                        <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle ms-1">Image only</span>
+                        {% endif %}
+                        {% elif item.entry_type == 'file' %}
                         <span class="badge bg-secondary"><i class="bi bi-paperclip"></i> File</span>
                         {% if item.text_content %}
                         <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-1">Text extracted</span>
@@ -152,12 +159,18 @@
                     </td>
                     <td class="small text-muted text-nowrap">{{ item.created_at.strftime('%b %d, %Y') }}</td>
                     <td class="text-nowrap">
-                        {% if item.entry_type == 'file' and item.file_path %}
+                        {% if item.drawing_id %}
+                        <a href="{{ url_for('drawing_detail', drawing_id=item.drawing_id) }}"
+                           class="btn btn-sm btn-outline-secondary me-1" title="View Drawing">
+                            <i class="bi bi-file-image"></i>
+                        </a>
+                        {% elif item.entry_type == 'file' and item.file_path %}
                         <a href="{{ url_for('library_download', item_id=item.id) }}"
                            class="btn btn-sm btn-outline-secondary me-1" title="Download">
                             <i class="bi bi-download"></i>
                         </a>
                         {% endif %}
+                        {% if current_user.is_admin %}
                         <a href="{{ url_for('library_edit', item_id=item.id) }}"
                            class="btn btn-sm btn-outline-primary me-1">
                             <i class="bi bi-pencil"></i>
@@ -168,6 +181,7 @@
                                 <i class="bi bi-trash"></i>
                             </button>
                         </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}

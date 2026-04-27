@@ -320,11 +320,14 @@ class IntelligenceItem(db.Model):
     shortlisted_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
     shortlisted_bid_id = db.Column(db.Integer, nullable=True)       # reserved for v2 Bid layer
     shortlisted_scope_option = db.Column(db.String(100), nullable=True)  # reserved for v2
+    # Link back to the Drawing that sourced this item (drawing-pipeline uploads only)
+    drawing_id = db.Column(db.Integer, db.ForeignKey("drawing.id"), nullable=True, index=True)
 
     project = db.relationship("Project", backref=db.backref("intelligence_items", cascade="all, delete-orphan"))
     uploader = db.relationship("User", foreign_keys=[uploaded_by], backref="intelligence_items")
     shortlister = db.relationship("User", foreign_keys=[shortlisted_by], backref="shortlisted_items")
     tags = db.relationship("IntelligenceTag", secondary=intelligence_item_tags, backref="items")
+    drawing = db.relationship("Drawing", foreign_keys=[drawing_id], backref=db.backref("library_item", uselist=False))
 
     @property
     def work_scope_list(self):

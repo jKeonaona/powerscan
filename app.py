@@ -216,6 +216,8 @@ def _run_migrations(database):
         ("takeoff", "shifts_per_day", "INTEGER"),
         # Workspace threads
         ("workspace_message", "thread_id", "INTEGER"),
+        # Phase 3C Part A: drawings linked to Library
+        ("intelligence_item", "drawing_id", "INTEGER"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -227,6 +229,13 @@ def _run_migrations(database):
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_intelligence_item_content_hash "
             "ON intelligence_item(content_hash)"
+        )
+    except Exception:
+        pass
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intelligence_item_drawing_id "
+            "ON intelligence_item(drawing_id)"
         )
     except Exception:
         pass
@@ -868,6 +877,65 @@ def backfill_content_hashes(library_folder):
     print(f"[backfill_content_hashes] hashed {hashed} of {total} items")
 
 
+def backfill_drawings_to_library(upload_folder):
+    """Idempotent: create a paired IntelligenceItem for every Drawing that lacks one.
+
+    Attempts text extraction from the source PDF in UPLOAD_FOLDER. For actual
+    drawings where extraction yields nothing, the item is still created so users
+    can see all drawings via Library browse and so the backfill doesn't re-run them.
+    """
+    linked_ids = (
+        db.session.query(IntelligenceItem.drawing_id)
+        .filter(IntelligenceItem.drawing_id.isnot(None))
+        .subquery()
+    )
+    orphans = Drawing.query.filter(Drawing.id.notin_(linked_ids)).all()
+
+    if not orphans:
+        return
+
+    print(f"[powerscan] backfill_drawings_to_library: {len(orphans)} drawings to process", flush=True)
+    created = 0
+    missing = 0
+
+    for drawing in orphans:
+        file_path = os.path.join(upload_folder, drawing.filename)
+        ext = os.path.splitext(drawing.filename)[1].lower()
+        if os.path.isfile(file_path):
+            text = extract_text_from_file(file_path, ext)
+        else:
+            text = None
+            missing += 1
+            print(
+                f"[powerscan] backfill_drawings_to_library: PDF missing on disk "
+                f"for drawing {drawing.id} ({drawing.original_filename})",
+                flush=True,
+            )
+
+        item = IntelligenceItem(
+            title=os.path.splitext(drawing.original_filename)[0],
+            entry_type="text",
+            text_content=text,
+            original_filename=drawing.original_filename,
+            project_id=drawing.project_id,
+            auto_include_in_search=True,
+            uploaded_by=drawing.uploaded_by,
+            drawing_id=drawing.id,
+        )
+        db.session.add(item)
+        created += 1
+
+        if created % 50 == 0:
+            db.session.commit()
+
+    db.session.commit()
+    print(
+        f"[powerscan] backfill_drawings_to_library: created {created} library items "
+        f"({missing} source PDFs not found on disk)",
+        flush=True,
+    )
+
+
 def _drop_feedback_table():
     """Idempotent: drop the legacy feedback table if it still exists in the database."""
     try:
@@ -1103,6 +1171,8 @@ def create_app():
         backfill_takeoff_scopes()
         # Compute SHA-256 content hashes for existing library files
         backfill_content_hashes(app.config["LIBRARY_FOLDER"])
+        # Create paired Library items for any drawings that lack one (Phase 3C Part A)
+        backfill_drawings_to_library(app.config["UPLOAD_FOLDER"])
         # Drop the legacy feedback table (Share Idea feature removed)
         _drop_feedback_table()
 
@@ -2329,14 +2399,12 @@ def create_app():
 
     @app.route("/library/add")
     @login_required
-    @admin_required
     def library_add():
         flash("Open a project to add entries to its library.", "info")
         return redirect(url_for("intelligence_library"))
 
     @app.route("/projects/<int:project_id>/library/add", methods=["GET", "POST"])
     @login_required
-    @admin_required
     def library_add_for_project(project_id):
         project = db.session.get(Project, project_id)
         if not project:
@@ -2396,6 +2464,21 @@ def create_app():
                         db.session.add(drawing)
                         db.session.flush()
                         drawing_ids.append(drawing.id)
+                        # Silently create a paired Library item for text search.
+                        # Not added to library_saved_ids so it doesn't appear in bulk review.
+                        _extracted = extract_text_from_file(drawing_dest, ext)
+                        _lib_item = IntelligenceItem(
+                            title=os.path.splitext(f.filename)[0],
+                            entry_type="text",
+                            text_content=_extracted,
+                            original_filename=f.filename,
+                            project_id=project_id,
+                            auto_include_in_search=True,
+                            uploaded_by=current_user.id,
+                            drawing_id=drawing.id,
+                        )
+                        db.session.add(_lib_item)
+                        db.session.flush()
 
                     elif pipeline == "quote":
                         # Collect; will be batched below after the loop
@@ -2605,7 +2688,6 @@ def create_app():
 
     @app.route("/library/bulk-review/<batch_id>")
     @login_required
-    @admin_required
     def library_bulk_review(batch_id):
         batch_data = session.get(f"lib_batch_{batch_id}")
         item_ids = _batch_item_ids(batch_data)
@@ -2680,7 +2762,6 @@ def create_app():
 
     @app.route("/library/bulk-review/<batch_id>/save", methods=["POST"])
     @login_required
-    @admin_required
     def library_bulk_review_save(batch_id):
         batch_data = session.get(f"lib_batch_{batch_id}")
         item_ids = _batch_item_ids(batch_data)
@@ -2724,7 +2805,6 @@ def create_app():
 
     @app.route("/library/bulk-review/<batch_id>/discard", methods=["POST"])
     @login_required
-    @admin_required
     def library_bulk_review_discard(batch_id):
         batch_data = session.get(f"lib_batch_{batch_id}")
         item_ids = _batch_item_ids(batch_data)
@@ -2846,7 +2926,6 @@ def create_app():
 
     @app.route("/library/<int:item_id>/download")
     @login_required
-    @admin_required
     def library_download(item_id):
         item = db.session.get(IntelligenceItem, item_id) or abort(404)
         if not item.file_path:
@@ -3137,7 +3216,6 @@ def create_app():
 
     @app.route("/library/bulk-review/<lib_batch_id>/quote/<quote_batch_id>/accept", methods=["POST"])
     @login_required
-    @admin_required
     def library_bulk_review_quote_accept(lib_batch_id, quote_batch_id):
         batch = QuoteBatch.query.filter_by(batch_id=quote_batch_id).first() or abort(404)
         if not current_user.is_superadmin:
@@ -3156,7 +3234,6 @@ def create_app():
 
     @app.route("/library/bulk-review/<lib_batch_id>/quote/<quote_batch_id>/discard", methods=["POST"])
     @login_required
-    @admin_required
     def library_bulk_review_quote_discard(lib_batch_id, quote_batch_id):
         batch = QuoteBatch.query.filter_by(batch_id=quote_batch_id).first() or abort(404)
         if not current_user.is_superadmin:
@@ -3175,7 +3252,6 @@ def create_app():
 
     @app.route("/library/bulk-review/<lib_batch_id>/quotes/accept-all", methods=["POST"])
     @login_required
-    @admin_required
     def library_bulk_review_quotes_accept_all(lib_batch_id):
         batch_data = session.get(f"lib_batch_{lib_batch_id}")
         if not batch_data:
@@ -4280,133 +4356,24 @@ def create_app():
     @app.route("/projects/<int:project_id>/upload", methods=["GET", "POST"])
     @login_required
     def upload_drawing(project_id):
+        """Legacy upload path — redirected to Library add (Phase 3C Part A)."""
         project = db.session.get(Project, project_id) or abort(404)
         if not current_user.is_superadmin and current_user.company_id != project.company_id:
             abort(403)
-        return render_template(
-            "upload.html",
-            project=project,
-            doc_types=DOC_TYPES,
-            api_key_configured=bool(app.config.get("ANTHROPIC_API_KEY")),
-        )
+        return redirect(url_for("library_add_for_project", project_id=project_id))
 
     @app.route("/projects/<int:project_id>/upload-file", methods=["POST"])
     @login_required
     def upload_single_file(project_id):
-        """AJAX endpoint: accepts one PDF at a time, returns JSON."""
-        project = db.session.get(Project, project_id) or abort(404)
-        if not current_user.is_superadmin and current_user.company_id != project.company_id:
-            abort(403)
-
-        file = request.files.get("pdf_file")
-        if not file or not file.filename.lower().endswith(".pdf"):
-            return jsonify({"error": "Invalid file. Only PDFs are accepted."}), 400
-
-        replace = request.form.get("replace") == "1"
-        doc_type = request.form.get("doc_type", DEFAULT_DOC_TYPE)
-        if doc_type not in DOC_TYPES:
-            doc_type = DEFAULT_DOC_TYPE
-
-        # Check for duplicate filename in this project
-        existing = Drawing.query.filter_by(
-            project_id=project.id,
-            original_filename=file.filename,
-        ).first()
-
-        if existing and not replace:
-            return jsonify({
-                "duplicate": True,
-                "filename": file.filename,
-                "existing_id": existing.id,
-                "existing_status": existing.status,
-            }), 409
-
-        # If replacing, delete the old drawing
-        if existing and replace:
-            db.session.delete(existing)
-            db.session.commit()
-
-        ext = os.path.splitext(file.filename)[1]
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        file.save(os.path.join(app.config["UPLOAD_FOLDER"], unique_name))
-
-        drawing = Drawing(
-            filename=unique_name,
-            original_filename=file.filename,
-            project_id=project.id,
-            uploaded_by=current_user.id,
-            doc_type=doc_type,
-            status="pending",
-        )
-        db.session.add(drawing)
-        db.session.commit()
-
-        return jsonify({
-            "id": drawing.id,
-            "filename": file.filename,
-            "status": "pending",
-        })
+        """Legacy AJAX endpoint — no longer active (Phase 3C Part A)."""
+        return ("This upload endpoint is no longer active. Use the Intelligence Library.", 410)
 
     @app.route("/projects/<int:project_id>/classify-file", methods=["POST"])
     @login_required
     def classify_file(project_id):
-        """AJAX: receive a PDF, classify its first page with Claude Vision."""
-        import base64
-        from pdf2image import convert_from_bytes
-        from search import CLAUDE_MODEL
-        import anthropic as _anthropic
+        """Legacy classifier endpoint — no longer active (Phase 3C Part A)."""
+        return ("This endpoint is no longer active.", 410)
 
-        project = db.session.get(Project, project_id) or abort(404)
-        if not current_user.is_superadmin and current_user.company_id != project.company_id:
-            abort(403)
-
-        api_key = app.config.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return jsonify({"doc_type": DEFAULT_DOC_TYPE})
-
-        file = request.files.get("pdf_file")
-        if not file:
-            return jsonify({"doc_type": DEFAULT_DOC_TYPE})
-
-        try:
-            pdf_bytes = file.read()
-            images = convert_from_bytes(pdf_bytes, first_page=1, last_page=1, dpi=100)
-            if not images:
-                return jsonify({"doc_type": DEFAULT_DOC_TYPE})
-
-            from PIL import Image as _Image
-            img = images[0]
-            if img.width > 800:
-                ratio = 800 / img.width
-                img = img.resize((800, int(img.height * ratio)), _Image.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=75)
-            img_b64 = base64.standard_b64encode(buf.getvalue()).decode()
-
-            client = _anthropic.Anthropic(api_key=api_key)
-            resp = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=150,
-                messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
-                    {"type": "text", "text": _CLASSIFY_PIPELINE_PROMPT},
-                ]}],
-            )
-            raw = resp.content[0].text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
-            result = json.loads(raw)
-            doc_type = result.get("doc_type", DEFAULT_DOC_TYPE)
-            if doc_type not in DOC_TYPES:
-                doc_type = DEFAULT_DOC_TYPE
-            result["doc_type"] = doc_type
-            return jsonify(result)
-        except Exception as e:
-            print(f"[powerscan] classify_file error: {e}", flush=True)
-            return jsonify({"doc_type": DEFAULT_DOC_TYPE})
 
     @app.route("/drawings/<int:drawing_id>")
     @login_required
