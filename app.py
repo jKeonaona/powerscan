@@ -2,6 +2,7 @@ import csv as _csv
 import io
 import json
 import os
+import re
 import secrets
 import uuid
 from datetime import date, datetime, timezone
@@ -439,8 +440,8 @@ _WORKSPACE_SYSTEM_PROMPT = (
 _CTX_MAX_TEXT_ITEMS = 10       # max Library items included in text context
 _CTX_MAX_SMART_IMAGES = 10     # max drawing pages for query-targeted inclusion
 _CTX_MAX_FALLBACK_IMAGES = 6   # max drawing pages for fallback (untargeted)
-_CTX_SNIPPET_CHARS_TOP = 3000  # chars per item for top-ranked text matches
-_CTX_SNIPPET_CHARS_LOW = 400   # chars for lower-priority items (title + opening)
+_CTX_SNIPPET_CHARS_TOP = 8000  # total chars across all snippets for top-ranked items
+_CTX_SNIPPET_CHARS_LOW = 1500  # total chars for lower-priority items
 _CTX_FALLBACK_THRESHOLD = 8    # min score to bypass fallback; below this → generic load
 
 
@@ -466,43 +467,139 @@ def _score_item(item, direct_terms: set[str], synonym_terms: set[str]) -> int:
         score += _hits(item.description, direct_terms, 5)
         score += _hits(item.description, synonym_terms, 2)
 
-    # Text content (count occurrences, cap to avoid noise from repeated words)
+    # Text content — 3 pts per direct hit (capped 30), 1 pt per synonym hit (capped 15)
+    # A spec book with 30+ body mentions now outranks a single-line title match
     if item.text_content:
         tl = item.text_content.lower()
         for term in direct_terms:
-            count = min(tl.count(term), 20)
+            count = min(tl.count(term), 30)
             if count:
-                score += count  # 1 pt per hit
+                score += count * 3
                 if term in tl[:1000]:
-                    score += 2   # position bonus
+                    score += 2   # position bonus for front-of-doc appearance
         for term in synonym_terms:
-            count = min(tl.count(term), 10)
+            count = min(tl.count(term), 15)
             if count:
-                score += max(1, count // 2)
+                score += count
                 if term in tl[:1000]:
                     score += 1
 
     return score
 
 
-def _extract_snippet(text: str, terms: set[str], window: int = 2000) -> str:
-    """Return a text window centred on the first keyword hit."""
+_SECTION_HEADER_RE = re.compile(
+    r"^(?:§\s*\d[\d\-\.]*\b"          # § 3-1.05 / §3.1
+    r"|[A-Z][A-Z0-9 \t\-—]{4,49}$"    # ALL-CAPS heading, 5-50 chars
+    r"|(?:SECTION|Section)\s+\d"       # Section 3 / SECTION 3
+    r"|\d+(?:\.\d+)+\s+\w"            # 3.05 Bonding
+    r")",
+    re.MULTILINE,
+)
+
+
+def _find_section_start(text: str, pos: int, lookback: int = 1500) -> int:
+    """Walk backwards from pos looking for a recognisable section header.
+
+    Returns the character offset of the header line start if found within
+    lookback chars, otherwise returns max(0, pos - 500).
+    """
+    search_start = max(0, pos - lookback)
+    region = text[search_start:pos]
+    best_offset = None
+    for m in _SECTION_HEADER_RE.finditer(region):
+        # Keep the last (closest-to-pos) header match
+        best_offset = m.start()
+    if best_offset is not None:
+        # Snap to line start
+        line_start = region.rfind("\n", 0, best_offset)
+        char_offset = search_start + (best_offset if line_start == -1 else line_start + 1)
+        return char_offset
+    return max(0, pos - 500)
+
+
+def _extract_snippet(text: str, terms: set[str], budget: int = 2000) -> str:
+    """Return up to 3 cluster-ranked snippets totalling at most budget chars.
+
+    Algorithm:
+      1. Collect all match positions for every term.
+      2. Cluster positions within 1500 chars of each other.
+      3. Score each cluster by density × distinct-term-count.
+      4. Take top clusters; give a single dominant cluster more room.
+      5. For each cluster start, walk back to the nearest section header.
+      6. Concatenate snippets with a separator so Claude sees non-contiguous excerpts.
+    """
+    if not text:
+        return ""
+
     tl = text.lower()
-    best = len(text)
+
+    # 1. Collect all hit positions
+    positions: list[int] = []
     for term in terms:
-        pos = tl.find(term)
-        if 0 <= pos < best:
-            best = pos
-    if best == len(text):
-        best = 0  # no match — start from beginning
-    start = max(0, best - 200)
-    end = min(len(text), start + window)
-    snippet = text[start:end]
-    if start > 0:
-        snippet = "…" + snippet
-    if end < len(text):
-        snippet += "…"
-    return snippet
+        start = 0
+        while True:
+            idx = tl.find(term, start)
+            if idx == -1:
+                break
+            positions.append(idx)
+            start = idx + 1
+    if not positions:
+        # No keyword match — return beginning of doc
+        return text[:budget] + ("…" if len(text) > budget else "")
+
+    positions.sort()
+
+    # 2. Cluster positions within 1500 chars
+    CLUSTER_GAP = 1500
+    clusters: list[list[int]] = []
+    current: list[int] = [positions[0]]
+    for p in positions[1:]:
+        if p - current[-1] <= CLUSTER_GAP:
+            current.append(p)
+        else:
+            clusters.append(current)
+            current = [p]
+    clusters.append(current)
+
+    # 3. Score each cluster: density × distinct-term-count
+    def _cluster_score(cluster: list[int]) -> float:
+        span = max(cluster[-1] - cluster[0], 1)
+        density = len(cluster) / (span / 1000)
+        distinct = len({tl[p:p + 30] for p in cluster})  # rough distinct-term proxy
+        return density * distinct
+
+    clusters.sort(key=_cluster_score, reverse=True)
+
+    # 4. Decide how many snippets and how to divide the budget
+    # Single very dense cluster (>60% of all hits) → one big excerpt
+    total_hits = len(positions)
+    top_hits = len(clusters[0])
+    if top_hits / total_hits >= 0.6 or len(clusters) == 1:
+        selected = clusters[:1]
+        per_snippet_budget = budget
+        context_pad = 1000
+    else:
+        selected = clusters[:3]
+        per_snippet_budget = budget // len(selected)
+        context_pad = 500
+
+    # 5 & 6. Build each snippet with section-header-aware start
+    parts: list[str] = []
+    for cluster in selected:
+        cluster_start = cluster[0]
+        cluster_end = cluster[-1]
+        snippet_start = _find_section_start(text, cluster_start, lookback=1500)
+        snippet_end = min(len(text), max(cluster_end + context_pad, snippet_start + per_snippet_budget))
+        # Don't exceed per-snippet budget from snippet_start
+        snippet_end = min(snippet_end, snippet_start + per_snippet_budget)
+        piece = text[snippet_start:snippet_end]
+        if snippet_start > 0:
+            piece = "…" + piece
+        if snippet_end < len(text):
+            piece += "…"
+        parts.append(piece)
+
+    return "\n\n[...later in document...]\n\n".join(parts)
 
 
 def build_workspace_context(project, query: str, processed_folder: str) -> dict:
