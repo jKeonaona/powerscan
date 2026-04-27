@@ -2619,7 +2619,6 @@ def create_app():
 
     @app.route("/library")
     @login_required
-    @admin_required
     def intelligence_library():
         tag_filter = request.args.get("tag", "").strip()
         scope_filter = request.args.get("scope", "").strip()
