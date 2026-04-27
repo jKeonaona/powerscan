@@ -2746,11 +2746,71 @@ def create_app():
             return project_id
         return None if form.get("scope", "project") == "global" else project_id
 
-    @app.route("/library/add")
+    @app.route("/library/add", methods=["GET", "POST"])
     @login_required
     def library_add():
-        flash("Open a project to add entries to its library.", "info")
-        return redirect(url_for("intelligence_library"))
+        if current_user.role not in (ROLE_ADMIN, ROLE_SUPERADMIN):
+            abort(403)
+
+        if request.method == "POST":
+            title = request.form.get("title", "").strip()
+            if not title:
+                flash("Title is required.", "danger")
+                return redirect(url_for("library_add"))
+
+            description = request.form.get("description", "").strip() or None
+            auto_include = request.form.get("auto_include_in_search") == "1"
+            work_scope_selected = request.form.getlist("work_scope")
+            raw_tags = request.form.get("tags_input", "")
+
+            new_file = request.files.get("library_file")
+            if new_file and new_file.filename:
+                ext = os.path.splitext(new_file.filename)[1].lower()
+                safe_name = uuid.uuid4().hex + ext
+                dest = os.path.join(app.config["LIBRARY_FOLDER"], safe_name)
+                new_file.save(dest)
+                extracted = extract_text_from_file(dest, ext)
+                item = IntelligenceItem(
+                    title=title,
+                    description=description,
+                    entry_type="file",
+                    text_content=extracted,
+                    file_path=safe_name,
+                    original_filename=new_file.filename,
+                    file_mime=new_file.content_type,
+                    project_id=None,
+                    work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
+                    auto_include_in_search=auto_include,
+                    uploaded_by=current_user.id,
+                )
+            else:
+                text_content = request.form.get("text_content", "").strip() or None
+                item = IntelligenceItem(
+                    title=title,
+                    description=description,
+                    entry_type="text",
+                    text_content=text_content,
+                    project_id=None,
+                    work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
+                    auto_include_in_search=auto_include,
+                    uploaded_by=current_user.id,
+                )
+
+            db.session.add(item)
+            db.session.flush()
+            _apply_item_tags(item, raw_tags)
+            db.session.commit()
+            flash("Global Library entry added.", "success")
+            return redirect(url_for("intelligence_library"))
+
+        return render_template(
+            "library_item_form.html",
+            item=None,
+            scope_options=WORK_SCOPE_OPTIONS,
+            current_tags="",
+            current_scope=[],
+            lock_to_global=True,
+        )
 
     @app.route("/projects/<int:project_id>/library/add", methods=["GET", "POST"])
     @login_required
@@ -2956,6 +3016,7 @@ def create_app():
             "library_add.html",
             current_project=project,
             scope_options=WORK_SCOPE_OPTIONS,
+            lock_to_project=True,
         )
 
     def _batch_item_ids(batch_data):
@@ -3196,6 +3257,8 @@ def create_app():
     @admin_required
     def library_edit(item_id):
         item = db.session.get(IntelligenceItem, item_id) or abort(404)
+        if item.project_id is None and current_user.role not in (ROLE_ADMIN, ROLE_SUPERADMIN):
+            abort(403)
         if not current_user.is_superadmin and item.project_id:
             proj = db.session.get(Project, item.project_id)
             if proj and proj.company_id != current_user.company_id:
@@ -3256,6 +3319,8 @@ def create_app():
     @admin_required
     def library_delete(item_id):
         item = db.session.get(IntelligenceItem, item_id) or abort(404)
+        if item.project_id is None and current_user.role not in (ROLE_ADMIN, ROLE_SUPERADMIN):
+            abort(403)
         if not current_user.is_superadmin and item.project_id:
             proj = db.session.get(Project, item.project_id)
             if proj and proj.company_id != current_user.company_id:

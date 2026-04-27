@@ -116,7 +116,10 @@
 
                         <div class="mb-3">
                             <label class="form-label fw-medium">Scope</label>
-                            {% if current_user.role == 'user' %}
+                            {% if lock_to_global %}
+                            <p class="form-control-plaintext text-muted small mb-0">Company Global</p>
+                            <input type="hidden" name="scope" value="global">
+                            {% elif current_user.role == 'user' %}
                             <p class="form-control-plaintext text-muted small mb-0">
                                 {% if item and item.project %}{{ item.project.name }}{% else %}Company Global{% endif %}
                             </p>
