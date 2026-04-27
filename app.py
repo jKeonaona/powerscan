@@ -800,6 +800,26 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
         flush=True,
     )
 
+    # [DEBUG] Temporary — remove after Section 3 bond retrieval is confirmed working
+    _dbg_terms = direct_terms | synonym_terms
+    print(f'[ws_debug] Query: "{query[:80]}"', flush=True)
+    for _dbg_n, (_dbg_item, _dbg_score) in enumerate(top_scored[:10], 1):
+        if _dbg_item.text_content:
+            _dbg_budget = _CTX_SNIPPET_CHARS_TOP if _dbg_n <= 5 else _CTX_SNIPPET_CHARS_LOW
+            _dbg_raw = _extract_snippet(_dbg_item.text_content, _dbg_terms, _dbg_budget)
+            _dbg_parts = _dbg_raw.split("\n\n[...later in document...]\n\n")
+        else:
+            _dbg_parts = []
+        _dbg_title = (_dbg_item.original_filename or _dbg_item.title or "")[:60]
+        print(
+            f"[ws_debug] Item {_dbg_n}: id={_dbg_item.id} score={_dbg_score}"
+            f" title={_dbg_title!r} snippet_count={len(_dbg_parts)}",
+            flush=True,
+        )
+        for _dbg_si, _dbg_part in enumerate(_dbg_parts):
+            _dbg_preview = _dbg_part.replace("\n", " ").strip()[:200]
+            print(f"[ws_debug]   snippet[{_dbg_si}]: {_dbg_preview!r}", flush=True)
+
     return {
         "content_blocks": content_blocks,
         "index_map": index_map,
