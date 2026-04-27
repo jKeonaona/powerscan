@@ -467,22 +467,30 @@ def _score_item(item, direct_terms: set[str], synonym_terms: set[str]) -> int:
         score += _hits(item.description, direct_terms, 5)
         score += _hits(item.description, synonym_terms, 2)
 
-    # Text content — 3 pts per direct hit (capped 30), 1 pt per synonym hit (capped 15)
-    # A spec book with 30+ body mentions now outranks a single-line title match
+    # Text content — 3 pts per direct hit (capped 50 hits = 150 pts), 1 pt per synonym hit (capped 50)
     if item.text_content:
         tl = item.text_content.lower()
+        distinct_body_hits = 0
         for term in direct_terms:
-            count = min(tl.count(term), 30)
+            count = min(tl.count(term), 50)
             if count:
                 score += count * 3
+                distinct_body_hits += 1
                 if term in tl[:1000]:
                     score += 2   # position bonus for front-of-doc appearance
         for term in synonym_terms:
-            count = min(tl.count(term), 15)
+            count = min(tl.count(term), 50)
             if count:
                 score += count
                 if term in tl[:1000]:
                     score += 1
+
+        # Coverage bonus: a doc that contains 3+ distinct query terms in its body
+        # shows substantive treatment of the topic, not just incidental mentions
+        if distinct_body_hits >= 4:
+            score += 40
+        elif distinct_body_hits == 3:
+            score += 20
 
     return score
 
@@ -563,7 +571,9 @@ def _extract_snippet(text: str, terms: set[str], budget: int = 2000) -> str:
 
     # 3. Score each cluster: density × distinct-term-count
     def _cluster_score(cluster: list[int]) -> float:
-        span = max(cluster[-1] - cluster[0], 1)
+        # Floor span at 500 chars — without this, single-match clusters get
+        # density = 1/(1/1000) = 1000, which beats every multi-match dense section
+        span = max(cluster[-1] - cluster[0], 500)
         density = len(cluster) / (span / 1000)
         distinct = len({tl[p:p + 30] for p in cluster})  # rough distinct-term proxy
         return density * distinct
