@@ -5,8 +5,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
-_TEXT_CAP = 200_000
-_TRUNCATION_NOTICE = "\n\n[Text truncated — original file is larger]"
+_TEXT_CAP = 5_000_000
+_TRUNCATION_NOTICE = "\n\n[Text truncated — original file exceeded 5,000,000 characters]"
 
 _SUPPORTED_PDF = {".pdf"}
 _SUPPORTED_DOCX = {".docx"}
@@ -17,7 +17,7 @@ def extract_text_from_file(file_path: str, mime_type_or_extension: str) -> str |
     """
     Extract plain text from a file on disk.
 
-    Returns the extracted text (possibly truncated to 200 k chars), or None if the
+    Returns the extracted text (possibly truncated to 5 M chars), or None if the
     file type is unsupported or extraction fails.  Never raises.
     """
     # Normalise to a dotted extension
