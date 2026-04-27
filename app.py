@@ -581,10 +581,20 @@ def _extract_snippet(text: str, terms: set[str], budget: int = 2000) -> str:
     clusters.sort(key=_cluster_score, reverse=True)
 
     # 4. Decide how many snippets and how to divide the budget
-    # Single very dense cluster (>60% of all hits) → one big excerpt
+    #
+    # Large reference docs (>500K chars) always get 3 snippets — bypasses the
+    # winner-takes-all check so multiple distinct sections surface even when one
+    # cluster happens to hold >60% of hits for a specific search term.
+    # Small docs keep the original behaviour: single dominant cluster gets full budget.
+    large_doc = len(text) > 500_000
     total_hits = len(positions)
     top_hits = len(clusters[0])
-    if top_hits / total_hits >= 0.6 or len(clusters) == 1:
+    if large_doc:
+        n = min(3, len(clusters))
+        selected = clusters[:n]
+        per_snippet_budget = budget // n
+        context_pad = 500
+    elif top_hits / total_hits >= 0.6 or len(clusters) == 1:
         selected = clusters[:1]
         per_snippet_budget = budget
         context_pad = 1000
