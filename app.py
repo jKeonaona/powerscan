@@ -3191,9 +3191,7 @@ def create_app():
             work_scope_selected = request.form.getlist("work_scope")
             item.work_scope_json = json.dumps(work_scope_selected) if (item.project_id is None and work_scope_selected) else None
 
-            if item.entry_type == "text":
-                item.text_content = request.form.get("text_content", "").strip() or None
-            else:
+            if item.entry_type != "text":
                 new_file = request.files.get("library_file")
                 if new_file and new_file.filename:
                     if item.file_path:

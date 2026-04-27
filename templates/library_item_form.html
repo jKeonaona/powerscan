@@ -59,11 +59,13 @@
                         </div>
                         {% endif %}
 
-                        <div id="textSection" class="mb-3 {% if item and item.entry_type == 'file' %}d-none{% endif %}">
+                        {% if not item %}
+                        <div id="textSection" class="mb-3">
                             <label for="text_content" class="form-label fw-medium">Content</label>
                             <textarea class="form-control font-monospace" id="text_content" name="text_content"
-                                      rows="6" placeholder="Paste clause text, notes, quotes, determinations...">{{ item.text_content if item else '' }}</textarea>
+                                      rows="6" placeholder="Paste clause text, notes, quotes, determinations..."></textarea>
                         </div>
+                        {% endif %}
 
                         <div id="fileSection" class="mb-3 {% if not item or item.entry_type != 'file' %}d-none{% endif %}">
                             <label for="library_file" class="form-label fw-medium">
