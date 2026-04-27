@@ -2749,9 +2749,6 @@ def create_app():
     @app.route("/library/add", methods=["GET", "POST"])
     @login_required
     def library_add():
-        if current_user.role not in (ROLE_ADMIN, ROLE_SUPERADMIN):
-            abort(403)
-
         if request.method == "POST":
             title = request.form.get("title", "").strip()
             if not title:
