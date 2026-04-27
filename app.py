@@ -467,21 +467,27 @@ def _score_item(item, direct_terms: set[str], synonym_terms: set[str]) -> int:
         score += _hits(item.description, direct_terms, 5)
         score += _hits(item.description, synonym_terms, 2)
 
-    # Text content — 3 pts per direct hit (capped 50 hits = 150 pts), 1 pt per synonym hit (capped 50)
+    # Text content — multi-word terms score higher (specificity > volume)
+    #   single-word direct: 3 pts/hit, cap 50 (150 pts max)
+    #   multi-word direct:  8 pts/hit, cap 10  (80 pts max)
+    #   single-word synonym: 1 pt/hit,  cap 50  (50 pts max)
+    #   multi-word synonym:  4 pts/hit, cap 10  (40 pts max)
     if item.text_content:
         tl = item.text_content.lower()
         distinct_body_hits = 0
         for term in direct_terms:
-            count = min(tl.count(term), 50)
+            pts, cap = (8, 10) if " " in term else (3, 50)
+            count = min(tl.count(term), cap)
             if count:
-                score += count * 3
+                score += count * pts
                 distinct_body_hits += 1
                 if term in tl[:1000]:
                     score += 2   # position bonus for front-of-doc appearance
         for term in synonym_terms:
-            count = min(tl.count(term), 50)
+            pts, cap = (4, 10) if " " in term else (1, 50)
+            count = min(tl.count(term), cap)
             if count:
-                score += count
+                score += count * pts
                 if term in tl[:1000]:
                     score += 1
 
@@ -541,15 +547,17 @@ def _extract_snippet(text: str, terms: set[str], budget: int = 2000) -> str:
 
     tl = text.lower()
 
-    # 1. Collect all hit positions
-    positions: list[int] = []
+    # 1. Collect all hit positions with weights (multi-word terms count as 3 hits each
+    #    so specific phrases like "payment bond" outweigh generic words like "bond")
+    positions: list[tuple[int, int]] = []  # (char_offset, weight)
     for term in terms:
+        w = 3 if " " in term else 1
         start = 0
         while True:
             idx = tl.find(term, start)
             if idx == -1:
                 break
-            positions.append(idx)
+            positions.append((idx, w))
             start = idx + 1
     if not positions:
         # No keyword match — return beginning of doc
@@ -557,25 +565,26 @@ def _extract_snippet(text: str, terms: set[str], budget: int = 2000) -> str:
 
     positions.sort()
 
-    # 2. Cluster positions within 1500 chars
+    # 2. Cluster positions within 1500 chars (gap check uses char offset only)
     CLUSTER_GAP = 1500
-    clusters: list[list[int]] = []
-    current: list[int] = [positions[0]]
-    for p in positions[1:]:
-        if p - current[-1] <= CLUSTER_GAP:
-            current.append(p)
+    clusters: list[list[tuple[int, int]]] = []
+    current: list[tuple[int, int]] = [positions[0]]
+    for p, w in positions[1:]:
+        if p - current[-1][0] <= CLUSTER_GAP:
+            current.append((p, w))
         else:
             clusters.append(current)
-            current = [p]
+            current = [(p, w)]
     clusters.append(current)
 
-    # 3. Score each cluster: density × distinct-term-count
-    def _cluster_score(cluster: list[int]) -> float:
+    # 3. Score each cluster: weighted_density × distinct-term-count
+    def _cluster_score(cluster: list[tuple[int, int]]) -> float:
         # Floor span at 500 chars — without this, single-match clusters get
         # density = 1/(1/1000) = 1000, which beats every multi-match dense section
-        span = max(cluster[-1] - cluster[0], 500)
-        density = len(cluster) / (span / 1000)
-        distinct = len({tl[p:p + 30] for p in cluster})  # rough distinct-term proxy
+        span = max(cluster[-1][0] - cluster[0][0], 500)
+        weighted_hits = sum(w for _, w in cluster)
+        density = weighted_hits / (span / 1000)
+        distinct = len({tl[p:p + 30] for p, _ in cluster})  # rough distinct-term proxy
         return density * distinct
 
     clusters.sort(key=_cluster_score, reverse=True)
@@ -606,8 +615,8 @@ def _extract_snippet(text: str, terms: set[str], budget: int = 2000) -> str:
     # 5 & 6. Build each snippet with section-header-aware start
     parts: list[str] = []
     for cluster in selected:
-        cluster_start = cluster[0]
-        cluster_end = cluster[-1]
+        cluster_start = cluster[0][0]
+        cluster_end = cluster[-1][0]
         snippet_start = _find_section_start(text, cluster_start, lookback=1500)
         snippet_end = min(len(text), max(cluster_end + context_pad, snippet_start + per_snippet_budget))
         # Don't exceed per-snippet budget from snippet_start

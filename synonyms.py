@@ -9,7 +9,7 @@ assembly.
 import re
 
 CONSTRUCTION_SYNONYMS = {
-    "bonding": ["bond", "surety", "payment bond", "performance bond", "warranty bond", "bid bond"],
+    "bonding": ["bond", "surety", "contract bond", "contract bonds", "payment bond", "performance bond", "warranty bond", "bid bond"],
     "abrasive_blast": ["sandblast", "blast cleaning", "dry blast", "abrasive blasting", "grit blast"],
     "wet_blast": ["water blast", "hydroblast", "pressure wash", "high pressure water washing", "high-pressure washing"],
     "coating": ["paint", "primer", "intermediate coat", "topcoat", "finish coat", "coating system"],
