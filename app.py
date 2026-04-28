@@ -1318,8 +1318,14 @@ def backfill_drawings_to_library(upload_folder, api_key):
                 ext = os.path.splitext(d["src_filename"])[1].lower()
                 text_content = extract_text_from_file(file_path, ext)
                 chars = len(text_content) if text_content else 0
-                print(f"[backfill] {label} → TEXT → extracted {chars} chars", flush=True)
-                text_count += 1
+                if chars < 100:
+                    print(f"[backfill] {label} → DRAWING (override: classifier said text but extraction returned {chars} chars, routing to vision)", flush=True)
+                    text_content = None
+                    pipeline = "drawing"
+                    drawing_count += 1
+                else:
+                    print(f"[backfill] {label} → TEXT → extracted {chars} chars", flush=True)
+                    text_count += 1
 
             item = IntelligenceItem(
                 title=os.path.splitext(d["original_filename"])[0],
@@ -1346,6 +1352,84 @@ def backfill_drawings_to_library(upload_folder, api_key):
         f"[backfill] complete: {total} drawings processed → "
         f"{text_count} TEXT (extracted) + {drawing_count} DRAWING (vision-only) + "
         f"{quote_skipped} QUOTE-skipped + {error_count} errors",
+        flush=True,
+    )
+
+
+def recover_stranded_library_items(upload_folder, api_key):
+    """Re-process IntelligenceItem records linked to a Drawing but with empty text_content.
+
+    These were created by backfill before the <100-char safety net existed. Applies the
+    unified routing rule: items that yield real text get recovered; confirmed no-text items
+    are left as-is (text_content=None is correct for vision-pipeline items).
+    Idempotent: only targets items that still have empty/null text_content AND a drawing_id.
+    """
+    if not api_key:
+        print("[recovery] No API key, skipping stranded item recovery", flush=True)
+        return
+
+    stranded = IntelligenceItem.query.filter(
+        IntelligenceItem.drawing_id.isnot(None),
+        db.or_(IntelligenceItem.text_content.is_(None), IntelligenceItem.text_content == ""),
+    ).all()
+
+    if not stranded:
+        print("[recovery] No stranded items found", flush=True)
+        return
+
+    total = len(stranded)
+    print(f"[recovery] Found {total} stranded items, re-processing", flush=True)
+
+    recovered_text = 0
+    confirmed_drawing = 0
+    errors = 0
+
+    for item in stranded:
+        drawing = None
+        try:
+            drawing = db.session.get(Drawing, item.drawing_id)
+            if not drawing:
+                errors += 1
+                continue
+            file_path = os.path.join(upload_folder, drawing.filename)
+            if not os.path.isfile(file_path):
+                print(f"[recovery] {drawing.original_filename} → SKIP: source file not found", flush=True)
+                errors += 1
+                continue
+
+            ext = os.path.splitext(drawing.filename)[1].lower()
+            classification = _classify_file_pipeline(api_key, file_path, drawing.original_filename)
+            pipeline = classification.get("processing_pipeline", "text")
+
+            if pipeline == "drawing":
+                confirmed_drawing += 1
+                print(f"[recovery] {drawing.original_filename} → DRAWING (confirmed no text)", flush=True)
+                continue
+
+            extracted = extract_text_from_file(file_path, ext)
+            chars = len(extracted) if extracted else 0
+
+            if chars < 100:
+                confirmed_drawing += 1
+                print(f"[recovery] {drawing.original_filename} → DRAWING (extracted {chars} chars, routing to vision)", flush=True)
+                continue
+
+            item.text_content = extracted
+            db.session.commit()
+            recovered_text += 1
+            print(f"[recovery] {drawing.original_filename} → RECOVERED → extracted {chars} chars", flush=True)
+
+        except Exception as exc:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            name = drawing.original_filename if drawing else "unknown"
+            print(f"[recovery] error on {name}: {exc}", flush=True)
+            errors += 1
+
+    print(
+        f"[recovery] complete: {recovered_text} recovered, {confirmed_drawing} confirmed drawing, {errors} errors",
         flush=True,
     )
 
@@ -1587,6 +1671,8 @@ def create_app():
         backfill_content_hashes(app.config["LIBRARY_FOLDER"])
         # Create paired Library items for any drawings that lack one (Phase 3C Part A)
         backfill_drawings_to_library(app.config["UPLOAD_FOLDER"], app.config.get("ANTHROPIC_API_KEY", ""))
+        # Re-process stranded Library items (drawing_id set but empty text_content from pre-safety-net backfill)
+        recover_stranded_library_items(app.config["UPLOAD_FOLDER"], app.config.get("ANTHROPIC_API_KEY", ""))
         # Drop the legacy feedback table (Share Idea feature removed)
         _drop_feedback_table()
 
@@ -2831,7 +2917,21 @@ def create_app():
                 safe_name = uuid.uuid4().hex + ext
                 dest = os.path.join(app.config["LIBRARY_FOLDER"], safe_name)
                 new_file.save(dest)
-                extracted = extract_text_from_file(dest, ext)
+                _api_key = app.config.get("ANTHROPIC_API_KEY", "")
+                _clf = _classify_file_pipeline(_api_key, dest, new_file.filename)
+                _lib_pipeline = _clf.get("processing_pipeline", "text")
+                if _lib_pipeline == "drawing":
+                    extracted = None
+                    print(f"[library_add] {new_file.filename} → DRAWING → vision-only", flush=True)
+                else:
+                    extracted = extract_text_from_file(dest, ext)
+                    chars = len(extracted) if extracted else 0
+                    if chars < 100:
+                        extracted = None
+                        _lib_pipeline = "drawing"
+                        print(f"[library_add] {new_file.filename} → DRAWING (override: extracted {chars} chars, routing to vision)", flush=True)
+                    else:
+                        print(f"[library_add] {new_file.filename} → TEXT → extracted {chars} chars", flush=True)
                 item = IntelligenceItem(
                     title=title,
                     description=description,
@@ -2963,6 +3063,12 @@ def create_app():
                     else:
                         # text pipeline — stays in LIBRARY_FOLDER
                         extracted = extract_text_from_file(dest, ext)
+                        chars = len(extracted) if extracted else 0
+                        if chars < 100:
+                            extracted = None
+                            print(f"[library_add] {f.filename} → DRAWING (override: extracted {chars} chars, routing to vision)", flush=True)
+                        else:
+                            print(f"[library_add] {f.filename} → TEXT → extracted {chars} chars", flush=True)
                         item = IntelligenceItem(
                             title=os.path.splitext(f.filename)[0],
                             entry_type="file",
