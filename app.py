@@ -222,6 +222,8 @@ def _run_migrations(database):
         ("intelligence_item", "drawing_id", "INTEGER"),
         # Backfill tombstone: skip resurrecting Library entries the user deliberately deleted
         ("drawing", "library_backfill_skip", "BOOLEAN NOT NULL DEFAULT 0"),
+        # User first name — used by Skippy voice for first-name address in Workspace
+        ("user", "first_name", "VARCHAR(60)"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -5351,7 +5353,8 @@ def create_app():
                     role = ROLE_USER
                     company_id = current_user.company_id
 
-                user = User(username=username, email=email, role=role, company_id=company_id)
+                first_name = request.form.get("first_name", "").strip() or None
+                user = User(username=username, email=email, role=role, company_id=company_id, first_name=first_name)
                 user.set_password(password)
                 db.session.add(user)
                 db.session.commit()
@@ -5370,6 +5373,7 @@ def create_app():
 
         if request.method == "POST":
             user.email = request.form.get("email", user.email).strip()
+            user.first_name = request.form.get("first_name", "").strip() or None
             new_password = request.form.get("password", "").strip()
             if new_password:
                 user.set_password(new_password)

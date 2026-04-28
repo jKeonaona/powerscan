@@ -23,6 +23,11 @@
                                    value="{{ user.email if user else '' }}" required>
                         </div>
                         <div class="mb-3">
+                            <label for="first_name" class="form-label">First Name <span class="text-muted fw-normal">(optional)</span></label>
+                            <input type="text" class="form-control" id="first_name" name="first_name"
+                                   value="{{ user.first_name if user and user.first_name else '' }}">
+                        </div>
+                        <div class="mb-3">
                             <label for="password" class="form-label">Password{% if user %} (leave blank to keep current){% endif %}</label>
                             <input type="password" class="form-control" id="password" name="password"
                                    {{ '' if user else 'required' }}>
