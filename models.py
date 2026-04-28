@@ -464,3 +464,67 @@ class WorkspaceMessage(db.Model):
 
     project = db.relationship("Project", backref=db.backref("workspace_messages", cascade="all, delete-orphan"))
     user = db.relationship("User", backref="workspace_messages")
+
+
+class MethodologyTakeoff(db.Model):
+    __tablename__ = "methodology_takeoff"
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    name = db.Column(db.String(200), nullable=False, default="New Methodology Takeoff")
+    scope_code = db.Column(db.String(50), nullable=False)
+    status = db.Column(db.String(32), nullable=False, default="Draft")
+    parent_id = db.Column(db.Integer, db.ForeignKey("methodology_takeoff.id"), nullable=True)
+    version_number = db.Column(db.Integer, nullable=False, default=1)
+    revision_reason = db.Column(db.Text, nullable=True)
+    final_total_sf = db.Column(db.Numeric(14, 2), nullable=True)
+    linked_takeoff_id = db.Column(db.Integer, db.ForeignKey("takeoff.id"), nullable=True)
+
+    project = db.relationship("Project", backref=db.backref("methodology_takeoffs", cascade="all, delete-orphan"))
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+    parent = db.relationship("MethodologyTakeoff", foreign_keys=[parent_id], remote_side=[id], backref="revisions")
+    linked_takeoff = db.relationship("Takeoff", foreign_keys=[linked_takeoff_id])
+
+
+class MethodologyLineItem(db.Model):
+    __tablename__ = "methodology_line_item"
+    id = db.Column(db.Integer, primary_key=True)
+    methodology_takeoff_id = db.Column(db.Integer, db.ForeignKey("methodology_takeoff.id"), nullable=False)
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+    step = db.Column(db.Integer, nullable=False)
+    dwg_ref = db.Column(db.String(300), nullable=True)
+    description = db.Column(db.String(300), nullable=True)
+    element = db.Column(db.String(300), nullable=True)
+    qty = db.Column(db.Numeric(10, 2), nullable=True)
+    length_ft = db.Column(db.Numeric(10, 2), nullable=True)
+    height_ft = db.Column(db.Numeric(10, 2), nullable=True)
+    total = db.Column(db.Numeric(14, 2), nullable=True)
+    factor = db.Column(db.Numeric(10, 4), nullable=True)
+    sqft = db.Column(db.Numeric(14, 2), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    proposed_by = db.Column(db.String(20), nullable=False, default="user")
+    accepted = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    methodology_takeoff = db.relationship(
+        "MethodologyTakeoff",
+        backref=db.backref("line_items", cascade="all, delete-orphan", order_by="MethodologyLineItem.sort_order"),
+    )
+
+
+class MethodologyTakeoffMessage(db.Model):
+    __tablename__ = "methodology_takeoff_message"
+    id = db.Column(db.Integer, primary_key=True)
+    methodology_takeoff_id = db.Column(db.Integer, db.ForeignKey("methodology_takeoff.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    role = db.Column(db.String(20), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    sources_json = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    methodology_takeoff = db.relationship(
+        "MethodologyTakeoff",
+        backref=db.backref("messages", cascade="all, delete-orphan", order_by="MethodologyTakeoffMessage.created_at"),
+    )
+    user = db.relationship("User")
