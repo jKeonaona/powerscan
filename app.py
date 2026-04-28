@@ -6,6 +6,7 @@ import re
 import secrets
 import uuid
 from datetime import date, datetime, timezone
+from sqlalchemy import select
 
 from flask import (
     Flask, render_template, request, redirect, url_for, flash,
@@ -1265,9 +1266,8 @@ def backfill_drawings_to_library(upload_folder, api_key):
     # Load orphans and immediately snapshot to plain dicts so SQLAlchemy session
     # expiry / rollback across iterations cannot cause DetachedInstanceError.
     linked_ids = (
-        db.session.query(IntelligenceItem.drawing_id)
-        .filter(IntelligenceItem.drawing_id.isnot(None))
-        .subquery()
+        select(IntelligenceItem.drawing_id)
+        .where(IntelligenceItem.drawing_id.isnot(None))
     )
     orphan_rows = Drawing.query.filter(
         Drawing.id.notin_(linked_ids),
@@ -2697,7 +2697,7 @@ def create_app():
                 db.or_(
                     IntelligenceItem.project_id.is_(None),
                     IntelligenceItem.project_id.in_(
-                        db.session.query(Project.id).filter_by(company_id=current_user.company_id)
+                        select(Project.id).filter_by(company_id=current_user.company_id)
                     ),
                 )
             )
