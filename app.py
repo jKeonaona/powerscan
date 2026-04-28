@@ -23,6 +23,7 @@ from models import (
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     IntelligenceTag, IntelligenceItem, QuoteBatch,
     ComparisonSummary, QuoteComparisonExport, Takeoff, WorkspaceMessage, WorkspaceThread,
+    MethodologyTakeoff, MethodologyLineItem, MethodologyTakeoffMessage,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     PROJECT_STATUSES, TAKEOFF_STATUSES,
@@ -36,6 +37,8 @@ from calculations import calculate_painting_quantities, has_any_inputs
 from xlsm_importer import parse_estimate_workbook
 from library_text_extractor import extract_text_from_file, backfill_library_text_content
 from synonyms import expand_query_terms, STOPWORDS
+import methodology
+from methodology.base import TakeoffContext
 
 
 CCC_ADMIN_SEEDS = [
@@ -5966,6 +5969,213 @@ def create_app():
         buf.seek(0)
         fname = f"activity-history-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
         return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=fname)
+
+    # ── Methodology Takeoff Routes ───────────────────────────────
+
+    @app.route("/projects/<int:project_id>/methodology-takeoffs/new", methods=["POST"])
+    @login_required
+    def methodology_takeoff_new(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        scope_code = request.form.get("scope_code", "").strip()
+        if scope_code not in methodology.available_scope_codes():
+            return jsonify({
+                "error": "scope_code not implemented",
+                "available": methodology.available_scope_codes(),
+            }), 400
+        takeoff = MethodologyTakeoff(
+            project_id=project.id,
+            created_by_user_id=current_user.id,
+            name=request.form.get("name", "").strip() or "New Methodology Takeoff",
+            scope_code=scope_code,
+            status="Draft",
+            version_number=1,
+            parent_id=None,
+        )
+        db.session.add(takeoff)
+        db.session.commit()
+        return redirect(url_for("methodology_takeoff_detail", takeoff_id=takeoff.id))
+
+    @app.route("/methodology-takeoffs/<int:takeoff_id>")
+    @login_required
+    def methodology_takeoff_detail(takeoff_id):
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        project = takeoff.project
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        line_items = (
+            MethodologyLineItem.query
+            .filter_by(methodology_takeoff_id=takeoff.id)
+            .order_by(MethodologyLineItem.step, MethodologyLineItem.sort_order)
+            .all()
+        )
+        messages = (
+            MethodologyTakeoffMessage.query
+            .filter_by(methodology_takeoff_id=takeoff.id)
+            .order_by(MethodologyTakeoffMessage.created_at)
+            .all()
+        )
+        return jsonify({
+            "takeoff": {
+                "id": takeoff.id,
+                "name": takeoff.name,
+                "scope_code": takeoff.scope_code,
+                "status": takeoff.status,
+                "version_number": takeoff.version_number,
+                "parent_id": takeoff.parent_id,
+                "revision_reason": takeoff.revision_reason,
+                "final_total_sf": float(takeoff.final_total_sf) if takeoff.final_total_sf is not None else None,
+                "created_at": takeoff.created_at.isoformat(),
+                "project_id": project.id,
+                "project_name": project.name,
+            },
+            "line_items": [
+                {
+                    "id": li.id,
+                    "step": li.step,
+                    "sort_order": li.sort_order,
+                    "dwg_ref": li.dwg_ref,
+                    "description": li.description,
+                    "element": li.element,
+                    "qty": float(li.qty) if li.qty is not None else None,
+                    "length_ft": float(li.length_ft) if li.length_ft is not None else None,
+                    "height_ft": float(li.height_ft) if li.height_ft is not None else None,
+                    "total": float(li.total) if li.total is not None else None,
+                    "factor": float(li.factor) if li.factor is not None else None,
+                    "sqft": float(li.sqft) if li.sqft is not None else None,
+                    "notes": li.notes,
+                    "proposed_by": li.proposed_by,
+                    "accepted": li.accepted,
+                    "created_at": li.created_at.isoformat(),
+                }
+                for li in line_items
+            ],
+            "messages": [
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "content": m.content,
+                    "sources_json": m.sources_json,
+                    "created_at": m.created_at.isoformat(),
+                    "user_id": m.user_id,
+                }
+                for m in messages
+            ],
+        })
+
+    @app.route("/methodology-takeoffs/<int:takeoff_id>/messages", methods=["POST"])
+    @login_required
+    def methodology_takeoff_post_message(takeoff_id):
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        content = request.form.get("content", "").strip()
+        if not content:
+            return jsonify({"error": "content is required"}), 400
+        msg = MethodologyTakeoffMessage(
+            methodology_takeoff_id=takeoff.id,
+            user_id=current_user.id,
+            role="user",
+            content=content,
+        )
+        db.session.add(msg)
+        db.session.commit()
+        return jsonify({"message_id": msg.id, "status": "ok"})
+
+    @app.route("/methodology-takeoffs/<int:takeoff_id>/opening-report", methods=["POST"])
+    @login_required
+    def methodology_takeoff_opening_report(takeoff_id):
+        import anthropic as _anthropic
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        mod = methodology.get_module(takeoff.scope_code)
+        if mod is None:
+            return jsonify({"error": "scope_code module not found"}), 400
+        client = _anthropic.Anthropic(api_key=app.config["ANTHROPIC_API_KEY"])
+        ctx = TakeoffContext(
+            methodology_takeoff=takeoff,
+            project=takeoff.project,
+            api_key=app.config["ANTHROPIC_API_KEY"],
+            processed_folder=app.config["PROCESSED_FOLDER"],
+            build_context_fn=build_workspace_context,
+            anthropic_client=client,
+        )
+        response = mod.opening_report(ctx)
+        msg = MethodologyTakeoffMessage(
+            methodology_takeoff_id=takeoff.id,
+            user_id=current_user.id,
+            role="assistant",
+            content=response.message,
+            sources_json=json.dumps([str(s) for s in response.sources]) if response.sources else None,
+        )
+        db.session.add(msg)
+        db.session.commit()
+        return jsonify({
+            "message_id": msg.id,
+            "content": response.message,
+            "sources": [str(s) for s in response.sources],
+            "used_fallback": response.used_fallback,
+        })
+
+    @app.route("/methodology-takeoffs/<int:takeoff_id>/propose-step-1", methods=["POST"])
+    @login_required
+    def methodology_takeoff_propose_step_1(takeoff_id):
+        import anthropic as _anthropic
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        mod = methodology.get_module(takeoff.scope_code)
+        if mod is None:
+            return jsonify({"error": "scope_code module not found"}), 400
+        client = _anthropic.Anthropic(api_key=app.config["ANTHROPIC_API_KEY"])
+        ctx = TakeoffContext(
+            methodology_takeoff=takeoff,
+            project=takeoff.project,
+            api_key=app.config["ANTHROPIC_API_KEY"],
+            processed_folder=app.config["PROCESSED_FOLDER"],
+            build_context_fn=build_workspace_context,
+            anthropic_client=client,
+        )
+        response = mod.propose_step_1_inventory(ctx, user_message=request.form.get("user_message", ""))
+        msg = MethodologyTakeoffMessage(
+            methodology_takeoff_id=takeoff.id,
+            user_id=current_user.id,
+            role="assistant",
+            content=response.message,
+            sources_json=json.dumps([str(s) for s in response.sources]) if response.sources else None,
+        )
+        db.session.add(msg)
+        db.session.flush()
+        new_items = []
+        for item in response.proposed_items:
+            item_db = MethodologyLineItem(
+                methodology_takeoff_id=takeoff.id,
+                step=item.step,
+                sort_order=item.sort_order,
+                dwg_ref=item.dwg_ref,
+                description=item.description,
+                element=item.element,
+                qty=item.qty,
+                length_ft=item.length_ft,
+                height_ft=item.height_ft,
+                factor=item.factor,
+                notes=item.notes,
+                proposed_by="skippy",
+                accepted=False,
+            )
+            db.session.add(item_db)
+            new_items.append(item_db)
+        db.session.commit()
+        return jsonify({
+            "message_id": msg.id,
+            "content": response.message,
+            "proposed_count": len(response.proposed_items),
+            "line_item_ids": [i.id for i in new_items],
+            "sources": [str(s) for s in response.sources],
+            "used_fallback": response.used_fallback,
+        })
 
     # ── Error Handlers ──────────────────────────────────────────
 
