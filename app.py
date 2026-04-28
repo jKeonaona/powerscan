@@ -225,6 +225,8 @@ def _run_migrations(database):
         ("drawing", "library_backfill_skip", "BOOLEAN NOT NULL DEFAULT 0"),
         # User first name — used by Skippy voice for first-name address in Workspace
         ("user", "first_name", "VARCHAR(60)"),
+        # Pipeline classification settled flag — prevents recovery re-processing on restart
+        ("intelligence_item", "pipeline_classified", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
     for table, column, col_def in migrations:
         try:
@@ -1336,6 +1338,7 @@ def backfill_drawings_to_library(upload_folder, api_key):
                 auto_include_in_search=True,
                 uploaded_by=d["uploaded_by"],
                 drawing_id=d["id"],
+                pipeline_classified=True,
             )
             db.session.add(item)
             db.session.commit()
@@ -1371,6 +1374,7 @@ def recover_stranded_library_items(upload_folder, api_key):
     stranded = IntelligenceItem.query.filter(
         IntelligenceItem.drawing_id.isnot(None),
         db.or_(IntelligenceItem.text_content.is_(None), IntelligenceItem.text_content == ""),
+        IntelligenceItem.pipeline_classified == False,  # noqa: E712
     ).all()
 
     if not stranded:
@@ -1402,6 +1406,8 @@ def recover_stranded_library_items(upload_folder, api_key):
             pipeline = classification.get("processing_pipeline", "text")
 
             if pipeline == "drawing":
+                item.pipeline_classified = True
+                db.session.commit()
                 confirmed_drawing += 1
                 print(f"[recovery] {drawing.original_filename} → DRAWING (confirmed no text)", flush=True)
                 continue
@@ -1410,11 +1416,14 @@ def recover_stranded_library_items(upload_folder, api_key):
             chars = len(extracted) if extracted else 0
 
             if chars < 100:
+                item.pipeline_classified = True
+                db.session.commit()
                 confirmed_drawing += 1
                 print(f"[recovery] {drawing.original_filename} → DRAWING (extracted {chars} chars, routing to vision)", flush=True)
                 continue
 
             item.text_content = extracted
+            item.pipeline_classified = True
             db.session.commit()
             recovered_text += 1
             print(f"[recovery] {drawing.original_filename} → RECOVERED → extracted {chars} chars", flush=True)
@@ -2944,6 +2953,7 @@ def create_app():
                     work_scope_json=json.dumps(work_scope_selected) if work_scope_selected else None,
                     auto_include_in_search=auto_include,
                     uploaded_by=current_user.id,
+                    pipeline_classified=True,
                 )
             else:
                 text_content = request.form.get("text_content", "").strip() or None
@@ -3048,6 +3058,7 @@ def create_app():
                             auto_include_in_search=True,
                             uploaded_by=current_user.id,
                             drawing_id=drawing.id,
+                            pipeline_classified=True,
                         )
                         db.session.add(_lib_item)
                         db.session.flush()
@@ -3080,6 +3091,7 @@ def create_app():
                             work_scope_json=json.dumps(work_scope_selected) if (resolved_project_id is None and work_scope_selected) else None,
                             auto_include_in_search=True,
                             uploaded_by=current_user.id,
+                            pipeline_classified=True,
                         )
                         db.session.add(item)
                         db.session.flush()

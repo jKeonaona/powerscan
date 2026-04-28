@@ -326,6 +326,8 @@ class IntelligenceItem(db.Model):
     shortlisted_scope_option = db.Column(db.String(100), nullable=True)  # reserved for v2
     # Link back to the Drawing that sourced this item (drawing-pipeline uploads only)
     drawing_id = db.Column(db.Integer, db.ForeignKey("drawing.id"), nullable=True, index=True)
+    # True once the classifier has confirmed this item's pipeline (prevents re-processing on restart)
+    pipeline_classified = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
 
     project = db.relationship("Project", backref=db.backref("intelligence_items", cascade="all, delete-orphan"))
     uploader = db.relationship("User", foreign_keys=[uploaded_by], backref="intelligence_items")
