@@ -58,12 +58,12 @@
                         </a>
                     </li>
                     {% endif %}
-                    {% if current_user.is_superadmin %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('admin_rates') }}">
                             <i class="bi bi-currency-dollar"></i> Rates
                         </a>
                     </li>
+                    {% if current_user.is_superadmin %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('admin_history') }}">
                             <i class="bi bi-clock-history"></i> Audit Log

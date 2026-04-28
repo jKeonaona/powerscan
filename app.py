@@ -5400,7 +5400,6 @@ def create_app():
 
     @app.route("/admin/rates")
     @login_required
-    @superadmin_required
     def admin_rates():
         active_labor = LaborRate.query.filter_by(active=True).order_by(LaborRate.category, LaborRate.craft_type).all()
         active_insurance = InsuranceRate.query.filter_by(active=True).order_by(InsuranceRate.category, InsuranceRate.rate_type).all()
@@ -5418,7 +5417,6 @@ def create_app():
 
     @app.route("/admin/rates/labor/upload", methods=["POST"])
     @login_required
-    @superadmin_required
     def upload_labor_rates():
         f = request.files.get("csv_file")
         if not f:
@@ -5473,7 +5471,6 @@ def create_app():
 
     @app.route("/admin/rates/insurance/upload", methods=["POST"])
     @login_required
-    @superadmin_required
     def upload_insurance_rates():
         f = request.files.get("csv_file")
         if not f:
@@ -5528,7 +5525,6 @@ def create_app():
 
     @app.route("/admin/rates/labor/template")
     @login_required
-    @superadmin_required
     def download_labor_template():
         headers = ["category", "craft_type", "region", "hourly_cost", "effective_date", "expiry_date"]
         buf = io.StringIO()
@@ -5546,7 +5542,6 @@ def create_app():
 
     @app.route("/admin/rates/insurance/template")
     @login_required
-    @superadmin_required
     def download_insurance_template():
         headers = ["category", "rate_type", "rate_percent", "effective_date", "expiry_date", "notes"]
         buf = io.StringIO()
