@@ -510,7 +510,7 @@ _CTX_MAX_FALLBACK_IMAGES = 6   # max drawing pages for fallback (untargeted)
 _CTX_SNIPPET_CHARS_TOP = 8000  # total chars across all snippets for top-ranked items
 _CTX_SNIPPET_CHARS_LOW = 1500  # total chars for lower-priority items
 _CTX_FALLBACK_THRESHOLD = 8    # min score to bypass fallback; below this → generic load
-_CTX_MAX_TAKEOFF_IMAGES = 30   # higher than workspace cap; takeoffs need broader visual context
+_CTX_MAX_TAKEOFF_IMAGES = 80  # Covers full bridge plan sets (Big Creek = 80 pages). Adaptive: small projects load everything, large projects truncate to first 80 by Pool A order.
 
 
 def _score_item(item, direct_terms: set[str], synonym_terms: set[str]) -> int:
