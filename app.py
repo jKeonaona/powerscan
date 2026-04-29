@@ -6359,6 +6359,119 @@ def create_app():
             "used_fallback": response.used_fallback,
         })
 
+    # ── Methodology Takeoff — HTML page + line-item CRUD ────────
+
+    @app.route("/methodology-takeoffs/<int:takeoff_id>/page")
+    @login_required
+    def methodology_takeoff_page(takeoff_id):
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        project = takeoff.project
+        if not current_user.is_superadmin and current_user.company_id != project.company_id:
+            abort(403)
+        line_items = (
+            MethodologyLineItem.query
+            .filter_by(methodology_takeoff_id=takeoff.id)
+            .order_by(MethodologyLineItem.step, MethodologyLineItem.sort_order)
+            .all()
+        )
+        messages = (
+            MethodologyTakeoffMessage.query
+            .filter_by(methodology_takeoff_id=takeoff.id)
+            .order_by(MethodologyTakeoffMessage.created_at)
+            .all()
+        )
+        return render_template(
+            "methodology_takeoff.html",
+            takeoff=takeoff,
+            project=project,
+            line_items=line_items,
+            messages=messages,
+        )
+
+    @app.route("/methodology-line-items/<int:line_item_id>", methods=["PATCH"])
+    @login_required
+    def methodology_line_item_update(line_item_id):
+        li = db.session.get(MethodologyLineItem, line_item_id) or abort(404)
+        takeoff = db.session.get(MethodologyTakeoff, li.methodology_takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        data = request.get_json(silent=True) or {}
+        numeric_fields = {"qty", "length_ft", "height_ft"}
+        bool_fields = {"accepted"}
+        string_fields = {"element", "dwg_ref", "notes"}
+        for field, value in data.items():
+            if field in numeric_fields:
+                if value is None:
+                    setattr(li, field, None)
+                else:
+                    try:
+                        setattr(li, field, float(value))
+                    except (TypeError, ValueError):
+                        return jsonify({"error": f"'{field}' must be numeric or null"}), 400
+            elif field in bool_fields:
+                if not isinstance(value, bool):
+                    return jsonify({"error": f"'{field}' must be boolean"}), 400
+                setattr(li, field, value)
+            elif field in string_fields:
+                setattr(li, field, str(value) if value is not None else None)
+        db.session.commit()
+        return jsonify({
+            "id": li.id, "step": li.step, "sort_order": li.sort_order,
+            "element": li.element,
+            "qty": float(li.qty) if li.qty is not None else None,
+            "length_ft": float(li.length_ft) if li.length_ft is not None else None,
+            "height_ft": float(li.height_ft) if li.height_ft is not None else None,
+            "dwg_ref": li.dwg_ref, "notes": li.notes,
+            "accepted": li.accepted, "proposed_by": li.proposed_by,
+        })
+
+    @app.route("/methodology-line-items/<int:line_item_id>", methods=["DELETE"])
+    @login_required
+    def methodology_line_item_delete(line_item_id):
+        li = db.session.get(MethodologyLineItem, line_item_id) or abort(404)
+        takeoff = db.session.get(MethodologyTakeoff, li.methodology_takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        db.session.delete(li)
+        db.session.commit()
+        return jsonify({"deleted": True, "id": line_item_id})
+
+    @app.route("/methodology-takeoffs/<int:takeoff_id>/line-items", methods=["POST"])
+    @login_required
+    def methodology_takeoff_add_line_item(takeoff_id):
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        data = request.get_json(silent=True) or {}
+        max_sort = db.session.query(db.func.max(MethodologyLineItem.sort_order)).filter_by(
+            methodology_takeoff_id=takeoff.id
+        ).scalar()
+        sort_order = (max_sort + 1) if max_sort is not None else 0
+        li = MethodologyLineItem(
+            methodology_takeoff_id=takeoff.id,
+            step=1,
+            sort_order=sort_order,
+            element=data.get("element"),
+            qty=data.get("qty"),
+            length_ft=data.get("length_ft"),
+            height_ft=data.get("height_ft"),
+            dwg_ref=data.get("dwg_ref"),
+            notes=data.get("notes"),
+            proposed_by="user",
+            accepted=False,
+        )
+        db.session.add(li)
+        db.session.commit()
+        return jsonify({
+            "id": li.id, "step": li.step, "sort_order": li.sort_order,
+            "element": li.element,
+            "qty": float(li.qty) if li.qty is not None else None,
+            "length_ft": float(li.length_ft) if li.length_ft is not None else None,
+            "height_ft": float(li.height_ft) if li.height_ft is not None else None,
+            "dwg_ref": li.dwg_ref, "notes": li.notes,
+            "accepted": li.accepted, "proposed_by": li.proposed_by,
+        }), 201
+
     # ── Error Handlers ──────────────────────────────────────────
 
     @app.errorhandler(403)

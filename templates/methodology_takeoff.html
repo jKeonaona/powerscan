@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}{{ takeoff.name }} — {{ project.name }} - PowerScan{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% if current_user.role == 'superadmin' %}
+            <li class="breadcrumb-item"><a href="{{ url_for('companies') }}">Companies</a></li>
+            {% endif %}
+            <li class="breadcrumb-item"><a href="{{ url_for('projects', company_id=project.company_id) }}">{{ project.company.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('project_hub', project_id=project.id) }}">{{ project.name }}</a></li>
+            <li class="breadcrumb-item active">{{ takeoff.name }}</li>
+        </ol>
+    </nav>
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2 class="mb-1">{{ takeoff.name }}</h2>
+            <div class="d-flex align-items-center gap-2 mb-1">
+                {% if takeoff.status == 'Final' %}
+                <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">Final</span>
+                {% else %}
+                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">{{ takeoff.status or 'Draft' }}</span>
+                {% endif %}
+                {% if takeoff.scope_code %}
+                <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">{{ takeoff.scope_code }}</span>
+                {% endif %}
+                <span class="text-muted small">v{{ takeoff.version_number }}</span>
+                <span class="text-muted small">· {{ project.name }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Skippy Thread -->
+    {% if messages %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header fw-semibold">
+            <i class="bi bi-chat-left-text"></i> Skippy Thread
+        </div>
+        <div class="card-body p-0">
+            {% for msg in messages %}
+            <div class="px-3 py-2 border-bottom {% if msg.role == 'assistant' %}bg-light{% endif %}">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    {% if msg.role == 'assistant' %}
+                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">Skippy</span>
+                    {% else %}
+                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle">You</span>
+                    {% endif %}
+                    <span class="text-muted small">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</span>
+                </div>
+                <div class="small" style="white-space: pre-wrap;">{{ msg.content }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Line Items -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold"><i class="bi bi-list-check"></i> Step 1 — Pile Inventory</span>
+            <span class="badge bg-secondary">{{ line_items | length }}</span>
+        </div>
+        <div class="table-responsive">
+            <table id="line-items-table" class="table table-hover align-middle mb-0" data-takeoff-id="{{ takeoff.id }}">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>Element</th>
+                        <th>Qty</th>
+                        <th>Length (ft)</th>
+                        <th>Height (ft)</th>
+                        <th>Dwg Ref</th>
+                        <th>Notes</th>
+                        <th>By</th>
+                        <th>Accepted</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="line-items-tbody">
+                    {% for li in line_items %}
+                    <tr data-line-item-id="{{ li.id }}">
+                        <td class="text-muted small">{{ loop.index }}</td>
+                        <td><input type="text" class="form-control form-control-sm" data-field="element" aria-label="Element" value="{{ li.element or '' }}"></td>
+                        <td><input type="number" class="form-control form-control-sm" data-field="qty" aria-label="Qty" value="{{ li.qty if li.qty is not none else '' }}" step="any"></td>
+                        <td><input type="number" class="form-control form-control-sm" data-field="length_ft" aria-label="Length (ft)" value="{{ li.length_ft if li.length_ft is not none else '' }}" step="any"></td>
+                        <td><input type="number" class="form-control form-control-sm" data-field="height_ft" aria-label="Height (ft)" value="{{ li.height_ft if li.height_ft is not none else '' }}" step="any"></td>
+                        <td><input type="text" class="form-control form-control-sm" data-field="dwg_ref" aria-label="Dwg Ref" value="{{ li.dwg_ref or '' }}"></td>
+                        <td><textarea class="form-control form-control-sm" data-field="notes" aria-label="Notes" rows="1">{{ li.notes or '' }}</textarea></td>
+                        <td>
+                            {% if li.proposed_by == 'skippy' %}
+                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">skippy</span>
+                            {% else %}
+                            <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle">user</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <input type="checkbox" class="form-check-input" data-field="accepted" aria-label="Accepted" {% if li.accepted %}checked{% endif %}>
+                        </td>
+                        <td class="text-nowrap">
+                            <button type="button" class="btn btn-sm btn-outline-primary save-btn me-1">Save</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger delete-btn">Delete</button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr id="no-items-row">
+                        <td colspan="10" class="text-muted small text-center py-3">No line items yet. Use "Add Row" below.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer">
+            <div id="add-row-form" class="d-none">
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1" for="new-element">Element</label>
+                        <input type="text" id="new-element" class="form-control form-control-sm" placeholder="e.g. HP12x84 Piles 1-9">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small mb-1" for="new-qty">Qty</label>
+                        <input type="number" id="new-qty" class="form-control form-control-sm" step="any">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small mb-1" for="new-length-ft">Length (ft)</label>
+                        <input type="number" id="new-length-ft" class="form-control form-control-sm" step="any">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small mb-1" for="new-height-ft">Height (ft)</label>
+                        <input type="number" id="new-height-ft" class="form-control form-control-sm" step="any">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small mb-1" for="new-dwg-ref">Dwg Ref</label>
+                        <input type="text" id="new-dwg-ref" class="form-control form-control-sm">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1" for="new-notes">Notes</label>
+                        <input type="text" id="new-notes" class="form-control form-control-sm">
+                    </div>
+                    <div class="col-md-2">
+                        <button type="button" id="save-new-btn" class="btn btn-sm btn-primary me-1">Save Row</button>
+                        <button type="button" id="cancel-add-btn" class="btn btn-sm btn-outline-secondary">Cancel</button>
+                    </div>
+                </div>
+                <div id="add-row-error" class="text-danger small d-none"></div>
+            </div>
+            <button type="button" id="add-row-btn" class="btn btn-sm btn-outline-success">
+                <i class="bi bi-plus-lg"></i> Add Row
+            </button>
+        </div>
+    </div>
+
+</div>
+
+<script src="{{ url_for('static', filename='js/methodology_takeoff.js') }}"></script>
+{% endblock %}
