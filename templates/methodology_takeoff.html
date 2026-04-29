@@ -38,6 +38,12 @@
                 <span class="fw-semibold fs-5">Total Accepted SF: {{ "%.0f" | format(ns.total_sf) }}</span>
             </div>
         </div>
+        <div class="text-end">
+            <button type="button" id="rescan-drawings-btn" class="btn btn-sm btn-outline-warning" data-takeoff-id="{{ takeoff.id }}">
+                <i class="bi bi-arrow-clockwise"></i> Re-scan drawings
+            </button>
+            <div id="rescan-status" class="small mt-2 d-none"></div>
+        </div>
     </div>
 
     <!-- Skippy Thread -->

@@ -6414,6 +6414,79 @@ def create_app():
             "skipped": getattr(response, "sources", []),
         })
 
+    @app.route("/methodology-takeoffs/<int:takeoff_id>/rescan-drawings", methods=["POST"])
+    @login_required
+    def methodology_takeoff_rescan_drawings(takeoff_id):
+        import anthropic as _anthropic
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        mod = methodology.get_module(takeoff.scope_code)
+        if mod is None:
+            return jsonify({"error": "scope_code module not found"}), 400
+        client = _anthropic.Anthropic(api_key=app.config["ANTHROPIC_API_KEY"])
+        ctx = TakeoffContext(
+            methodology_takeoff=takeoff,
+            project=takeoff.project,
+            api_key=app.config["ANTHROPIC_API_KEY"],
+            processed_folder=app.config["PROCESSED_FOLDER"],
+            build_context_fn=build_takeoff_context,
+            anthropic_client=client,
+        )
+        # Delete skippy Step 1 rows and their Step 2 children before re-scanning
+        skippy_step1 = MethodologyLineItem.query.filter_by(
+            methodology_takeoff_id=takeoff.id, step=1, proposed_by="skippy"
+        ).all()
+        skippy_step1_ids = [li.id for li in skippy_step1]
+        if skippy_step1_ids:
+            MethodologyLineItem.query.filter(
+                MethodologyLineItem.parent_line_item_id.in_(skippy_step1_ids)
+            ).delete(synchronize_session=False)
+            for li in skippy_step1:
+                db.session.delete(li)
+        db.session.flush()
+        response = mod.propose_step_1_inventory(
+            ctx,
+            force_rescan=True,
+            triggered_by_user_id=current_user.id,
+        )
+        msg = MethodologyTakeoffMessage(
+            methodology_takeoff_id=takeoff.id,
+            user_id=current_user.id,
+            role="assistant",
+            content=response.message,
+            sources_json=json.dumps([str(s) for s in response.sources]) if response.sources else None,
+        )
+        db.session.add(msg)
+        db.session.flush()
+        new_items = []
+        for item in response.proposed_items:
+            item_db = MethodologyLineItem(
+                methodology_takeoff_id=takeoff.id,
+                step=item.step,
+                sort_order=item.sort_order,
+                dwg_ref=item.dwg_ref,
+                description=item.description,
+                element=item.element,
+                qty=item.qty,
+                length_ft=item.length_ft,
+                height_ft=item.height_ft,
+                factor=item.factor,
+                notes=item.notes,
+                proposed_by="skippy",
+                accepted=False,
+            )
+            db.session.add(item_db)
+            new_items.append(item_db)
+        db.session.commit()
+        return jsonify({
+            "message_id": msg.id,
+            "content": response.message,
+            "proposed_count": len(response.proposed_items),
+            "line_item_ids": [i.id for i in new_items],
+            "deleted_step1_count": len(skippy_step1_ids),
+        })
+
     # ── Methodology Takeoff — HTML page + line-item CRUD ────────
 
     @app.route("/methodology-takeoffs/<int:takeoff_id>/page")

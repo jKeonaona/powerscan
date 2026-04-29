@@ -185,6 +185,42 @@ async function toggleAccepted(checkboxEl) {
     }
 }
 
+async function rescanDrawings(buttonEl) {
+    const takeoffId = buttonEl.dataset.takeoffId;
+    const statusEl = document.getElementById('rescan-status');
+    if (!window.confirm(
+        'Re-scan drawings?\n\n' +
+        'This will DELETE all Skippy-proposed Step 1 rows (and their Step 2 children) ' +
+        'and fire a fresh Vision read of the drawings.\n\n' +
+        'User-added rows are preserved. This cannot be undone.'
+    )) return;
+    buttonEl.disabled = true;
+    statusEl.textContent = 'Re-scanning…';
+    statusEl.className = 'small mt-2 text-muted';
+    try {
+        const resp = await fetch(`/methodology-takeoffs/${takeoffId}/rescan-drawings`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok) {
+            statusEl.textContent = data.content || 'Re-scan complete.';
+            statusEl.className = 'small mt-2 text-success';
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            statusEl.textContent = data.error || `Error (${resp.status})`;
+            statusEl.className = 'small mt-2 text-danger';
+            buttonEl.disabled = false;
+        }
+    } catch (e) {
+        statusEl.textContent = 'Network error — re-scan failed.';
+        statusEl.className = 'small mt-2 text-danger';
+        buttonEl.disabled = false;
+    }
+}
+
 async function runStep2(buttonEl) {
     const takeoffId = buttonEl.dataset.takeoffId;
     const statusEl = document.getElementById('step2-status');
@@ -265,6 +301,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const runStep2Btn = document.getElementById('run-step2-btn');
     if (runStep2Btn) {
         runStep2Btn.addEventListener('click', () => runStep2(runStep2Btn));
+    }
+
+    const rescanBtn = document.getElementById('rescan-drawings-btn');
+    if (rescanBtn) {
+        rescanBtn.addEventListener('click', () => rescanDrawings(rescanBtn));
     }
 
     // Auto-save Accepted checkbox toggles — no Save click required

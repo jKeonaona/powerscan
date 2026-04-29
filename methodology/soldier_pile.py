@@ -94,7 +94,7 @@ def opening_report(ctx: TakeoffContext) -> ModuleResponse:
     )
 
 
-def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "") -> ModuleResponse:
+def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "", force_rescan: bool = False, triggered_by_user_id: int | None = None) -> ModuleResponse:
     """
     Step 1 — Map the 3D Structure (here: enumerate the piles).
     Asks Claude Vision to read the Pile Data Table and propose one line item per
@@ -117,7 +117,7 @@ def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "") -> Mod
         drawing_id = index_map[first_key].get("drawing_id")
 
     # Cache hit — skip Vision entirely
-    if drawing_id:
+    if drawing_id and not force_rescan:
         cached = (
             DrawingExtraction.query
             .filter_by(drawing_id=drawing_id, scope_code=SCOPE_CODE)
@@ -257,14 +257,25 @@ def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "") -> Mod
     # Persist to cache on successful parse
     if drawing_id and extracted_json_str is not None:
         try:
+            if force_rescan:
+                max_ver_row = (
+                    DrawingExtraction.query
+                    .filter_by(drawing_id=drawing_id, scope_code=SCOPE_CODE)
+                    .order_by(DrawingExtraction.extraction_version.desc())
+                    .with_entities(DrawingExtraction.extraction_version)
+                    .first()
+                )
+                next_version = ((max_ver_row[0] if max_ver_row else 0) + 1)
+            else:
+                next_version = 1
             record = DrawingExtraction(
                 drawing_id=drawing_id,
                 scope_code=SCOPE_CODE,
-                extraction_version=1,
+                extraction_version=next_version,
                 extracted_data_json=extracted_json_str,
                 raw_vision_response=raw_response,
-                manual_rerun=False,
-                triggered_by_user_id=None,
+                manual_rerun=force_rescan,
+                triggered_by_user_id=triggered_by_user_id,
                 page_count_processed=len(retrieval["content_blocks"]),
                 estimated_token_cost=None,
             )
