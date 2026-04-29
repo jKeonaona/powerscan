@@ -10,7 +10,7 @@ from PIL import Image
 from models import db, Drawing, DrawingPage, Project
 
 MAX_IMAGES_PER_REQUEST = 20
-MAX_IMAGE_WIDTH = 800
+MAX_IMAGE_WIDTH = 1600  # Higher resolution for fine-detail tabular reads (Pile Data Tables, member designations). 4x token cost vs 800; will be paid once per drawing per scope when DrawingExtraction caching layer ships.
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 
