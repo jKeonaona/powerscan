@@ -510,6 +510,7 @@ _CTX_MAX_FALLBACK_IMAGES = 6   # max drawing pages for fallback (untargeted)
 _CTX_SNIPPET_CHARS_TOP = 8000  # total chars across all snippets for top-ranked items
 _CTX_SNIPPET_CHARS_LOW = 1500  # total chars for lower-priority items
 _CTX_FALLBACK_THRESHOLD = 8    # min score to bypass fallback; below this → generic load
+_CTX_MAX_TAKEOFF_IMAGES = 30   # higher than workspace cap; takeoffs need broader visual context
 
 
 def _score_item(item, direct_terms: set[str], synonym_terms: set[str]) -> int:
@@ -864,6 +865,168 @@ def build_workspace_context(project, query: str, processed_folder: str) -> dict:
     print(
         f"[workspace_ctx] project={project.name!r} query={query[:60]!r} → "
         f"{items_count} text items + {images_count} images (fallback={used_fallback})",
+        flush=True,
+    )
+
+    return {
+        "content_blocks": content_blocks,
+        "index_map": index_map,
+        "text_context": text_context,
+        "used_fallback": used_fallback,
+    }
+
+
+def build_takeoff_context(project, query: str, processed_folder: str, scope_code: str = None) -> dict:
+    """Assemble context for a methodology takeoff query.
+
+    Different from build_workspace_context in two ways:
+    1. ALL Drawing-type IntelligenceItems linked to the project (or Global) are
+       included as image candidates, regardless of text scoring. Drawings have
+       empty text_content by design — Claude Vision reads them on demand.
+    2. Text-bearing items (drawing_id IS NULL) are scored normally and added
+       as text context. The methodology doc itself (when present as a Global)
+       is included via this path.
+
+    Returns the same shape as build_workspace_context:
+        {content_blocks, index_map, text_context, used_fallback}
+    """
+    from search import _load_and_shrink
+
+    # 1. Synonym expansion + stopword filter
+    direct_terms, synonym_terms = expand_query_terms(query)
+    direct_terms = {t for t in direct_terms if t not in STOPWORDS}
+    synonym_terms = {t for t in synonym_terms if t not in STOPWORDS}
+
+    # 2. Fetch candidates split into two pools
+    # Pool A: drawing-linked items (images); Pool B: text-bearing items
+    base_filter = db.or_(
+        IntelligenceItem.project_id.is_(None),
+        IntelligenceItem.project_id == project.id,
+    )
+
+    pool_a = (
+        IntelligenceItem.query
+        .join(Drawing, IntelligenceItem.drawing_id == Drawing.id)
+        .filter(
+            base_filter,
+            IntelligenceItem.drawing_id.isnot(None),
+            Drawing.doc_type == "Drawing",
+            IntelligenceItem.auto_include_in_search.is_(True),
+        )
+        .all()
+    )
+
+    pool_b = (
+        IntelligenceItem.query
+        .filter(
+            base_filter,
+            IntelligenceItem.drawing_id.is_(None),
+            IntelligenceItem.auto_include_in_search.is_(True),
+        )
+        .all()
+    )
+
+    pool_a_count = len(pool_a)
+    pool_b_count = len(pool_b)
+
+    # 3. Image loading for Pool A — load all pages for each drawing, up to cap
+    content_blocks: list[dict] = []
+    index_map: dict[int, dict] = {}
+    idx = 0
+
+    if pool_a:
+        drawing_ids = list({item.drawing_id for item in pool_a})
+        draw_pages = (
+            db.session.query(DrawingPage, Drawing)
+            .join(Drawing, DrawingPage.drawing_id == Drawing.id)
+            .filter(Drawing.id.in_(drawing_ids), Drawing.status == "ready")
+            .order_by(Drawing.original_filename, DrawingPage.page_number)
+            .all()
+        )
+        for page, drawing in draw_pages:
+            if idx >= _CTX_MAX_TAKEOFF_IMAGES:
+                break
+            abs_path = os.path.join(processed_folder, page.image_path)
+            try:
+                data = _load_and_shrink(abs_path)
+            except Exception:
+                continue
+            idx += 1
+            label = f"{drawing.original_filename} — page {page.page_number}"
+            index_map[idx] = {"drawing_id": drawing.id, "filename": drawing.original_filename, "page": page.page_number}
+            content_blocks.append({"type": "text", "text": label})
+            content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+
+    images_count = idx
+
+    # 4. Text context from Pool B — score and select top items
+    all_terms = direct_terms | synonym_terms
+    scored_b = sorted(
+        [(item, _score_item(item, direct_terms, synonym_terms)) for item in pool_b],
+        key=lambda x: -x[1],
+    )
+    top_scored_b = [(item, s) for item, s in scored_b if s > 0][:_CTX_MAX_TEXT_ITEMS]
+
+    if top_scored_b:
+        text_items = [item for item, _ in top_scored_b]
+        used_recency_fallback = False
+    else:
+        # Fall back to 6 most recent Pool B items so methodology doc + specs are always present
+        text_items = sorted(pool_b, key=lambda x: x.created_at or 0, reverse=True)[:6]
+        used_recency_fallback = True
+
+    # 5. Build text context block
+    scope_items = project.work_scope_list
+    scope_line = ""
+    if scope_items:
+        prompt_scope = list(scope_items)
+        if _LEAD_TRIGGER_SCOPES.intersection(set(scope_items)) and "Lead Abatement" not in scope_items:
+            prompt_scope.append("Lead Abatement")
+        scope_line = "Work scope: " + ", ".join(prompt_scope)
+
+    ctx_lines = [f"Project: {project.name}"]
+    if scope_line:
+        ctx_lines.append(scope_line)
+    if scope_code:
+        ctx_lines.append(f"Takeoff scope: {scope_code}")
+
+    search_terms_str = ", ".join(sorted(direct_terms)[:8])
+    ctx_lines.append(f"\nCONTEXT — loaded for takeoff query: {search_terms_str}")
+
+    if text_items:
+        ctx_lines.append("")
+        for rank, item in enumerate(text_items):
+            scope_tag = "GLOBAL" if item.project_id is None else "PROJECT"
+            header = f"[{scope_tag}] {item.original_filename or item.title}"
+            ctx_lines.append(header)
+            if item.text_content:
+                max_chars = _CTX_SNIPPET_CHARS_TOP if rank < 5 else _CTX_SNIPPET_CHARS_LOW
+                snippet = _extract_snippet(item.text_content, all_terms, max_chars)
+                ctx_lines.append(snippet)
+            elif item.description:
+                ctx_lines.append(item.description[:300])
+            ctx_lines.append("")
+    else:
+        ctx_lines.append("\n(No matching documents found in this project's library.)")
+
+    if index_map:
+        ctx_lines.append(
+            f"{images_count} drawing page(s) shown as images above. "
+            "Cite drawings using [filename p.N] format."
+        )
+    else:
+        ctx_lines.append("No drawing images loaded for this question.")
+
+    text_context = "\n".join(ctx_lines)
+
+    # 6. used_fallback: True only if no drawings AND no text scored above zero
+    used_fallback = (pool_a_count == 0) and (len(top_scored_b) == 0)
+
+    # 7. Log
+    print(
+        f"[takeoff_ctx] project={project.name!r} scope={scope_code!r} query={query[:60]!r} → "
+        f"{pool_a_count} drawing items + {pool_b_count} text items + {images_count} images "
+        f"(fallback={used_fallback})",
         flush=True,
     )
 
@@ -6099,7 +6262,7 @@ def create_app():
             project=takeoff.project,
             api_key=app.config["ANTHROPIC_API_KEY"],
             processed_folder=app.config["PROCESSED_FOLDER"],
-            build_context_fn=build_workspace_context,
+            build_context_fn=build_takeoff_context,
             anthropic_client=client,
         )
         response = mod.opening_report(ctx)
@@ -6135,7 +6298,7 @@ def create_app():
             project=takeoff.project,
             api_key=app.config["ANTHROPIC_API_KEY"],
             processed_folder=app.config["PROCESSED_FOLDER"],
-            build_context_fn=build_workspace_context,
+            build_context_fn=build_takeoff_context,
             anthropic_client=client,
         )
         response = mod.propose_step_1_inventory(ctx, user_message=request.form.get("user_message", ""))
