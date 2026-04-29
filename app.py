@@ -23,7 +23,7 @@ from models import (
     LaborRate, InsuranceRate, PasswordResetToken, LoginEvent,
     IntelligenceTag, IntelligenceItem, QuoteBatch,
     ComparisonSummary, QuoteComparisonExport, Takeoff, WorkspaceMessage, WorkspaceThread,
-    MethodologyTakeoff, MethodologyLineItem, MethodologyTakeoffMessage,
+    MethodologyTakeoff, MethodologyLineItem, MethodologyTakeoffMessage, DrawingExtraction,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_USER, ROLES,
     DOC_TYPES, DEFAULT_DOC_TYPE,
     PROJECT_STATUSES, TAKEOFF_STATUSES,
@@ -1609,6 +1609,23 @@ def recover_stranded_library_items(upload_folder, api_key):
     )
 
 
+def _ensure_drawing_extraction_table():
+    """Idempotent: confirm drawing_extraction table exists (created by db.create_all)."""
+    try:
+        with db.engine.connect() as conn:
+            result = conn.execute(db.text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='drawing_extraction'"
+            ))
+            exists = result.fetchone() is not None
+        if exists:
+            print("[drawing_extraction] already present", flush=True)
+        else:
+            db.create_all()
+            print("[drawing_extraction] table created", flush=True)
+    except Exception as exc:
+        print(f"[drawing_extraction] migration check failed: {exc}", flush=True)
+
+
 def _drop_feedback_table():
     """Idempotent: drop the legacy feedback table if it still exists in the database."""
     try:
@@ -1850,6 +1867,8 @@ def create_app():
         recover_stranded_library_items(app.config["UPLOAD_FOLDER"], app.config.get("ANTHROPIC_API_KEY", ""))
         # Drop the legacy feedback table (Share Idea feature removed)
         _drop_feedback_table()
+        # Ensure DrawingExtraction caching table exists
+        _ensure_drawing_extraction_table()
 
     # ── CLI commands ────────────────────────────────────────────────────────
     @app.cli.command("backfill-library-text")

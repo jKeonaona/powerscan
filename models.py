@@ -528,3 +528,22 @@ class MethodologyTakeoffMessage(db.Model):
         backref=db.backref("messages", cascade="all, delete-orphan", order_by="MethodologyTakeoffMessage.created_at"),
     )
     user = db.relationship("User")
+
+
+class DrawingExtraction(db.Model):
+    __tablename__ = "drawing_extraction"
+    id = db.Column(db.Integer, primary_key=True)
+    drawing_id = db.Column(db.Integer, db.ForeignKey("drawing.id"), nullable=False, index=True)
+    scope_code = db.Column(db.String(64), nullable=False, index=True)
+    extraction_version = db.Column(db.Integer, nullable=False, default=1)
+    extracted_data_json = db.Column(db.Text, nullable=False)
+    raw_vision_response = db.Column(db.Text, nullable=True)
+    manual_rerun = db.Column(db.Boolean, default=False, nullable=False)
+    triggered_by_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    page_count_processed = db.Column(db.Integer, nullable=True)
+    estimated_token_cost = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("drawing_id", "scope_code", "extraction_version", name="uq_drawing_extraction_version"),
+    )

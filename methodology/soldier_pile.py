@@ -1,6 +1,7 @@
 import json
 import re
 
+from models import db, DrawingExtraction
 from methodology.base import TakeoffContext, ProposedLineItem, ModuleResponse
 
 SCOPE_CODE = "soldier_pile"
@@ -72,6 +73,61 @@ def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "") -> Mod
 
     retrieval = ctx.build_context_fn(ctx.project, query, ctx.processed_folder)
 
+    # Find drawing_id from retrieval for cache lookup (first Drawing in index_map)
+    index_map = retrieval.get("index_map", {})
+    drawing_id = None
+    if index_map:
+        first_key = min(index_map.keys())
+        drawing_id = index_map[first_key].get("drawing_id")
+
+    # Cache hit — skip Vision entirely
+    if drawing_id:
+        cached = (
+            DrawingExtraction.query
+            .filter_by(drawing_id=drawing_id, scope_code=SCOPE_CODE)
+            .order_by(DrawingExtraction.extraction_version.desc())
+            .first()
+        )
+        if cached:
+            proposed = []
+            try:
+                parsed = json.loads(cached.extracted_data_json)
+                for idx, item in enumerate(parsed):
+                    proposed.append(ProposedLineItem(
+                        step=1,
+                        sort_order=idx,
+                        element=item.get("element"),
+                        qty=item.get("qty"),
+                        height_ft=item.get("height_ft"),
+                        dwg_ref=item.get("dwg_ref"),
+                        notes=item.get("notes"),
+                    ))
+            except (json.JSONDecodeError, Exception):
+                pass
+            cache_note = (
+                f"Used cached extraction (version {cached.extraction_version} "
+                f"from {cached.created_at.strftime('%Y-%m-%d %H:%M UTC')})."
+            )
+            if proposed:
+                msg = (
+                    f"I've read the drawings and propose {len(proposed)} pile group(s) "
+                    f"for Step 1. Review the inventory below — accept what looks right, "
+                    f"edit what doesn't, and let me know if anything is missing.\n\n"
+                    f"{cache_note}"
+                )
+            else:
+                msg = (
+                    f"I couldn't extract a structured pile inventory from the cached data. "
+                    f"{cache_note}"
+                )
+            return ModuleResponse(
+                message=msg,
+                proposed_items=proposed,
+                sources=list(retrieval.get("index_map", {}).values()),
+                used_fallback=retrieval.get("used_fallback", False),
+            )
+
+    # Cache miss — fire Vision
     content = list(retrieval["content_blocks"])
     content.append({
         "type": "text",
@@ -141,10 +197,12 @@ def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "") -> Mod
 
     proposed = []
     parse_note = ""
+    extracted_json_str = None
     try:
         json_match = re.search(r"\[\s*(?:\{.*?\}\s*,?\s*)*\]", raw_response, re.DOTALL)
         if json_match:
-            parsed = json.loads(json_match.group(0))
+            extracted_json_str = json_match.group(0)
+            parsed = json.loads(extracted_json_str)
             for idx, item in enumerate(parsed):
                 proposed.append(ProposedLineItem(
                     step=1,
@@ -159,6 +217,25 @@ def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "") -> Mod
             parse_note = "Couldn't extract a JSON array from Skippy's response."
     except (json.JSONDecodeError, Exception) as e:
         parse_note = f"JSON parsing failed: {e}"
+
+    # Persist to cache on successful parse
+    if drawing_id and extracted_json_str is not None:
+        try:
+            record = DrawingExtraction(
+                drawing_id=drawing_id,
+                scope_code=SCOPE_CODE,
+                extraction_version=1,
+                extracted_data_json=extracted_json_str,
+                raw_vision_response=raw_response,
+                manual_rerun=False,
+                triggered_by_user_id=None,
+                page_count_processed=len(retrieval["content_blocks"]),
+                estimated_token_cost=None,
+            )
+            db.session.add(record)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
     if proposed:
         msg = (
