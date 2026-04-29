@@ -155,6 +155,36 @@ async function addLineItem() {
     }
 }
 
+async function toggleAccepted(checkboxEl) {
+    const lineItemId = checkboxEl.closest('tr').dataset.lineItemId;
+    const isAccepted = checkboxEl.checked;
+
+    try {
+        const response = await fetch(`/methodology-line-items/${lineItemId}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accepted: isAccepted }),
+        });
+
+        if (!response.ok) {
+            checkboxEl.checked = !isAccepted;
+            alert(`Failed to ${isAccepted ? 'accept' : 'unaccept'} this row. Please refresh and try again.`);
+            return;
+        }
+
+        const row = checkboxEl.closest('tr');
+        if (row) {
+            row.style.transition = 'background-color 0.3s';
+            row.style.backgroundColor = '#d4edda';
+            setTimeout(() => { row.style.backgroundColor = ''; }, 600);
+        }
+    } catch (err) {
+        checkboxEl.checked = !isAccepted;
+        alert(`Network error toggling acceptance: ${err.message}`);
+    }
+}
+
 async function runStep2(buttonEl) {
     const takeoffId = buttonEl.dataset.takeoffId;
     const statusEl = document.getElementById('step2-status');
@@ -236,4 +266,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (runStep2Btn) {
         runStep2Btn.addEventListener('click', () => runStep2(runStep2Btn));
     }
+
+    // Auto-save Accepted checkbox toggles — no Save click required
+    document.querySelectorAll('input[type="checkbox"][data-field="accepted"]').forEach(checkbox => {
+        checkbox.addEventListener('change', () => toggleAccepted(checkbox));
+    });
 });
