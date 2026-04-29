@@ -2,6 +2,10 @@
 {% block title %}{{ takeoff.name }} — {{ project.name }} - PowerScan{% endblock %}
 
 {% block content %}
+{%- set step1_items = line_items | selectattr('step', 'equalto', 1) | list -%}
+{%- set step2_items = line_items | selectattr('step', 'equalto', 2) | list -%}
+{%- set ns = namespace(total_sf=0.0) -%}
+{%- for li in step2_items -%}{%- if li.accepted and li.sqft -%}{%- set ns.total_sf = ns.total_sf + li.sqft | float -%}{%- endif -%}{%- endfor -%}
 <div class="container-fluid">
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
@@ -29,6 +33,9 @@
                 {% endif %}
                 <span class="text-muted small">v{{ takeoff.version_number }}</span>
                 <span class="text-muted small">· {{ project.name }}</span>
+            </div>
+            <div class="mt-2">
+                <span class="fw-semibold fs-5">Total Accepted SF: {{ "%.0f" | format(ns.total_sf) }}</span>
             </div>
         </div>
     </div>
@@ -61,7 +68,7 @@
     <div class="card shadow-sm mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <span class="fw-semibold"><i class="bi bi-list-check"></i> Step 1 — Pile Inventory</span>
-            <span class="badge bg-secondary">{{ line_items | length }}</span>
+            <span class="badge bg-secondary">{{ step1_items | length }}</span>
         </div>
         <div class="table-responsive">
             <table id="line-items-table" class="table table-hover align-middle mb-0" data-takeoff-id="{{ takeoff.id }}">
@@ -80,7 +87,7 @@
                     </tr>
                 </thead>
                 <tbody id="line-items-tbody">
-                    {% for li in line_items %}
+                    {% for li in step1_items %}
                     <tr data-line-item-id="{{ li.id }}">
                         <td class="text-muted small">{{ loop.index }}</td>
                         <td><input type="text" class="form-control form-control-sm" data-field="element" aria-label="Element" value="{{ li.element or '' }}"></td>
@@ -149,6 +156,61 @@
             <button type="button" id="add-row-btn" class="btn btn-sm btn-outline-success">
                 <i class="bi bi-plus-lg"></i> Add Row
             </button>
+        </div>
+    </div>
+
+    <!-- Step 2 — Sizes & Factors -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold"><i class="bi bi-calculator"></i> Step 2 — Sizes &amp; Factors</span>
+            <span class="badge bg-secondary">{{ step2_items | length }}</span>
+        </div>
+        <div class="card-body border-bottom pb-2">
+            <button type="button" id="run-step2-btn" class="btn btn-sm btn-primary" data-takeoff-id="{{ takeoff.id }}">
+                <i class="bi bi-play-fill"></i> Run Step 2
+            </button>
+            <div id="step2-status" class="d-none small mt-2"></div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>Element</th>
+                        <th>Factor (SF/LF)</th>
+                        <th>SqFt</th>
+                        <th>Parent (Step 1)</th>
+                        <th>Accepted</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="step2-tbody">
+                    {% for li in step2_items %}
+                    {%- set parent_li = line_items | selectattr('id', 'equalto', li.parent_line_item_id) | first -%}
+                    <tr data-line-item-id="{{ li.id }}">
+                        <td class="text-muted small">{{ loop.index }}</td>
+                        <td><input type="text" class="form-control form-control-sm" data-field="element" aria-label="Element" value="{{ li.element or '' }}"></td>
+                        <td class="text-muted small">{{ "%.4f" | format(li.factor | float) if li.factor else '—' }}</td>
+                        <td class="fw-medium">{{ "%.1f" | format(li.sqft | float) if li.sqft else '—' }}</td>
+                        <td class="text-muted small">{{ (parent_li.element or '—')[:50] if parent_li else '—' }}</td>
+                        <td class="text-center">
+                            <input type="checkbox" class="form-check-input" data-field="accepted" aria-label="Accepted" {% if li.accepted %}checked{% endif %}>
+                        </td>
+                        <td class="text-nowrap">
+                            <button type="button" class="btn btn-sm btn-outline-primary save-btn me-1">Save</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger delete-btn">Delete</button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-muted small text-center py-3">No Step 2 rows yet. Accept Step 1 items then click "Run Step 2".</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer text-muted small">
+            Total accepted SF: <span class="fw-semibold text-body">{{ "%.0f" | format(ns.total_sf) }}</span>
         </div>
     </div>
 

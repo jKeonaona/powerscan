@@ -1609,6 +1609,24 @@ def recover_stranded_library_items(upload_folder, api_key):
     )
 
 
+def _add_parent_line_item_id_column():
+    """Idempotent: add parent_line_item_id to methodology_line_item if missing."""
+    try:
+        conn = db.engine.raw_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "ALTER TABLE methodology_line_item ADD COLUMN parent_line_item_id INTEGER"
+            )
+            conn.commit()
+            print("[methodology_line_item] parent_line_item_id column added", flush=True)
+        except Exception:
+            print("[methodology_line_item] parent_line_item_id already present", flush=True)
+        conn.close()
+    except Exception as exc:
+        print(f"[methodology_line_item] migration check failed: {exc}", flush=True)
+
+
 def _ensure_drawing_extraction_table():
     """Idempotent: confirm drawing_extraction table exists (created by db.create_all)."""
     try:
@@ -1869,6 +1887,8 @@ def create_app():
         _drop_feedback_table()
         # Ensure DrawingExtraction caching table exists
         _ensure_drawing_extraction_table()
+        # Add parent_line_item_id to methodology_line_item if missing
+        _add_parent_line_item_id_column()
 
     # ── CLI commands ────────────────────────────────────────────────────────
     @app.cli.command("backfill-library-text")
@@ -6357,6 +6377,41 @@ def create_app():
             "line_item_ids": [i.id for i in new_items],
             "sources": [str(s) for s in response.sources],
             "used_fallback": response.used_fallback,
+        })
+
+    @app.route("/methodology-takeoffs/<int:takeoff_id>/propose-step-2", methods=["POST"])
+    @login_required
+    def methodology_takeoff_propose_step_2(takeoff_id):
+        takeoff = db.session.get(MethodologyTakeoff, takeoff_id) or abort(404)
+        if not current_user.is_superadmin and current_user.company_id != takeoff.project.company_id:
+            abort(403)
+        mod = methodology.get_module(takeoff.scope_code)
+        if mod is None:
+            return jsonify({"error": "scope_code module not found"}), 400
+        ctx = TakeoffContext(
+            methodology_takeoff=takeoff,
+            project=takeoff.project,
+            api_key=app.config["ANTHROPIC_API_KEY"],
+            processed_folder=app.config["PROCESSED_FOLDER"],
+            build_context_fn=build_takeoff_context,
+            anthropic_client=None,
+        )
+        response = mod.propose_step_2_factors(ctx, takeoff)
+        msg = MethodologyTakeoffMessage(
+            methodology_takeoff_id=takeoff.id,
+            user_id=current_user.id,
+            role="assistant",
+            content=response.message,
+            sources_json=None,
+        )
+        db.session.add(msg)
+        db.session.commit()
+        return jsonify({
+            "message_id": msg.id,
+            "content": response.message,
+            "created_count": getattr(response, "created_count", 0),
+            "updated_count": getattr(response, "updated_count", 0),
+            "skipped": getattr(response, "sources", []),
         })
 
     # ── Methodology Takeoff — HTML page + line-item CRUD ────────

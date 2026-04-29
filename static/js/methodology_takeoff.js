@@ -155,6 +155,36 @@ async function addLineItem() {
     }
 }
 
+async function runStep2(buttonEl) {
+    const takeoffId = buttonEl.dataset.takeoffId;
+    const statusEl = document.getElementById('step2-status');
+    buttonEl.disabled = true;
+    statusEl.className = 'small mt-2 d-none';
+
+    try {
+        const resp = await fetch(`/methodology-takeoffs/${takeoffId}/propose-step-2`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok) {
+            statusEl.textContent = data.content || 'Step 2 complete.';
+            statusEl.className = 'small mt-2 text-success';
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            statusEl.textContent = data.error || `Error (${resp.status})`;
+            statusEl.className = 'small mt-2 text-danger';
+            buttonEl.disabled = false;
+        }
+    } catch (e) {
+        statusEl.textContent = 'Network error — Step 2 failed.';
+        statusEl.className = 'small mt-2 text-danger';
+        buttonEl.disabled = false;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Event delegation on tbody — covers both server-rendered and dynamically added rows
     const tbody = document.getElementById('line-items-tbody');
@@ -188,5 +218,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (saveNewBtn) {
         saveNewBtn.addEventListener('click', addLineItem);
+    }
+
+    // Step 2 delegation (save/delete on step2 rows)
+    const step2Tbody = document.getElementById('step2-tbody');
+    if (step2Tbody) {
+        step2Tbody.addEventListener('click', e => {
+            if (e.target.classList.contains('save-btn')) {
+                saveLineItem(e.target);
+            } else if (e.target.classList.contains('delete-btn')) {
+                deleteLineItem(e.target);
+            }
+        });
+    }
+
+    const runStep2Btn = document.getElementById('run-step2-btn');
+    if (runStep2Btn) {
+        runStep2Btn.addEventListener('click', () => runStep2(runStep2Btn));
     }
 });

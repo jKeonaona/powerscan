@@ -491,6 +491,7 @@ class MethodologyLineItem(db.Model):
     __tablename__ = "methodology_line_item"
     id = db.Column(db.Integer, primary_key=True)
     methodology_takeoff_id = db.Column(db.Integer, db.ForeignKey("methodology_takeoff.id"), nullable=False)
+    parent_line_item_id = db.Column(db.Integer, db.ForeignKey("methodology_line_item.id"), nullable=True, index=True)
     sort_order = db.Column(db.Integer, nullable=False, default=0)
     step = db.Column(db.Integer, nullable=False)
     dwg_ref = db.Column(db.String(300), nullable=True)
@@ -511,6 +512,7 @@ class MethodologyLineItem(db.Model):
         "MethodologyTakeoff",
         backref=db.backref("line_items", cascade="all, delete-orphan", order_by="MethodologyLineItem.sort_order"),
     )
+    parent_item = db.relationship("MethodologyLineItem", foreign_keys=[parent_line_item_id], remote_side=[id], backref="children")
 
 
 class MethodologyTakeoffMessage(db.Model):

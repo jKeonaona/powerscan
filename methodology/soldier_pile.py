@@ -1,11 +1,47 @@
 import json
 import re
 
-from models import db, DrawingExtraction
+from models import db, DrawingExtraction, MethodologyLineItem
 from methodology.base import TakeoffContext, ProposedLineItem, ModuleResponse
 
 SCOPE_CODE = "soldier_pile"
 SCOPE_NAME = "Steel Soldier Pile Wall"
+
+# AISC Steel Construction Manual perimeter values for soldier pile sections.
+# 4-face: full perimeter for undercoat (covers all four pile faces, full pile length).
+# 3-face: exposed perimeter for finish coat (back face contacts lagging, not painted).
+# Values in feet. Verified against AISC 15th Edition. Add new sections as needed.
+AISC_PERIMETERS = {
+    "HP12x84":  {"4_face": 4.34, "3_face": 3.34},
+    "HP12x74":  {"4_face": 4.27, "3_face": 3.27},
+    "HP12x53":  {"4_face": 4.18, "3_face": 3.18},
+    "HP14x117": {"4_face": 5.13, "3_face": 3.96},
+    "HP14x102": {"4_face": 5.09, "3_face": 3.92},
+    "HP14x89":  {"4_face": 5.05, "3_face": 3.89},
+    "HP14x73":  {"4_face": 5.00, "3_face": 3.84},
+    "W12x152":  {"4_face": 4.97, "3_face": 3.79},
+    "W12x136":  {"4_face": 4.92, "3_face": 3.74},
+    "W12x120":  {"4_face": 4.86, "3_face": 3.68},
+    "W14x132":  {"4_face": 5.32, "3_face": 4.07},
+    "W14x120":  {"4_face": 5.27, "3_face": 4.02},
+    "W18x119":  {"4_face": 6.07, "3_face": 4.55},
+    "W21x147":  {"4_face": 6.84, "3_face": 5.18},
+    "W24x176":  {"4_face": 7.65, "3_face": 5.74},
+    "W24x207":  {"4_face": 7.74, "3_face": 5.83},
+    "W24x250":  {"4_face": 7.86, "3_face": 5.95},
+    "W24x279":  {"4_face": 7.95, "3_face": 6.04},
+}
+
+
+def _extract_section_from_element(element_text: str) -> str | None:
+    """Pull a steel section identifier (e.g. 'HP12x84', 'W24x279') from a Step 1
+    line item's element field. Returns None if no match."""
+    if not element_text:
+        return None
+    match = re.search(r"\b((?:HP|W)\d+x\d+)\b", element_text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).upper().replace("X", "x")
+    return None
 
 # Per Section 2.2 of David's methodology, soldier pile work expects these drawing types
 EXPECTED_SHEETS = [
@@ -256,6 +292,102 @@ def propose_step_1_inventory(ctx: TakeoffContext, user_message: str = "") -> Mod
         sources=list(retrieval.get("index_map", {}).values()),
         used_fallback=retrieval.get("used_fallback", False),
     )
+
+
+def propose_step_2_factors(ctx: TakeoffContext, takeoff) -> ModuleResponse:
+    """Step 2 — Sizes & Factors.
+
+    For each ACCEPTED Step 1 line item, look up AISC perimeter factors and
+    produce two Step 2 children (undercoat SF and finish coat SF).
+    Idempotent: if a Step 2 child already exists for a given (parent, kind),
+    the existing row is updated rather than duplicated.
+    """
+    accepted_step_1 = [li for li in takeoff.line_items if li.step == 1 and li.accepted]
+
+    if not accepted_step_1:
+        response = ModuleResponse(
+            message="No accepted Step 1 line items yet. Accept the pile inventory rows that look right, then run Step 2.",
+            sources=[],
+            used_fallback=False,
+        )
+        response.created_count = 0
+        response.updated_count = 0
+        return response
+
+    created_count = 0
+    updated_count = 0
+    skipped_unknown = []
+
+    for parent in accepted_step_1:
+        section = _extract_section_from_element(parent.element)
+        if not section or section not in AISC_PERIMETERS:
+            skipped_unknown.append({
+                "parent_id": parent.id,
+                "element": parent.element,
+                "extracted_section": section,
+            })
+            continue
+
+        factors = AISC_PERIMETERS[section]
+        qty = float(parent.qty or 0)
+        length_ft = float(parent.length_ft or 0)
+        height_ft = float(parent.height_ft or 0)
+
+        undercoat_sf = qty * length_ft * factors["4_face"] if length_ft > 0 else 0.0
+        finish_sf = qty * height_ft * factors["3_face"]
+
+        for kind, sf, factor_used, label in [
+            ("undercoat", undercoat_sf, factors["4_face"], f"Undercoat ({section})"),
+            ("finish",    finish_sf,    factors["3_face"], f"Finish coat ({section})"),
+        ]:
+            existing = MethodologyLineItem.query.filter_by(
+                methodology_takeoff_id=takeoff.id,
+                parent_line_item_id=parent.id,
+                step=2,
+            ).filter(MethodologyLineItem.notes.ilike(f"%{kind}%")).first()
+
+            if existing:
+                existing.factor = factor_used
+                existing.sqft = round(sf, 2)
+                existing.element = f"{label} for {parent.element}"
+                updated_count += 1
+            else:
+                new_row = MethodologyLineItem(
+                    methodology_takeoff_id=takeoff.id,
+                    parent_line_item_id=parent.id,
+                    step=2,
+                    sort_order=parent.sort_order * 10 + (0 if kind == "undercoat" else 1),
+                    element=f"{label} for {parent.element}",
+                    qty=qty,
+                    length_ft=length_ft if kind == "undercoat" else None,
+                    height_ft=height_ft if kind == "finish" else None,
+                    factor=factor_used,
+                    sqft=round(sf, 2),
+                    notes=f"AISC perimeter ({kind}). Section: {section}.",
+                    proposed_by="skippy",
+                    accepted=False,
+                )
+                db.session.add(new_row)
+                created_count += 1
+
+    db.session.commit()
+
+    msg_parts = [f"Step 2 complete: {created_count} factor row(s) created, {updated_count} updated."]
+    if skipped_unknown:
+        section_list = ", ".join(set(s["extracted_section"] or "(no section detected)" for s in skipped_unknown))
+        msg_parts.append(
+            f"Skipped {len(skipped_unknown)} parent row(s) with unknown sections: {section_list}. "
+            f"Add these sections to AISC_PERIMETERS or correct the Step 1 element text."
+        )
+
+    response = ModuleResponse(
+        message=" ".join(msg_parts),
+        sources=skipped_unknown,
+        used_fallback=False,
+    )
+    response.created_count = created_count
+    response.updated_count = updated_count
+    return response
 
 
 def propose_step_2_sizes_factors(ctx: TakeoffContext, user_message: str = "") -> ModuleResponse:
